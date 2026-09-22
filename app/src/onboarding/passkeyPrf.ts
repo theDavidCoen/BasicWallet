@@ -157,6 +157,8 @@ export async function createNewPrfEntropy(): Promise<Uint8Array> {
       { type: "public-key", alg: -7 },
       { type: "public-key", alg: -257 },
     ],
+    // Platform + residentKey steers Android Credential Manager toward password
+    // managers (GPM) instead of the hybrid “use a different device” QR path.
     authenticatorSelection: {
       authenticatorAttachment: "platform",
       residentKey: "required",
@@ -174,21 +176,34 @@ export async function createNewPrfEntropy(): Promise<Uint8Array> {
   let results = creation.clientExtensionResults?.prf?.results;
   if (enabled === false && !results?.first) {
     throw new PasskeyPrfUnavailableError(
-      "This authenticator does not support the WebAuthn PRF extension.",
+        "This password manager does not support WebAuthn PRF (required for Basic). " +
+        "Enable Google Password Manager as your preferred passkey provider and try again.",
     );
   }
 
-  await SecureStore.setItemAsync(CRED_ID_KEY, creation.id, SECURE_OPTIONS);
-
-  if (!results?.first) {
-    const entropy = await getPrfFromAssertion([{ id: creation.id, type: "public-key" }]);
-    if (!entropy) {
-      throw new PasskeyPrfUnavailableError("Passkey PRF evaluation was cancelled or failed.");
+  let entropy: Uint8Array;
+  if (results?.first) {
+    entropy = extractPrfFirst(results);
+  } else {
+    // Many authenticators only report prf.enabled on create; evaluate on get.
+    try {
+      const fromGet = await getPrfFromAssertion([{ id: creation.id, type: "public-key" }]);
+      if (!fromGet) {
+        throw new PasskeyPrfUnavailableError("Passkey PRF evaluation was cancelled or failed.");
+      }
+      entropy = fromGet;
+    } catch (e) {
+      if (e instanceof PasskeyPrfUnavailableError) throw e;
+      throw new PasskeyPrfUnavailableError(
+        "This password manager created a passkey without PRF support. " +
+          "Enable Google Password Manager as your preferred passkey provider and try again.",
+      );
     }
-    return entropy;
   }
 
-  return extractPrfFirst(results);
+  // Persist only after PRF succeeded — a non-PRF credential id is useless.
+  await SecureStore.setItemAsync(CRED_ID_KEY, creation.id, SECURE_OPTIONS);
+  return entropy;
 }
 
 /**

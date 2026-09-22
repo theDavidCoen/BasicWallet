@@ -31,7 +31,7 @@ import { PassphraseInput } from "../components/PassphraseInput";
 export function HomeServerBackupScreen() {
   const navigation = useNavigation<RootNav>();
   const { hasWallet, provisionFromMnemonic } = useWallet();
-  const [url, setUrl] = useState("https://nextcloud.davidcoen.it");
+  const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [username, setUsername] = useState("");
   const [appPassword, setAppPassword] = useState("");
@@ -154,7 +154,7 @@ export function HomeServerBackupScreen() {
           onChangeText={setUsername}
           autoCapitalize="none"
           autoCorrect={false}
-          placeholder="david"
+          placeholder="username"
           placeholderTextColor={colors.hint}
         />
         <Text style={styles.label}>application password</Text>

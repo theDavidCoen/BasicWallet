@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Build a Universal release APK (reproducible recipe). See docs/reproducible-builds.md
+# Build a release APK (reproducible recipe). See docs/reproducible-builds.md
+#
+# ABI mode (env BASIC_WALLET_ABI):
+#   universal (default) — all ABIs in one APK
+#   arm64-v8a           — phone-sized APK (Xiaomi / Pixel / most modern devices)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -7,7 +11,12 @@ APP="$ROOT/app"
 ANDROID="$APP/android"
 DIST="$ROOT/dist"
 VERSION="$(node -p "require('$APP/package.json').version")"
-OUT_NAME="basic-wallet-${VERSION}-universal.apk"
+ABI_MODE="${BASIC_WALLET_ABI:-universal}"
+if [[ "$ABI_MODE" == "universal" ]]; then
+  OUT_NAME="basic-wallet-${VERSION}-universal.apk"
+else
+  OUT_NAME="basic-wallet-${VERSION}-${ABI_MODE}.apk"
+fi
 PGP_FPR="5351632CBBF23EF29F1815ACD270A7681AE508EA"
 
 if [[ -z "${BASIC_WALLET_STORE_FILE:-}" ]]; then
@@ -28,23 +37,29 @@ if [[ ! -d "$ANDROID" ]]; then
   exit 1
 fi
 
+ICON_SYNC="$ROOT/scripts/sync-android-icons.sh"
+if [[ -x "$ICON_SYNC" ]]; then
+  "$ICON_SYNC"
+fi
+
 if [[ -z "${SOURCE_DATE_EPOCH:-}" ]]; then
   export SOURCE_DATE_EPOCH
   SOURCE_DATE_EPOCH="$(git -C "$ROOT" show -s --format=%ct HEAD)"
 fi
 
 GRADLE="$ANDROID/app/build.gradle"
+PROPS="$ANDROID/gradle.properties"
 python3 - <<PY
 from pathlib import Path
-import os, re
+import re
 p = Path("$GRADLE")
 text = p.read_text()
 version = "$VERSION"
-# versionName / versionCode
+abi_mode = "$ABI_MODE"
+
 text = re.sub(r'versionCode\s+\d+', 'versionCode 1', text, count=1)
 text = re.sub(r'versionName\s+"[^"]*"', f'versionName "{version}"', text, count=1)
 
-# Inject release signing from env if missing
 if "basicWalletRelease" not in text:
     signing_block = '''
         basicWalletRelease {
@@ -66,8 +81,41 @@ if "basicWalletRelease" not in text:
         flags=re.S,
     )
 
-# Universal: no ABI splits
-if "enableSeparateBuildPerCPUArchitecture" not in text and "splits {" not in text:
+# Remove prior splits / abiFilters injections
+text = re.sub(
+    r"\n\s*splits\s*\{\s*abi\s*\{[^}]*\}\s*\}",
+    "",
+    text,
+    count=1,
+    flags=re.S,
+)
+text = re.sub(
+    r"\n\s*ndk\s*\{\s*abiFilters\s+\"[^\"]+\"\s*\}",
+    "",
+    text,
+)
+
+# RN / Expo: architectures come from gradle.properties reactNativeArchitectures
+props = Path("$PROPS")
+props_text = props.read_text()
+if abi_mode == "universal":
+    arches = "armeabi-v7a,arm64-v8a,x86,x86_64"
+else:
+    arches = abi_mode
+if re.search(r"^reactNativeArchitectures=.*$", props_text, re.M):
+    props_text = re.sub(
+        r"^reactNativeArchitectures=.*$",
+        f"reactNativeArchitectures={arches}",
+        props_text,
+        count=1,
+        flags=re.M,
+    )
+else:
+    props_text += f"\nreactNativeArchitectures={arches}\n"
+props.write_text(props_text)
+print("gradle.properties reactNativeArchitectures=", arches)
+
+if abi_mode == "universal":
     text = text.replace(
         "android {\n",
         """android {
@@ -81,14 +129,27 @@ if "enableSeparateBuildPerCPUArchitecture" not in text and "splits {" not in tex
 """,
         1,
     )
+else:
+    # Also constrain packaging
+    text = re.sub(
+        r"(defaultConfig\s*\{)",
+        r'\1\n        ndk {\n            abiFilters "' + abi_mode + '"\n        }',
+        text,
+        count=1,
+    )
 
 p.write_text(text)
-print("patched", p)
+print("patched", p, "abi=", abi_mode)
 PY
 
 mkdir -p "$DIST"
+rm -rf "$ANDROID/app/build/outputs/apk/release"
 cd "$ANDROID"
-./gradlew :app:assembleRelease --no-daemon
+GRADLE_ARGS=(:app:assembleRelease --no-daemon)
+if [[ "$ABI_MODE" != "universal" ]]; then
+  GRADLE_ARGS+=("-PreactNativeArchitectures=${ABI_MODE}")
+fi
+./gradlew "${GRADLE_ARGS[@]}"
 
 APK_SRC="$(find "$ANDROID/app/build/outputs/apk/release" -name '*.apk' ! -name '*unsigned*' | head -1)"
 if [[ -z "$APK_SRC" ]]; then
@@ -100,9 +161,12 @@ cp -f "$APK_SRC" "$DIST/$OUT_NAME"
 (
   cd "$DIST"
   sha256sum "$OUT_NAME" > "${OUT_NAME}.sha256"
-  gpg --batch --yes --local-user "$PGP_FPR" --detach-sign --armor "${OUT_NAME}.sha256"
+  gpg --batch --yes --local-user "$PGP_FPR" --detach-sign --armor "${OUT_NAME}.sha256" \
+    || echo "WARN: PGP sign skipped — run gpg manually on ${OUT_NAME}.sha256" >&2
 )
 
 echo "OK $DIST/$OUT_NAME"
 echo "SHA256 $(cut -d' ' -f1 "$DIST/${OUT_NAME}.sha256")"
-ls -la "$DIST/$OUT_NAME" "$DIST/${OUT_NAME}.sha256" "$DIST/${OUT_NAME}.sha256.asc"
+ls -la "$DIST/$OUT_NAME" "$DIST/${OUT_NAME}.sha256" || true
+echo "ABIs inside APK:"
+unzip -l "$DIST/$OUT_NAME" | awk '/lib\/.*\.so$/ { print $4 }' | awk -F/ '{print $2}' | sort | uniq -c

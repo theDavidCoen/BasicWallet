@@ -1,0 +1,16 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls",
+      "delegate_permission/common.get_login_creds"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.basic.wallet",
+      "sha256_cert_fingerprints": [
+        "1D:C5:9A:35:69:CD:47:97:D1:99:17:CC:57:27:D0:3C:D0:4F:70:2E:55:BD:84:E8:B0:DF:79:3B:7D:ED:87:DD",
+        "E0:71:7D:5D:16:5C:72:4F:74:38:78:81:C7:9B:B6:E2:56:F7:DF:E1:22:AA:FC:69:F0:9F:06:3C:AD:20:13:2D"
+      ]
+    }
+  }
+]

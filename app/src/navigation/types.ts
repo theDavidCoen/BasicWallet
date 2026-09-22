@@ -6,6 +6,8 @@ export type RootStackParamList = {
   OnboardingSecurity: { continueTo: "passkey" | "device-only" | "restore" };
   /** Passkey path = cross-device only; device-only = without passkey → Advanced Backup. */
   TermsOfUse: { mode: "passkey" | "device-only" | "dev-csprng" };
+  /** Glow-style busy screen while Credential Manager / PRF / labels run. */
+  PasskeyProgress: { mode: "detect" | "create" };
   AdvancedBackup: undefined;
   NostrBackup: undefined;
   HomeServerBackup: undefined;

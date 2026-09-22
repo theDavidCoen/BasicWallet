@@ -11,12 +11,6 @@ import {
 } from "react-native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { mnemonicFromEntropy, randomEntropy32 } from "../onboarding/mnemonicFromEntropy";
-import {
-  createNewPrfEntropy,
-  createOrGetPrfEntropy,
-  PasskeyNotFoundError,
-  PasskeyPrfUnavailableError,
-} from "../onboarding/passkeyPrf";
 import { requireUserPresence } from "../security/userPresence";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
@@ -37,7 +31,7 @@ export const TERMS_OF_USE_BODY =
 export function TermsOfUseScreen() {
   const navigation = useNavigation<RootNav>();
   const route = useRoute<RouteProp<RootStackParamList, "TermsOfUse">>();
-  const { provisionFromMnemonic, provisionFromPasskeyEntropy } = useWallet();
+  const { provisionFromMnemonic } = useWallet();
   const [busy, setBusy] = useState(false);
   const mode = route.params.mode;
   const isPasskey = mode === "passkey";
@@ -53,10 +47,14 @@ export function TermsOfUseScreen() {
       return;
     }
 
+    if (isPasskey) {
+      // Detect first (cross-device). PasskeyProgress also offers create when needed.
+      navigation.navigate("PasskeyProgress", { mode: "detect" });
+      return;
+    }
+
     setBusy(true);
     try {
-      // Passkey WebAuthn already requires userVerification — skip a second
-      // LocalAuthentication prompt (was doubling biometric latency on Samsung).
       if (isDev) {
         const auth = await requireUserPresence("Confirm device unlock to create a dev wallet");
         if (!auth.ok) {
@@ -66,55 +64,12 @@ export function TermsOfUseScreen() {
         const entropy = await randomEntropy32();
         const mnemonic = mnemonicFromEntropy(entropy);
         await provisionFromMnemonic(mnemonic, "dev-csprng");
-      } else {
-        try {
-          const entropy = await createOrGetPrfEntropy();
-          await provisionFromPasskeyEntropy(entropy);
-        } catch (e) {
-          if (e instanceof PasskeyNotFoundError) {
-            Alert.alert(
-              "Passkey missing",
-              "No matching Basic Wallet passkey was found in your password manager.\n\nRestore from seed or Nostr package, or create a brand-new passkey wallet.",
-              [
-                {
-                  text: "Restore",
-                  onPress: () => navigation.navigate("RestoreWallet", { mode: "full" }),
-                },
-                {
-                  text: "Create new passkey",
-                  style: "destructive",
-                  onPress: () => void onCreateNewPasskey(),
-                },
-                { text: "Cancel", style: "cancel" },
-              ],
-            );
-            return;
-          }
-          throw e;
-        }
       }
 
       navigation.replace("Ready");
     } catch (e) {
-      const msg =
-        e instanceof PasskeyPrfUnavailableError || e instanceof Error
-          ? e.message
-          : "Unknown error";
+      const msg = e instanceof Error ? e.message : "Unknown error";
       Alert.alert("Could not open wallet", msg);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onCreateNewPasskey() {
-    setBusy(true);
-    try {
-      // Create ceremony includes UV; no extra LocalAuthentication.
-      const entropy = await createNewPrfEntropy();
-      await provisionFromPasskeyEntropy(entropy);
-      navigation.replace("Ready");
-    } catch (e) {
-      Alert.alert("Could not create wallet", e instanceof Error ? e.message : "Unknown error");
     } finally {
       setBusy(false);
     }

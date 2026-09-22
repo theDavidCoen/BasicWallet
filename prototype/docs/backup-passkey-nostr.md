@@ -253,7 +253,7 @@ Settings (06 · Settings):
 - **Reproducible builds** required (same revision → verifiable APK).
 - **Minimal permissions** only — see [`ux-ui-spec.md`](./ux-ui-spec.md) §0.
 - **Seed security (highest priority):** mnemonic **only** in Android **Keystore**-backed storage. **Never** plaintext in UI, logs, or clipboard except **export** (`11e` / equivalent), and then **only after biometrics and/or password/PIN**. `FLAG_SECURE` on export. No seed on onboarding.
-- Prefer platform WebAuthn / passkey APIs with **PRF** via `react-native-passkeys` (`app/src/onboarding/passkeyPrf.ts`). Requires verified `rpId` (`EXPO_PUBLIC_PASSKEY_RP_ID` / `basic.wallet`) with assetlinks + AASA; PRF needs Android 14+ / iOS 18+.
+- Prefer platform WebAuthn / passkey APIs with **PRF** via `react-native-passkeys` (`app/src/onboarding/passkeyPrf.ts`). Requires verified `rpId` (`EXPO_PUBLIC_PASSKEY_RP_ID` / `basic.davidcoen.it`) with assetlinks + AASA; PRF needs Android 14+ / iOS 18+.
 - Detect and surface authenticator **backup eligibility** / sync flags (`05h`; passkey create path is always cross-device on `11b`).
 - Fail closed on wrong backup passphrase or failed export auth.
 - Engine: Arkade HD + intents LN + unilateral exit v1 — see [`arkade-wallet-tech-spec.md`](./arkade-wallet-tech-spec.md). Screens: [`ux-ui-spec.md`](./ux-ui-spec.md).

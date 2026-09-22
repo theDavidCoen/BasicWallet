@@ -107,6 +107,9 @@ type SheetsApi = {
   activityOpen: boolean;
   posOpen: boolean;
   scanOpen: boolean;
+  /** True while Home finger is still driving the interactive open. */
+  posSkipEnter: boolean;
+  scanSkipEnter: boolean;
   walletOpen: boolean;
   /** Derived: wallets sheet is on the add step. */
   addWalletOpen: boolean;
@@ -782,6 +785,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
       activityOpen,
       posOpen,
       scanOpen,
+      posSkipEnter,
+      scanSkipEnter,
       walletOpen,
       addWalletOpen,
       importWalletOpen,
@@ -829,8 +834,10 @@ export function SheetHost({ children }: { children: ReactNode }) {
       openWalletSwitcher,
       posMotion,
       posOpen,
+      posSkipEnter,
       scanMotion,
       scanOpen,
+      scanSkipEnter,
       setActivityAnchorY,
       walletOpen,
     ],

@@ -3,9 +3,14 @@
 # Local scratch
 .tmp-*
 *.log
+
+# Release APKs: ignore by default; keep signed arm64 (+ checksums) tracked.
 dist/*.apk
+!dist/basic-wallet-*-arm64-v8a.apk
 dist/*.sha256
+!dist/basic-wallet-*-arm64-v8a.apk.sha256
 dist/*.asc
+!dist/basic-wallet-*-arm64-v8a.apk.sha256.asc
 
 # Expo / RN
 app/node_modules/

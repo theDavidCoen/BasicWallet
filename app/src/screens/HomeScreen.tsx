@@ -95,6 +95,8 @@ export function HomeScreen() {
     activityOpen,
     posOpen,
     scanOpen,
+    posSkipEnter,
+    scanSkipEnter,
     activityMotion,
     posMotion,
     scanMotion,
@@ -435,8 +437,15 @@ export function HomeScreen() {
      * RNGH cancels the active pan the instant beginPosDrag sets posOpen, and the
      * sheet freezes half-open. Gate new starts with sidesLocked / sheet position.
      */
+    /**
+     * Settled side sheets: disable Home swipe entirely (Xiaomi still delivered
+     * pans under pointerEvents=none and could peek Scan while POS was open).
+     * Mid-open drag keeps skipEnter true so this gesture stays enabled.
+     */
+    const sidesSettled =
+      (posOpen && !posSkipEnter) || (scanOpen && !scanSkipEnter);
     const swipe = Gesture.Pan()
-      .enabled(!activityOpen)
+      .enabled(!activityOpen && !sidesSettled)
       .activeOffsetX([-12, 12])
       .failOffsetY([-56, 56])
       .onBegin(() => {
@@ -444,6 +453,9 @@ export function HomeScreen() {
         if (sidesLocked.value) return;
         if (Math.abs(posX.value - posOpenX.value) < 48) return;
         if (Math.abs(scanX.value - scanOpenX.value) < 48) return;
+        // Either sheet already off its resting offscreen seat — do not start.
+        if (Math.abs(posX.value - posOffX.value) > 8) return;
+        if (Math.abs(scanX.value - scanOffX.value) > 8) return;
         sideDir.value = 0;
       })
       .onUpdate((e) => {
@@ -453,6 +465,8 @@ export function HomeScreen() {
           if (sidesLocked.value) return;
           if (Math.abs(posX.value - posOpenX.value) < 48) return;
           if (Math.abs(scanX.value - scanOpenX.value) < 48) return;
+          if (Math.abs(posX.value - posOffX.value) > 8) return;
+          if (Math.abs(scanX.value - scanOffX.value) > 8) return;
           const dx = e.translationX;
           if (dx > 8) {
             sideDir.value = 1;
@@ -545,13 +559,17 @@ export function HomeScreen() {
     openY,
     posDragStart,
     posOffX,
+    posOpen,
     posOpenX,
+    posSkipEnter,
     posW,
     posX,
     revealY,
     scanDragStart,
     scanOffX,
+    scanOpen,
     scanOpenX,
+    scanSkipEnter,
     scanW,
     scanX,
     sideDir,

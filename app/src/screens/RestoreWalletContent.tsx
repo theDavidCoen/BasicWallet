@@ -90,7 +90,7 @@ export function RestoreWalletContent({
   const [seed, setSeed] = useState("");
   const [nsec, setNsec] = useState("");
   const [passphrase, setPassphrase] = useState("");
-  const [serverUrl, setServerUrl] = useState("https://nextcloud.davidcoen.it");
+  const [serverUrl, setServerUrl] = useState("");
   const [serverUser, setServerUser] = useState("");
   const [serverAppPassword, setServerAppPassword] = useState("");
   const [serverToken, setServerToken] = useState("");

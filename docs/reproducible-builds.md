@@ -13,13 +13,15 @@ release keystore held offline).
 | GitHub | https://github.com/theDavidCoen/BasicWallet (private) |
 | Release PGP | `5351632CBBF23EF29F1815ACD270A7681AE508EA` (David Coen \<info@davidcoen.it\>) |
 
-Verify release artifacts:
+Verify release artifacts (arm64 APK tracked in `dist/`):
 
 ```bash
-gpg --verify dist/basic-wallet-0.1.0-alpha.1-universal.apk.sha256.asc \
-             dist/basic-wallet-0.1.0-alpha.1-universal.apk.sha256
-sha256sum -c dist/basic-wallet-0.1.0-alpha.1-universal.apk.sha256
+gpg --verify dist/basic-wallet-0.1.0-alpha.1-arm64-v8a.apk.sha256.asc \
+             dist/basic-wallet-0.1.0-alpha.1-arm64-v8a.apk.sha256
+sha256sum -c dist/basic-wallet-0.1.0-alpha.1-arm64-v8a.apk.sha256
 ```
+
+Universal APKs (all ABIs) are optional local builds; prefer `BASIC_WALLET_ABI=arm64-v8a`.
 
 ## Toolchain (pin these)
 

@@ -8,6 +8,7 @@ import { useWallet } from "../wallet/WalletProvider";
 import type { RootStackParamList } from "./types";
 import { OnboardingCreateScreen } from "../screens/OnboardingCreateScreen";
 import { TermsOfUseScreen } from "../screens/TermsOfUseScreen";
+import { PasskeyProgressScreen } from "../screens/PasskeyProgressScreen";
 import { ReadyScreen } from "../screens/ReadyScreen";
 import { HomeScreen } from "../screens/HomeScreen";
 import { RemoveWalletScreen } from "../screens/RemoveWalletScreen";
@@ -96,6 +97,7 @@ export function RootNavigator() {
             <Stack.Screen name="OnboardingCreate" component={OnboardingCreateScreen} />
             <Stack.Screen name="OnboardingSecurity" component={OnboardingSecurityScreen} />
             <Stack.Screen name="TermsOfUse" component={TermsOfUseScreen} />
+            <Stack.Screen name="PasskeyProgress" component={PasskeyProgressScreen} />
             <Stack.Screen name="AdvancedBackup" component={AdvancedBackupScreen} />
             <Stack.Screen name="NostrBackup" component={NostrBackupScreen} />
             <Stack.Screen name="HomeServerBackup" component={HomeServerBackupScreen} />
