@@ -100,6 +100,9 @@ type SheetsApi = {
   beginActivityDrag: () => void;
   beginPosDrag: () => void;
   beginScanDrag: () => void;
+  /** After interactive open snap — block Home under the sheet. */
+  settlePosOpen: () => void;
+  settleScanOpen: () => void;
   setActivityAnchorY: (y: number) => void;
   activityOpen: boolean;
   posOpen: boolean;
@@ -458,9 +461,14 @@ export function SheetHost({ children }: { children: ReactNode }) {
       clearFundsNotice,
     );
     // Home gesture already drives translateX — do not snap off mid-drag.
+    // Keep skipEnter true until settlePosOpen so Home stays touchable mid-swipe.
     setPosSkipEnter(true);
     setPosOpen(true);
   }, [activityOpen, clearFundsNotice, resetWalletFlow, scanOpen]);
+
+  const settlePosOpen = useCallback(() => {
+    setPosSkipEnter(false);
+  }, []);
 
   const beginScanDrag = useCallback(() => {
     if (activityOpen) return;
@@ -478,10 +486,13 @@ export function SheetHost({ children }: { children: ReactNode }) {
       setFundsReceivedPayload,
       clearFundsNotice,
     );
-    // Home gesture already drives translateX — do not snap off mid-drag.
     setScanSkipEnter(true);
     setScanOpen(true);
   }, [activityOpen, clearFundsNotice, posOpen, resetWalletFlow]);
+
+  const settleScanOpen = useCallback(() => {
+    setScanSkipEnter(false);
+  }, []);
 
   const openPosSheet = useCallback(() => {
     setActivityOpen(false);
@@ -765,6 +776,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
       beginActivityDrag,
       beginPosDrag,
       beginScanDrag,
+      settlePosOpen,
+      settleScanOpen,
       setActivityAnchorY,
       activityOpen,
       posOpen,
@@ -787,6 +800,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
       beginActivityDrag,
       beginPosDrag,
       beginScanDrag,
+      settlePosOpen,
+      settleScanOpen,
       connectNodeOpen,
       dismissActivity,
       dismissAddWallet,
@@ -827,11 +842,15 @@ export function SheetHost({ children }: { children: ReactNode }) {
   return (
     <SheetContext.Provider value={api}>
       <View style={styles.root}>
-        {/* While a side sheet is open (incl. dismiss spring), block Home so the
-            lift of the finger cannot hit Receive/Send underneath. */}
+        {/* Block Home under a settled side sheet. While skipEnter (interactive
+            open drag), keep Home touchable or the pan dies mid-swipe. */}
         <View
           style={styles.flex}
-          pointerEvents={posOpen || scanOpen ? "none" : "auto"}
+          pointerEvents={
+            (posOpen && !posSkipEnter) || (scanOpen && !scanSkipEnter)
+              ? "none"
+              : "auto"
+          }
         >
           {children}
         </View>

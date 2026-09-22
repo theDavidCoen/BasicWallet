@@ -83,6 +83,8 @@ export function HomeScreen() {
     beginActivityDrag,
     beginPosDrag,
     beginScanDrag,
+    settlePosOpen,
+    settleScanOpen,
     dismissActivity,
     dismissPosSheet,
     dismissScanSheet,
@@ -403,16 +405,19 @@ export function HomeScreen() {
         runOnJS(clearHomeDragJS)();
       });
 
-    /** Interactive side pages: LTR → POS, RTL → Scan (follow finger like Activity). */
+    /**
+     * Interactive side pages: LTR → POS, RTL → Scan (follow finger like Activity).
+     * Keep `.enabled` true while POS/Scan React state flips mid-drag — otherwise
+     * RNGH cancels the active pan the instant beginPosDrag sets posOpen, and the
+     * sheet freezes half-open. Gate new starts with sidesLocked / sheet position.
+     */
     const swipe = Gesture.Pan()
-      .enabled(!activityOpen && !posOpen && !scanOpen)
-      // Activate sooner; tolerate more vertical drift so POS open is reliable.
+      .enabled(!activityOpen)
       .activeOffsetX([-12, 12])
       .failOffsetY([-56, 56])
       .onBegin(() => {
         "worklet";
         if (sidesLocked.value) return;
-        // Sheet already covering Home (React `enabled` lags a frame).
         if (Math.abs(posX.value - posOpenX.value) < 48) return;
         if (Math.abs(scanX.value - scanOpenX.value) < 48) return;
         sideDir.value = 0;
@@ -473,7 +478,9 @@ export function HomeScreen() {
           }
           // Stay locked while POS is open.
           sidesLocked.value = 1;
-          posX.value = withSpring(posOpenX.value, SHEET_SPRING);
+          posX.value = withSpring(posOpenX.value, SHEET_SPRING, (finished) => {
+            if (finished) runOnJS(settlePosOpen)();
+          });
           return;
         }
         if (dir === -1) {
@@ -491,15 +498,15 @@ export function HomeScreen() {
             return;
           }
           sidesLocked.value = 1;
-          scanX.value = withSpring(scanOpenX.value, SHEET_SPRING);
+          scanX.value = withSpring(scanOpenX.value, SHEET_SPRING, (finished) => {
+            if (finished) runOnJS(settleScanOpen)();
+          });
         }
       });
 
     return { pan: activityPan, homeSwipe: swipe };
   }, [
     activityOpen,
-    posOpen,
-    scanOpen,
     beginPosDrag,
     beginScanDrag,
     clearHomeDragJS,
@@ -507,6 +514,8 @@ export function HomeScreen() {
     finishDismissJS,
     finishPosDismissJS,
     finishScanDismissJS,
+    settlePosOpen,
+    settleScanOpen,
     offY,
     onDragStartJS,
     openY,

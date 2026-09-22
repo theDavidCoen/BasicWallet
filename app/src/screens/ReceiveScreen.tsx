@@ -6,14 +6,13 @@ import {
   Alert,
   Dimensions,
   Pressable,
-  ScrollView,
   Share,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { Gesture, GestureDetector, ScrollView } from "react-native-gesture-handler";
 import Animated, {
   cancelAnimation,
   runOnJS,
@@ -85,12 +84,19 @@ export function ReceiveScreen() {
   const posDir = useSharedValue(0);
   const posOpenSV = useSharedValue(0);
 
-  const openPos = useCallback(() => {
+  /** Commit open only after snap — never enable sheet hits mid-drag. */
+  const commitPosOpen = useCallback(() => {
     posOpenSV.value = 1;
     setPosOpen(true);
+  }, [posOpenSV]);
+
+  const openPos = useCallback(() => {
+    posOpenSV.value = 1;
     cancelAnimation(posX);
-    posX.value = withSpring(0, SHEET_SPRING);
-  }, [posOpenSV, posX]);
+    posX.value = withSpring(0, SHEET_SPRING, (finished) => {
+      if (finished) runOnJS(commitPosOpen)();
+    });
+  }, [commitPosOpen, posOpenSV, posX]);
 
   const closePos = useCallback(() => {
     cancelAnimation(posX);
@@ -102,9 +108,9 @@ export function ReceiveScreen() {
     });
   }, [posOpenSV, posX, windowW]);
 
+  /** Visual drag started — keep React hits off until commitPosOpen. */
   const beginPosDrag = useCallback(() => {
     posOpenSV.value = 1;
-    setPosOpen(true);
   }, [posOpenSV]);
 
   const finishPosDismiss = useCallback(() => {
@@ -242,36 +248,43 @@ export function ReceiveScreen() {
     [boardingAddress, arkAddress],
   );
 
-  const posSwipe = useMemo(() => {
+  /**
+   * Receive POS: sheet slides in from the right (R→L open).
+   * Never wrap the keypad in a Pan — that steals Pressable taps.
+   * Open pan lives on main content (+ edge); close pan on sheet left edge only.
+   */
+  const posOpenPan = useMemo(() => {
     if (isLightning) return Gesture.Pan().enabled(false);
     return Gesture.Pan()
-      .activeOffsetX([-16, 16])
-      .failOffsetY([-32, 32])
+      .activeOffsetX([-14, 14])
+      .failOffsetY([-40, 40])
       .onBegin(() => {
         "worklet";
+        // Already open / opening — sheet owns dismiss via close pan.
+        if (posOpenSV.value === 1) {
+          posDir.value = 0;
+          return;
+        }
         posDir.value = 0;
       })
       .onUpdate((e) => {
         "worklet";
+        if (posOpenSV.value === 1 && posDir.value === 0) return;
         const dx = e.translationX;
         if (posDir.value === 0) {
-          if (posOpenSV.value === 0 && dx < -10) {
+          // Open only: finger moves left (R→L).
+          if (dx < -10) {
             posDir.value = -1;
             cancelAnimation(posX);
             posX.value = windowW;
             posDragStart.value = windowW;
             runOnJS(beginPosDrag)();
-          } else if (posOpenSV.value === 1 && dx > 10) {
-            posDir.value = 1;
-            cancelAnimation(posX);
-            posDragStart.value = posX.value;
+          } else {
+            return;
           }
         }
         if (posDir.value === -1) {
           const next = windowW + dx;
-          posX.value = Math.min(windowW, Math.max(0, next));
-        } else if (posDir.value === 1) {
-          const next = posDragStart.value + dx;
           posX.value = Math.min(windowW, Math.max(0, next));
         }
       })
@@ -279,31 +292,21 @@ export function ReceiveScreen() {
         "worklet";
         const dir = posDir.value;
         posDir.value = 0;
-        if (dir === -1) {
-          const open = posX.value < windowW * 0.55 || e.velocityX < -600;
-          if (open) {
-            posX.value = withSpring(0, SHEET_SPRING);
-            runOnJS(beginPosDrag)();
-          } else {
-            posX.value = withSpring(windowW, SHEET_SPRING, (finished) => {
-              if (finished) runOnJS(finishPosDismiss)();
-            });
-          }
-          return;
-        }
-        if (dir === 1) {
-          const close = posX.value > windowW * 0.35 || e.velocityX > 600;
-          if (close) {
-            posX.value = withSpring(windowW, SHEET_SPRING, (finished) => {
-              if (finished) runOnJS(finishPosDismiss)();
-            });
-          } else {
-            posX.value = withSpring(0, SHEET_SPRING);
-          }
+        if (dir !== -1) return;
+        const open = posX.value < windowW * 0.55 || e.velocityX < -600;
+        if (open) {
+          posX.value = withSpring(0, SHEET_SPRING, (finished) => {
+            if (finished) runOnJS(commitPosOpen)();
+          });
+        } else {
+          posX.value = withSpring(windowW, SHEET_SPRING, (finished) => {
+            if (finished) runOnJS(finishPosDismiss)();
+          });
         }
       });
   }, [
     beginPosDrag,
+    commitPosOpen,
     finishPosDismiss,
     isLightning,
     posDir,
@@ -313,9 +316,42 @@ export function ReceiveScreen() {
     windowW,
   ]);
 
+  /** Dismiss POS: left-edge grabber, swipe right (same as InteractiveSideSheet). */
+  const posClosePan = useMemo(() => {
+    return Gesture.Pan()
+      .activeOffsetX([-16, 16])
+      .failOffsetY([-32, 32])
+      .onBegin(() => {
+        "worklet";
+        cancelAnimation(posX);
+        posDragStart.value = posX.value;
+      })
+      .onUpdate((e) => {
+        "worklet";
+        const next = posDragStart.value + e.translationX;
+        posX.value = Math.min(windowW, Math.max(0, next));
+      })
+      .onEnd((e) => {
+        "worklet";
+        const close = posX.value > windowW * 0.35 || e.velocityX > 600;
+        if (close) {
+          posX.value = withSpring(windowW, SHEET_SPRING, (finished) => {
+            if (finished) runOnJS(finishPosDismiss)();
+          });
+        } else {
+          posX.value = withSpring(0, SHEET_SPRING);
+        }
+      });
+  }, [finishPosDismiss, posDragStart, posX, windowW]);
+
   const posStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: posX.value }],
   }));
+
+  const receiveOpenGesture = useMemo(
+    () => Gesture.Simultaneous(Gesture.Native(), posOpenPan),
+    [posOpenPan],
+  );
 
   const displayPayload =
     mode === "bip21" ? bip21Uri : mode === "arkade" ? arkAddress : boardingAddress;
@@ -504,178 +540,189 @@ export function ReceiveScreen() {
   }
 
   return (
-    <GestureDetector gesture={posSwipe}>
-      <View style={styles.flexRoot} collapsable={false}>
-        <ScreenChrome logoScale={0.77}>
-          <ScrollView
-            style={styles.scroll}
-            contentContainerStyle={styles.scrollContent}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            <Text style={styles.title}>RECEIVE</Text>
-            <Pressable onPress={toggleBalanceHidden} onLongPress={() => void refresh()}>
-              <Text style={styles.balance}>{bal}</Text>
-            </Pressable>
-            <Text style={styles.caption}>{caption}</Text>
-
-            <View style={styles.modeRow}>
-              <Pressable
-                style={[styles.modeBtn, mode === "bip21" && styles.modeBtnOn]}
-                onPress={() => setMode("bip21")}
-              >
-                <Text style={[styles.modeLabel, mode === "bip21" && styles.modeLabelOn]}>
-                  BIP21
-                </Text>
+    <View style={styles.flexRoot} collapsable={false}>
+      <GestureDetector gesture={receiveOpenGesture}>
+        <View style={styles.flexRoot} collapsable={false}>
+          <ScreenChrome logoScale={0.77}>
+            <ScrollView
+              style={styles.scroll}
+              contentContainerStyle={styles.scrollContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              bounces={false}
+            >
+              <Text style={styles.title}>RECEIVE</Text>
+              <Pressable onPress={toggleBalanceHidden} onLongPress={() => void refresh()}>
+                <Text style={styles.balance}>{bal}</Text>
               </Pressable>
-              <Pressable
-                style={[styles.modeBtn, mode === "arkade" && styles.modeBtnOn]}
-                onPress={() => setMode("arkade")}
-              >
-                <Text style={[styles.modeLabel, mode === "arkade" && styles.modeLabelOn]}>
-                  Arkade
-                </Text>
-              </Pressable>
-              <Pressable
-                style={[styles.modeBtn, mode === "boarding" && styles.modeBtnOn]}
-                onPress={() => setMode("boarding")}
-              >
-                <Text style={[styles.modeLabel, mode === "boarding" && styles.modeLabelOn]}>
-                  Boarding
-                </Text>
-              </Pressable>
-            </View>
+              <Text style={styles.caption}>{caption}</Text>
 
-            <View style={styles.qrWrap}>
-              {qrReady && displayPayload ? (
-                <ExpandableQrCode value={displayPayload} size={220} />
-              ) : (
-                <View style={styles.qrPlaceholder}>
-                  {showBoardingSpinner ? (
-                    <ActivityIndicator color="#000" />
-                  ) : (
-                    <Text style={styles.qrPlaceholderText}>…</Text>
-                  )}
-                </View>
-              )}
-            </View>
-
-            <View style={styles.pillRow}>
-              <View style={styles.pill}>
-                <Text style={styles.pillText} numberOfLines={1}>
-                  {displayPayload
-                    ? midEllipsis(displayPayload, mode === "bip21" ? 18 : 14, 8)
-                    : showBoardingSpinner
-                      ? "loading…"
-                      : "…"}
-                </Text>
+              <View style={styles.modeRow}>
+                <Pressable
+                  style={[styles.modeBtn, mode === "bip21" && styles.modeBtnOn]}
+                  onPress={() => setMode("bip21")}
+                >
+                  <Text style={[styles.modeLabel, mode === "bip21" && styles.modeLabelOn]}>
+                    BIP21
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.modeBtn, mode === "arkade" && styles.modeBtnOn]}
+                  onPress={() => setMode("arkade")}
+                >
+                  <Text style={[styles.modeLabel, mode === "arkade" && styles.modeLabelOn]}>
+                    Arkade
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.modeBtn, mode === "boarding" && styles.modeBtnOn]}
+                  onPress={() => setMode("boarding")}
+                >
+                  <Text style={[styles.modeLabel, mode === "boarding" && styles.modeLabelOn]}>
+                    Boarding
+                  </Text>
+                </Pressable>
               </View>
-              <Pressable
-                style={styles.icoBtn}
-                onPress={() => void onCopy()}
-                disabled={!displayPayload}
-              >
-                <Text style={styles.icoLabel}>{copied ? "✓" : "Copy"}</Text>
-              </Pressable>
-              <Pressable
-                style={styles.icoBtn}
-                onPress={() => void onShare()}
-                disabled={!displayPayload}
-              >
-                <Text style={styles.icoLabel}>Share</Text>
-              </Pressable>
-            </View>
 
-        {mode === "boarding" ? (
-          <>
-            {boardingError && !boardingAddress ? (
-              <Text style={styles.errorText}>{boardingError}</Text>
-            ) : (
-              <Text style={styles.boardingHint}>
-                Fund this onchain address (faucet / L1). Boarding settles into Arkade
-                automatically after confirmation.
-                {boardingSats > 0
-                  ? `\nBoarding pending: ${boardingLabel} sats`
-                  : ""}
-              </Text>
-            )}
-            <Pressable
-              style={[styles.secondary, busy && { opacity: 0.6 }]}
-              disabled={busy}
-              onPress={() => void onNewBoardingAddress()}
-            >
-              {busy ? (
-                <ActivityIndicator color={colors.fg} />
+              <View style={styles.qrWrap}>
+                {qrReady && displayPayload ? (
+                  <ExpandableQrCode value={displayPayload} size={220} />
+                ) : (
+                  <View style={styles.qrPlaceholder}>
+                    {showBoardingSpinner ? (
+                      <ActivityIndicator color="#000" />
+                    ) : (
+                      <Text style={styles.qrPlaceholderText}>…</Text>
+                    )}
+                  </View>
+                )}
+              </View>
+
+              <View style={styles.pillRow}>
+                <View style={styles.pill}>
+                  <Text style={styles.pillText} numberOfLines={1}>
+                    {displayPayload
+                      ? midEllipsis(displayPayload, mode === "bip21" ? 18 : 14, 8)
+                      : showBoardingSpinner
+                        ? "loading…"
+                        : "…"}
+                  </Text>
+                </View>
+                <Pressable
+                  style={styles.icoBtn}
+                  onPress={() => void onCopy()}
+                  disabled={!displayPayload}
+                >
+                  <Text style={styles.icoLabel}>{copied ? "✓" : "Copy"}</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.icoBtn}
+                  onPress={() => void onShare()}
+                  disabled={!displayPayload}
+                >
+                  <Text style={styles.icoLabel}>Share</Text>
+                </Pressable>
+              </View>
+
+              {mode === "boarding" ? (
+                <>
+                  {boardingError && !boardingAddress ? (
+                    <Text style={styles.errorText}>{boardingError}</Text>
+                  ) : (
+                    <Text style={styles.boardingHint}>
+                      Fund this onchain address (faucet / L1). Boarding settles into Arkade
+                      automatically after confirmation.
+                      {boardingSats > 0
+                        ? `\nBoarding pending: ${boardingLabel} sats`
+                        : ""}
+                    </Text>
+                  )}
+                  <Pressable
+                    style={[styles.secondary, busy && { opacity: 0.6 }]}
+                    disabled={busy}
+                    onPress={() => void onNewBoardingAddress()}
+                  >
+                    {busy ? (
+                      <ActivityIndicator color={colors.fg} />
+                    ) : (
+                      <Text style={styles.secondaryText}>New receive address</Text>
+                    )}
+                  </Pressable>
+                </>
+              ) : mode === "bip21" ? (
+                <>
+                  {boardingError && !boardingAddress && !arkAddress ? (
+                    <Text style={styles.errorText}>{boardingError}</Text>
+                  ) : (
+                    <Text style={styles.boardingHint}>
+                      Unified URI: onchain boarding + Arkade address
+                      {boardingSats > 0
+                        ? `\nBoarding pending: ${boardingLabel} sats`
+                        : ""}
+                    </Text>
+                  )}
+                  <Pressable
+                    style={[styles.secondary, busy && { opacity: 0.6 }]}
+                    disabled={busy}
+                    onPress={() => void onNewArkAddress()}
+                  >
+                    {busy ? (
+                      <ActivityIndicator color={colors.fg} />
+                    ) : (
+                      <Text style={styles.secondaryText}>New receive address</Text>
+                    )}
+                  </Pressable>
+                </>
               ) : (
-                <Text style={styles.secondaryText}>New receive address</Text>
+                <Pressable
+                  style={[styles.secondary, busy && { opacity: 0.6 }]}
+                  disabled={busy}
+                  onPress={() => void onNewArkAddress()}
+                >
+                  {busy ? (
+                    <ActivityIndicator color={colors.fg} />
+                  ) : (
+                    <Text style={styles.secondaryText}>New receive address</Text>
+                  )}
+                </Pressable>
               )}
-            </Pressable>
-          </>
-        ) : mode === "bip21" ? (
-          <>
-            {boardingError && !boardingAddress && !arkAddress ? (
-              <Text style={styles.errorText}>{boardingError}</Text>
-            ) : (
-              <Text style={styles.boardingHint}>
-                Unified URI: onchain boarding + Arkade address
-                {boardingSats > 0
-                  ? `\nBoarding pending: ${boardingLabel} sats`
-                  : ""}
-              </Text>
-            )}
-            <Pressable
-              style={[styles.secondary, busy && { opacity: 0.6 }]}
-              disabled={busy}
-              onPress={() => void onNewArkAddress()}
-            >
-              {busy ? (
-                <ActivityIndicator color={colors.fg} />
-              ) : (
-                <Text style={styles.secondaryText}>New receive address</Text>
-              )}
-            </Pressable>
-          </>
-        ) : (
+
+              <View style={{ height: 24 }} />
+            </ScrollView>
+          </ScreenChrome>
+
+          {/* POS swipe affordance — vertical handle on right edge. */}
           <Pressable
-            style={[styles.secondary, busy && { opacity: 0.6 }]}
-            disabled={busy}
-            onPress={() => void onNewArkAddress()}
+            style={styles.posEdgeHit}
+            onPress={openPos}
+            hitSlop={8}
+            accessibilityLabel="Open POS"
           >
-            {busy ? (
-              <ActivityIndicator color={colors.fg} />
-            ) : (
-              <Text style={styles.secondaryText}>New receive address</Text>
-            )}
+            <View style={styles.posEdgeLine} />
           </Pressable>
-        )}
+        </View>
+      </GestureDetector>
 
-        <View style={{ height: 24 }} />
-          </ScrollView>
-        </ScreenChrome>
-
-        {/* POS swipe affordance — vertical handle on right edge (like activity). */}
-        <Pressable
-          style={styles.posEdgeHit}
-          onPress={openPos}
-          hitSlop={8}
-          accessibilityLabel="Open POS"
-        >
-          <View style={styles.posEdgeLine} />
-        </Pressable>
-
-        <Animated.View
-          style={[styles.posSheet, posStyle]}
-          pointerEvents={posOpen ? "auto" : "none"}
-        >
+      {/* POS sheet outside open-pan — keypad taps never compete with Pan. */}
+      <Animated.View
+        style={[styles.posSheet, posStyle]}
+        pointerEvents={posOpen ? "auto" : "none"}
+      >
+        <GestureDetector gesture={posClosePan}>
+          <View style={styles.posCloseEdge} accessibilityLabel="Close POS">
+            <View style={styles.posEdgeLine} />
+          </View>
+        </GestureDetector>
+        <View style={styles.posBody} collapsable={false}>
           <ReceivePosPanel
             bip21Uri={bip21Uri}
             onClose={closePos}
             onRequestUri={buildPosBip21}
             active={posOpen}
           />
-        </Animated.View>
-      </View>
-    </GestureDetector>
+        </View>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -688,7 +735,7 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
     bottom: 0,
-    width: 28,
+    width: 36,
     justifyContent: "center",
     alignItems: "center",
     zIndex: 2,
@@ -701,8 +748,22 @@ const styles = StyleSheet.create({
   },
   posSheet: {
     ...StyleSheet.absoluteFill,
+    backgroundColor: colors.bg,
     zIndex: 10,
     elevation: 10,
+  },
+  posCloseEdge: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 28,
+    zIndex: 2,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  posBody: {
+    flex: 1,
   },
   title: {
     fontFamily: "JetBrainsMono_700Bold",
