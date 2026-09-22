@@ -26,3 +26,5 @@ Gemini_Generated_*.png
 # Python
 **/__pycache__/
 *.pyc
+
+.gradle-home/
