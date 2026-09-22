@@ -3,6 +3,9 @@
 # Local scratch
 .tmp-*
 *.log
+dist/*.apk
+dist/*.sha256
+dist/*.asc
 
 # Expo / RN
 app/node_modules/

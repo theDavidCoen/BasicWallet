@@ -14,6 +14,8 @@ g.crypto!.getRandomValues = ((arr: ArrayBufferView) => {
 import "react-native-gesture-handler";
 import "react-native-reanimated";
 import { registerRootComponent } from "expo";
+import { installAppLogCapture } from "./src/diagnostics/appLog";
 import App from "./App";
 
+installAppLogCapture();
 registerRootComponent(App);

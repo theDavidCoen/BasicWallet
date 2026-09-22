@@ -36,6 +36,7 @@ import { ExportNsecRevealScreen } from "../screens/ExportNsecRevealScreen";
 import { GenerateIdentityWarningScreen } from "../screens/GenerateIdentityWarningScreen";
 import { ImportNsecWarningScreen } from "../screens/ImportNsecWarningScreen";
 import { ResetAppScreen } from "../screens/ResetAppScreen";
+import { LogsScreen } from "../screens/LogsScreen";
 import { PrivacyScreen } from "../screens/PrivacyScreen";
 import { SetAppPinScreen } from "../screens/SetAppPinScreen";
 import { OnboardingSecurityScreen } from "../screens/OnboardingSecurityScreen";
@@ -125,6 +126,7 @@ export function RootNavigator() {
             <Stack.Screen name="GenerateIdentityWarning" component={GenerateIdentityWarningScreen} />
             <Stack.Screen name="ImportNsecWarning" component={ImportNsecWarningScreen} />
             <Stack.Screen name="ResetApp" component={ResetAppScreen} />
+            <Stack.Screen name="Logs" component={LogsScreen} />
             <Stack.Screen name="UnilateralExitHub" component={UnilateralExitHubScreen} />
             <Stack.Screen
               name="UnilateralExitPrepare"

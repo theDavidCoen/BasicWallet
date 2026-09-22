@@ -1,10 +1,13 @@
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  BackHandler,
   Linking,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
+  ToastAndroid,
   View,
   type LayoutChangeEvent,
 } from "react-native";
@@ -295,6 +298,27 @@ export function HomeScreen() {
         if (timer) clearInterval(timer);
       };
     }, [network.id, network.arkServerUrl]),
+  );
+
+  /** Android root: first back shows toast; second within 2s exits. Sheets own back when open. */
+  useFocusEffect(
+    useCallback(() => {
+      let lastBackAt = 0;
+      const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+        if (navigation.canGoBack()) return false;
+        const now = Date.now();
+        if (now - lastBackAt < 2_000) {
+          lastBackAt = 0;
+          return false;
+        }
+        lastBackAt = now;
+        if (Platform.OS === "android") {
+          ToastAndroid.show("Tap again to exit the app", ToastAndroid.SHORT);
+        }
+        return true;
+      });
+      return () => sub.remove();
+    }, [navigation]),
   );
 
   const rateFooter = useMemo(() => {

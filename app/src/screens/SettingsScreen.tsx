@@ -17,6 +17,7 @@ type NavTarget =
   | "NostrIdentity"
   | "RestoreWallet"
   | "ResetApp"
+  | "Logs"
   | "Privacy"
   | "ConnectedNode"
   | "ArkadeSettings"
@@ -53,7 +54,10 @@ const BLOCKS: Block[] = [
   { kind: "section", title: "Provider Settings" },
   { kind: "row", row: { label: "Arkade", on: "ArkadeSettings" } },
 
+  { kind: "section", title: "Advanced settings" },
+  { kind: "row", row: { label: "Logs", on: "Logs" } },
   { kind: "row", row: { label: "Reset app", on: "ResetApp", danger: true } },
+
   { kind: "row", row: { label: "About", on: "About" } },
 ];
 

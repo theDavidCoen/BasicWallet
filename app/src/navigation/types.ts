@@ -62,6 +62,8 @@ export type RootStackParamList = {
   GenerateIdentityWarning: undefined;
   ImportNsecWarning: undefined;
   ResetApp: undefined;
+  /** Session console / diagnostics export */
+  Logs: undefined;
   /** Unilateral / collaborative exit hub */
   UnilateralExitHub: undefined;
   UnilateralExitPrepare: undefined;
