@@ -19,3 +19,7 @@ Gemini_Generated_*.png
 
 # Local MCP secrets (tokens)
 .cursor/mcp.json
+
+# Python
+**/__pycache__/
+*.pyc
