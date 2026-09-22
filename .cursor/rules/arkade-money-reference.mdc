@@ -1,0 +1,14 @@
+---
+description: Basic Wallet Arkade behavior must follow arkade.money
+alwaysApply: true
+---
+
+# Basic Wallet — Arkade reference
+
+For any Arkade SDK / balance / receive / send / restore / watcher work in this repo:
+
+1. **Canonical product reference:** [arkade.money](https://arkade.money) / clone `~/Documenti/Arkade/wallet` ([arkade-os/wallet](https://github.com/arkade-os/wallet)).
+2. Read the official pattern first (`src/providers/wallet.tsx`, AspProvider, `lib/asp.ts`), then adapt to Expo.
+3. Prefer official behavior: `getBalance`, restore only on import/restore (not every cold start), incoming via one `notifyIncomingFunds` with debounce + always `stop()`.
+4. Never invent uncancellable `Promise.race` / stacked Esplora pollers (Mind 2026-09-03 leak).
+5. Product UX stays in `prototype/docs/`; HD mode stays mandatory per `arkade-wallet-tech-spec.md` (official wallet default is often `static`).

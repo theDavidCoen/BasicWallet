@@ -1,0 +1,95 @@
+import { colors } from "../theme/colors";
+import { StyleSheet } from "react-native";
+
+export const ui = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: colors.bg,
+    paddingHorizontal: 28,
+    paddingTop: 64,
+    paddingBottom: 40,
+  },
+  centerRoot: {
+    flex: 1,
+    backgroundColor: colors.bg,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 28,
+  },
+  title: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 20,
+    color: colors.fg,
+    textAlign: "center",
+    marginBottom: 12,
+  },
+  caption: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 14,
+    color: colors.caption,
+    textAlign: "center",
+    lineHeight: 20,
+    marginBottom: 8,
+  },
+  hint: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.hint,
+    textAlign: "center",
+    lineHeight: 18,
+  },
+  primaryBtn: {
+    backgroundColor: colors.fg,
+    borderRadius: 10,
+    paddingVertical: 16,
+    alignItems: "center",
+    marginTop: 12,
+  },
+  primaryBtnText: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 15,
+    color: "#000000",
+  },
+  secondaryBtn: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: 16,
+    alignItems: "center",
+    marginTop: 12,
+  },
+  secondaryBtnText: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 15,
+    color: colors.fg,
+  },
+  card: {
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.fg,
+    padding: 16,
+    marginTop: 12,
+  },
+  cardMuted: {
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 16,
+    marginTop: 12,
+  },
+  cardTitle: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 16,
+    color: colors.fg,
+    marginBottom: 8,
+  },
+  footerLink: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 14,
+    color: colors.caption,
+    textAlign: "center",
+    paddingTop: 24,
+  },
+});

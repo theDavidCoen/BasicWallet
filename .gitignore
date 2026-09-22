@@ -1,0 +1,21 @@
+.secrets/
+
+# Local scratch
+.tmp-*
+*.log
+
+# Expo / RN
+app/node_modules/
+app/.expo/
+app/dist/
+app/android/
+app/ios/
+app/*.jks
+app/*.keystore
+**/.DS_Store
+
+# Scratch AI images
+Gemini_Generated_*.png
+
+# Local MCP secrets (tokens)
+.cursor/mcp.json

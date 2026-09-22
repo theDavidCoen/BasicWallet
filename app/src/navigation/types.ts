@@ -1,0 +1,91 @@
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+
+export type RootStackParamList = {
+  OnboardingCreate: undefined;
+  /** Recommend OS biometrics; require App PIN when biometrics are off. */
+  OnboardingSecurity: { continueTo: "passkey" | "device-only" | "restore" };
+  /** Passkey path = cross-device only; device-only = without passkey → Advanced Backup. */
+  TermsOfUse: { mode: "passkey" | "device-only" | "dev-csprng" };
+  AdvancedBackup: undefined;
+  NostrBackup: undefined;
+  HomeServerBackup: undefined;
+  /** `seed` = Add Wallet (Arkade only). `full` = Settings / onboarding (seed | nsec | server). */
+  RestoreWallet: { mode?: "full" | "seed" };
+  Ready: undefined;
+  Home: undefined;
+  /** @deprecated Sheet host — kept for type compat; do not navigate. */
+  WalletSwitcher: undefined;
+  /** @deprecated Prefer Wallets sheet › edit step. */
+  EditWallet: { walletId: string };
+  RemoveWallet: { walletId: string };
+  RemoveLightningWallet: { walletId: string };
+  AddWallet: undefined;
+  /** @deprecated Prefer sheet openImportWallet / Settings RestoreWallet. */
+  Receive: undefined;
+  Send: { to?: string; amountSats?: number } | undefined;
+  Settings: undefined;
+  /** Arkade-specific settings (network, delegates, recovery, exits) */
+  ArkadeSettings: undefined;
+  /** Arkade network + custom ASP */
+  ArkadeNetwork: undefined;
+  /** Penpot 05b */
+  DisplayCurrencies: undefined;
+  /** Arkade VTXO delegates */
+  Delegates: undefined;
+  /** Status for selected wallet (Arkade operator / Lightning node). Not the connect hub. */
+  ConnectedNode: undefined;
+  /** Penpot 06 — Connect Lightning Node hub (stack leftover; prefer Add Wallet sheet). */
+  ConnectNode: undefined;
+  /** Penpot 06b — BTCPay LND REST (stack from Settings; sheet step from switcher). */
+  ConnectBtcPay: undefined;
+  /** LNDHub (stack from Settings; sheet step from switcher). */
+  ConnectLndHub: undefined;
+  /** Penpot 13 — Node Status after connect */
+  NodeStatus:
+    | {
+        localSats?: number;
+        alias?: string;
+        pubkey?: string;
+      }
+    | undefined;
+  Privacy: undefined;
+  SetAppPin:
+    | {
+        intent?: "set" | "change" | "remove" | "onboarding";
+        continueTo?: "passkey" | "device-only" | "restore";
+      }
+    | undefined;
+  ExportRecoveryPhrase: { walletId?: string } | undefined;
+  NostrIdentity: undefined;
+  ExportNsecWarning: undefined;
+  ExportNsecReveal: undefined;
+  GenerateIdentityWarning: undefined;
+  ImportNsecWarning: undefined;
+  ResetApp: undefined;
+  /** Unilateral / collaborative exit hub */
+  UnilateralExitHub: undefined;
+  UnilateralExitPrepare: undefined;
+  /** Step 3 — fund HD fee address */
+  UnilateralExitFund:
+    | {
+        expectedRecoveredSats?: number;
+        expectedFundingSats?: number;
+      }
+    | undefined;
+  /** Step 4 — Start execute (last) */
+  UnilateralExitExecute: { esploraUrl?: string } | undefined;
+  CollaborativeOffboard: undefined;
+  /** External onchain address for exit recovery / auto-prepare */
+  ExitRecoveryAddress: { from?: "reminder" | "exit" } | undefined;
+  /** Penpot 05f About */
+  About: undefined;
+  /** @deprecated Sheet host — do not navigate. */
+  Activity: undefined;
+  ActivityDetail: { activityId: string; walletId?: string };
+  /** @deprecated Sheet host — do not navigate. */
+  FundsReceived: { amount: number; kind: "boarding" | "arkade" | "lightning" };
+  /** @deprecated Sheet host — do not navigate. */
+  FundsSent: { amount: number; txid: string; address?: string; rail?: "arkade" | "lightning" };
+};
+
+export type RootNav = NativeStackNavigationProp<RootStackParamList>;

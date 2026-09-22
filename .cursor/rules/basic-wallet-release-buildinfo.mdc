@@ -1,0 +1,15 @@
+---
+description: On real Basic Wallet release, embed APP_GIT_COMMIT (not "dev")
+alwaysApply: true
+---
+
+# Basic Wallet — release build identity
+
+When David asks for a **real release** (APK/AAB, store build, version bump + ship, “crea una release”, “release reale”):
+
+1. Set `APP_GIT_COMMIT` in `app/src/buildInfo.ts` to the real short git hash (`git rev-parse --short HEAD`). Do **not** ship with `"dev"`.
+2. Keep `APP_VERSION` in sync with `app/package.json` and `app/app.json` (SemVer).
+3. If `LICENSE` is on GitHub, set `APP_LICENSE_URL` to the blob URL (today still `"#"`).
+4. Release builds use mainnet ASP (`__DEV__` false → `https://arkade.computer`).
+
+Mind: `~/Mind/topics/basic-wallet/entities/basic-wallet.md` (topic **not** under Arklabs).

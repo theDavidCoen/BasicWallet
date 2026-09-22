@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="3200" height="1100" viewBox="0 0 3200 1100" font-family="JetBrains Mono, ui-monospace, monospace">
+  <defs>
+    <g id="logoB">
+      <g transform="rotate(-8 13 15)">
+        <path d="M12 3v4M18 3v4" stroke="#fff" stroke-width="1.7" stroke-linecap="round" fill="none"/>
+        <path d="M8 8v16" stroke="#fff" stroke-width="1.7" fill="none"/>
+        <path d="M8 8h10.2c2.9 0 5.2 2.1 5.2 4.7S21.1 17.4 18.2 17.4H8" stroke="#fff" stroke-width="1.7" fill="none"/>
+        <path d="M8 17.4h11c3.1 0 5.6 2.3 5.6 5.1S22.1 27.6 19 27.6H8" stroke="#fff" stroke-width="1.7" fill="none"/>
+        <path d="M12 27.6V30M18 27.6V30" stroke="#fff" stroke-width="1.7" stroke-linecap="round" fill="none"/>
+      </g>
+    </g>
+  </defs>
+
+  <!-- 01 Home -->
+  <g id="s01-Home" transform="translate(20,40)">
+    <text fill="#111" font-size="14" font-weight="700" x="0" y="-12">01 Home</text>
+    <rect width="390" height="844" rx="28" fill="#000"/>
+    <g transform="translate(155,80)"><use href="#logoB"/><text fill="#fff" font-size="28" x="28" y="24">asic</text></g>
+    <text fill="#fff" font-size="28" font-weight="700" x="195" y="280" text-anchor="middle">1,234,567 sats</text>
+    <text fill="#8c8c8c" font-size="13" x="195" y="308" text-anchor="middle">EUR 6,019 / USD 6,492</text>
+    <rect x="70" y="360" width="110" height="48" rx="8" fill="none" stroke="#fff" stroke-width="1.5"/>
+    <text fill="#fff" font-size="16" x="125" y="390" text-anchor="middle">Receive</text>
+    <path d="M190 372v20M190 372l-4 4M190 372l4 4M210 400V380M210 400l-4-4M210 400l4-4" stroke="#fff" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+    <rect x="230" y="360" width="90" height="48" rx="8" fill="none" stroke="#fff" stroke-width="1.5"/>
+    <text fill="#fff" font-size="16" x="275" y="390" text-anchor="middle">Send</text>
+    <text fill="#555" font-size="11" x="0" y="870">Tap balance for privacy. No FX footer. Vector tilted B.</text>
+  </g>
+
+  <!-- 01b Privacy -->
+  <g id="s01b-Privacy" transform="translate(450,40)">
+    <text fill="#111" font-size="14" font-weight="700" x="0" y="-12">01b Home privacy</text>
+    <rect width="390" height="844" rx="28" fill="#000"/>
+    <g transform="translate(155,80)"><use href="#logoB"/><text fill="#fff" font-size="28" x="28" y="24">asic</text></g>
+    <text fill="#fff" font-size="28" font-weight="700" x="195" y="280" text-anchor="middle">****** sats</text>
+    <text fill="#8c8c8c" font-size="13" x="195" y="308" text-anchor="middle">tap to show</text>
+    <rect x="70" y="360" width="110" height="48" rx="8" fill="none" stroke="#fff" stroke-width="1.5"/>
+    <text fill="#fff" font-size="16" x="125" y="390" text-anchor="middle">Receive</text>
+    <path d="M190 372v20M190 372l-4 4M190 372l4 4M210 400V380M210 400l-4-4M210 400l4-4" stroke="#fff" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+    <rect x="230" y="360" width="90" height="48" rx="8" fill="none" stroke="#fff" stroke-width="1.5"/>
+    <text fill="#fff" font-size="16" x="275" y="390" text-anchor="middle">Send</text>
+    <text fill="#555" font-size="11" x="0" y="870">Comment 2: balance hidden.</text>
+  </g>
+
+  <!-- 02 Receive -->
+  <g id="s02-Receive" transform="translate(880,40)">
+    <text fill="#111" font-size="14" font-weight="700" x="0" y="-12">02 Receive BIP21</text>
+    <rect width="390" height="844" rx="28" fill="#000"/>
+    <g transform="translate(155,56)" transform-origin="0 0"><g transform="scale(0.77)"><use href="#logoB"/></g><text fill="#fff" font-size="20" x="28" y="20">asic</text></g>
+    <text fill="#fff" font-size="20" font-weight="700" x="195" y="120" text-anchor="middle">RECEIVE BTC</text>
+    <rect x="85" y="150" width="220" height="220" rx="16" fill="#1a1a1a"/>
+    <rect x="110" y="175" width="170" height="170" fill="#fff"/>
+    <rect x="120" y="185" width="40" height="40" fill="#000"/>
+    <rect x="230" y="185" width="40" height="40" fill="#000"/>
+    <rect x="120" y="295" width="40" height="40" fill="#000"/>
+    <rect x="175" y="240" width="50" height="50" fill="#000"/>
+    <text fill="#8c8c8c" font-size="12" x="195" y="400" text-anchor="middle">Scan BIP21 or copy below</text>
+    <rect x="28" y="420" width="334" height="44" rx="22" fill="none" stroke="#fff"/>
+    <text fill="#fff" font-size="9" x="195" y="446" text-anchor="middle">bitcoin:bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh</text>
+    <text fill="#fff" font-size="12" x="280" y="490" text-anchor="end">Copy address</text>
+    <rect x="28" y="520" width="334" height="200" rx="12" fill="#0d0d0d" stroke="#666"/>
+    <text fill="#8c8c8c" font-size="12" x="44" y="548">Address options</text>
+    <text fill="#fff" font-size="12" x="44" y="580">BIP21 URL</text>
+    <text fill="#8c8c8c" font-size="12" x="330" y="580" text-anchor="end">copied</text>
+    <text fill="#fff" font-size="12" x="44" y="610">Native segwit (bc1)</text>
+    <text fill="#fff" font-size="12" x="44" y="640">Taproot</text>
+    <text fill="#fff" font-size="12" x="44" y="670">Ark address</text>
+    <text fill="#fff" font-size="12" x="44" y="700">Lightning invoice</text>
+    <text fill="#555" font-size="11" x="0" y="870">3 BIP21 primary + copy modal. Logo. No FX.</text>
+  </g>
+
+  <!-- 03 Send empty -->
+  <g id="s03-Send-empty" transform="translate(1310,40)">
+    <text fill="#111" font-size="14" font-weight="700" x="0" y="-12">03 Send empty</text>
+    <rect width="390" height="844" rx="28" fill="#000"/>
+    <g transform="translate(155,56)"><g transform="scale(0.77)"><use href="#logoB"/></g><text fill="#fff" font-size="20" x="28" y="20">asic</text></g>
+    <text fill="#fff" font-size="28" font-weight="700" x="195" y="120" text-anchor="middle">1,234,567 sats</text>
+    <text fill="#8c8c8c" font-size="13" x="195" y="146" text-anchor="middle">EUR 6,019 / USD 6,492</text>
+    <text fill="#fff" font-size="20" font-weight="700" x="195" y="190" text-anchor="middle">SEND</text>
+    <text fill="#8c8c8c" font-size="12" x="28" y="230">amount</text>
+    <rect x="28" y="240" width="334" height="48" rx="8" fill="none" stroke="#fff" stroke-width="1.5"/>
+    <text fill="#595959" font-size="14" x="42" y="270">enter amount</text>
+    <text fill="#8c8c8c" font-size="12" x="28" y="310">approx - / -</text>
+    <text fill="#8c8c8c" font-size="12" x="28" y="340">to</text>
+    <rect x="28" y="350" width="334" height="48" rx="8" fill="none" stroke="#fff" stroke-width="1.5"/>
+    <text fill="#595959" font-size="14" x="42" y="380">address / npub / contact</text>
+    <rect x="28" y="420" width="334" height="48" rx="8" fill="none" stroke="#fff" stroke-width="1.5"/>
+    <text fill="#fff" font-size="16" x="195" y="450" text-anchor="middle">Choose Recipient</text>
+    <text fill="#474747" font-size="11" x="195" y="500" text-anchor="middle">fill amount + recipient to confirm</text>
+    <g transform="translate(163,620)">
+      <rect x="0" y="0" width="64" height="64" rx="12" fill="none" stroke="#fff" stroke-width="1.5"/>
+      <path d="M10 16V8h8M54 16V8h-8M10 48v8h8M54 48v8h-8" stroke="#fff" stroke-width="2" stroke-linecap="round" fill="none"/>
+      <rect x="16" y="16" width="32" height="32" rx="2" fill="none" stroke="#fff"/>
+      <circle cx="32" cy="32" r="2" fill="#fff"/>
+    </g>
+    <text fill="#8c8c8c" font-size="12" x="195" y="710" text-anchor="middle">scan QR</text>
+    <text fill="#555" font-size="11" x="0" y="870">No home chevron. Balance=Home size. Slide hidden. Scan QR. No FX.</text>
+  </g>
+
+  <!-- 03b Send ready -->
+  <g id="s03b-Send-ready" transform="translate(1740,40)">
+    <text fill="#111" font-size="14" font-weight="700" x="0" y="-12">03b Send ready + slide</text>
+    <rect width="390" height="844" rx="28" fill="#000"/>
+    <g transform="translate(155,56)"><g transform="scale(0.77)"><use href="#logoB"/></g><text fill="#fff" font-size="20" x="28" y="20">asic</text></g>
+    <text fill="#fff" font-size="28" font-weight="700" x="195" y="120" text-anchor="middle">1,234,567 sats</text>
+    <text fill="#8c8c8c" font-size="13" x="195" y="146" text-anchor="middle">EUR 6,019 / USD 6,492</text>
+    <text fill="#fff" font-size="20" font-weight="700" x="195" y="190" text-anchor="middle">SEND</text>
+    <text fill="#8c8c8c" font-size="12" x="28" y="230">amount</text>
+    <rect x="28" y="240" width="334" height="48" rx="8" fill="none" stroke="#fff" stroke-width="1.5"/>
+    <text fill="#fff" font-size="14" x="42" y="270">25,000 sats</text>
+    <text fill="#8c8c8c" font-size="12" x="28" y="310">approx EUR 12.18 / USD 13.14</text>
+    <text fill="#8c8c8c" font-size="12" x="28" y="340">to</text>
+    <rect x="28" y="350" width="334" height="48" rx="8" fill="none" stroke="#fff" stroke-width="1.5"/>
+    <text fill="#fff" font-size="14" x="42" y="380">bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfj...</text>
+    <rect x="28" y="420" width="334" height="48" rx="8" fill="none" stroke="#fff" stroke-width="1.5"/>
+    <text fill="#fff" font-size="16" x="195" y="450" text-anchor="middle">Choose Recipient</text>
+    <text fill="#8c8c8c" font-size="12" x="28" y="500">network fee ~210 sats</text>
+    <rect x="28" y="520" width="334" height="52" rx="8" fill="none" stroke="#fff" stroke-width="1.5"/>
+    <rect x="28" y="520" width="184" height="52" rx="8" fill="#fff"/>
+    <rect x="186" y="526" width="40" height="40" rx="6" fill="#fff" stroke="#000"/>
+    <text fill="#000" font-size="16" font-weight="700" x="206" y="552" text-anchor="middle">&gt;</text>
+    <text fill="#111" font-size="13" x="240" y="552">slide to confirm</text>
+    <text fill="#474747" font-size="10" x="28" y="600">drag: white fill grows until full</text>
+    <text fill="#555" font-size="11" x="0" y="870">9 no scan when slide / 10 dynamic fill / 13 fiat under amount</text>
+  </g>
+
+  <!-- 04 Swap -->
+  <g id="s04-Swap" transform="translate(2170,40)">
+    <text fill="#111" font-size="14" font-weight="700" x="0" y="-12">04 Swap BTC to USDT</text>
+    <rect width="390" height="844" rx="28" fill="#000"/>
+    <g transform="translate(155,56)"><g transform="scale(0.77)"><use href="#logoB"/></g><text fill="#fff" font-size="20" x="28" y="20">asic</text></g>
+    <text fill="#fff" font-size="20" font-weight="700" x="195" y="120" text-anchor="middle">SWAP</text>
+    <rect x="28" y="160" width="334" height="80" rx="8" fill="none" stroke="#fff" stroke-width="1.5"/>
+    <text fill="#8c8c8c" font-size="12" x="44" y="190">from Bitcoin</text>
+    <text fill="#fff" font-size="18" font-weight="700" x="44" y="220">100,000 sats</text>
+    <text fill="#fff" font-size="18" x="195" y="280" text-anchor="middle">v</text>
+    <rect x="28" y="300" width="334" height="80" rx="8" fill="none" stroke="#fff" stroke-width="1.5"/>
+    <text fill="#8c8c8c" font-size="12" x="44" y="330">to USDT</text>
+    <text fill="#fff" font-size="18" font-weight="700" x="44" y="360">76.42 USDT</text>
+    <text fill="#8c8c8c" font-size="12" x="28" y="420">rate 1 BTC approx USD 76,420</text>
+    <rect x="28" y="450" width="334" height="52" rx="8" fill="none" stroke="#fff" stroke-width="1.5"/>
+    <rect x="34" y="456" width="40" height="40" rx="6" fill="#fff"/>
+    <text fill="#000" font-size="16" font-weight="700" x="54" y="482" text-anchor="middle">&gt;</text>
+    <text fill="#fff" font-size="13" x="195" y="482" text-anchor="middle">slide to swap</text>
+    <text fill="#555" font-size="11" x="0" y="870">11 BTC to USDT (not Arkade/LND). No FX footer.</text>
+  </g>
+
+  <!-- 06 Node -->
+  <g id="s06-Node" transform="translate(2600,40)">
+    <text fill="#111" font-size="14" font-weight="700" x="0" y="-12">06 Connect Node</text>
+    <rect width="390" height="844" rx="28" fill="#000"/>
+    <g transform="translate(155,56)"><g transform="scale(0.77)"><use href="#logoB"/></g><text fill="#fff" font-size="20" x="28" y="20">asic</text></g>
+    <text fill="#fff" font-size="20" font-weight="700" x="195" y="120" text-anchor="middle">CONNECT NODE</text>
+    <text fill="#8c8c8c" font-size="12" x="195" y="170" text-anchor="middle">send and receive via LND only</text>
+    <text fill="#8c8c8c" font-size="12" x="195" y="190" text-anchor="middle">no channel management in-app</text>
+    <rect x="28" y="230" width="334" height="80" rx="8" fill="none" stroke="#fff" stroke-width="1.5"/>
+    <text fill="#fff" font-size="16" font-weight="700" x="44" y="265">BTCPay Server</text>
+    <text fill="#8c8c8c" font-size="12" x="44" y="290">Link to pay / receive over Lightning</text>
+    <rect x="28" y="330" width="334" height="80" rx="8" fill="none" stroke="#fff" stroke-width="1.5"/>
+    <text fill="#fff" font-size="16" font-weight="700" x="44" y="365">Nostr Wallet Connect</text>
+    <text fill="#8c8c8c" font-size="12" x="44" y="390">Paste NWC string</text>
+    <rect x="28" y="430" width="334" height="80" rx="8" fill="none" stroke="#fff" stroke-width="1.5"/>
+    <text fill="#fff" font-size="16" font-weight="700" x="44" y="465">Manual LND</text>
+    <text fill="#8c8c8c" font-size="12" x="44" y="490">macaroon + endpoint (payments only)</text>
+    <text fill="#555" font-size="11" x="0" y="870">21 no channel management - receive/send only.</text>
+  </g>
+</svg>
