@@ -68,6 +68,7 @@ import {
   getOpenWallet,
   openHdWalletFromKeystore,
   runWalletRestore,
+  consumeRestorePending,
   seedMnemonicOnly,
   type BasicWallet,
 } from "./hdWallet";
@@ -1152,24 +1153,26 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           setWallet(w);
           setHasWallet(true);
           selectedIdRef.current = walletId;
-          // Addresses + restore + balance off the open critical path.
+          // Addresses + balance off the open critical path. Gap restore only when
+          // this open follows create/import (pendingRestore), not every cold start.
           openingRef.current = false;
           void (async () => {
             if (selectedIdRef.current !== walletId) return;
             void syncReceiveAddresses(w);
-            // Defer heavy restore so first Home gestures / Cancel are not starved.
             try {
               await afterInteractionsOrTimeout(800);
               if (selectedIdRef.current !== walletId) return;
-              await runWalletRestore(walletId, w);
-              if (selectedIdRef.current !== walletId) return;
+              if (consumeRestorePending(walletId)) {
+                await runWalletRestore(walletId, w);
+                if (selectedIdRef.current !== walletId) return;
+              }
               await reloadWallet(w, walletId);
               if (selectedIdRef.current !== walletId) return;
               if (quietImportSyncRef.current) {
                 const bal = prevBalanceRef.current;
                 if (bal && bal.total > 0) {
                   quietImportSyncRef.current = false;
-                  console.warn("[basic] quietImportSync off (post-restore)");
+                  console.warn("[basic] quietImportSync off (post-open)");
                 } else {
                   // Empty or indexer lag: one more pull, then clear quiet so a later
                   // real receive (0 → N) can still notify.
@@ -1187,11 +1190,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
               // the next persistBalance (poll/reload) will clear after adopting.
               if (openSyncQuietRef.current && (lastAckRef.current?.total ?? 0) > 0) {
                 openSyncQuietRef.current = false;
-                console.warn("[basic] openSyncQuiet off (restore done)", {
+                console.warn("[basic] openSyncQuiet off (open settle done)", {
                   ackTotal: lastAckRef.current?.total ?? null,
                 });
               } else {
-                console.warn("[basic] open restore done, quiet awaits first live", {
+                console.warn("[basic] open settle done, quiet awaits first live", {
                   ackTotal: lastAckRef.current?.total ?? null,
                 });
               }

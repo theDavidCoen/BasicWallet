@@ -24,7 +24,10 @@ export type BasicWallet = Awaited<ReturnType<typeof Wallet.create>>;
 
 let openWalletId: string | null = null;
 let walletSingleton: BasicWallet | null = null;
+/** In-process: skip a second restore for the same walletId. */
 const restoreDone = new Set<string>();
+/** Seeded mnemonics that still need a one-shot gap restore (create/import). */
+const pendingRestore = new Set<string>();
 const restorePromises = new Map<string, Promise<void>>();
 
 const GET_INFO_TIMEOUT_MS = 8_000;
@@ -105,20 +108,39 @@ export type CreateWalletOpts = {
   runRestore?: boolean;
 };
 
+/** Drop in-memory restore skip so the next explicit restore will run. */
+export function clearRestoreDone(walletId: string): void {
+  restoreDone.delete(walletId);
+}
+
+/** Mark wallet for gap restore on next open (create / mnemonic import). */
+export function markRestorePending(walletId: string): void {
+  restoreDone.delete(walletId);
+  pendingRestore.add(walletId);
+}
+
+export function consumeRestorePending(walletId: string): boolean {
+  if (!pendingRestore.has(walletId)) return false;
+  pendingRestore.delete(walletId);
+  return true;
+}
+
 export async function createHdWalletFromMnemonic(
   walletId: string,
   mnemonic: string,
   opts: CreateWalletOpts = {},
 ): Promise<BasicWallet> {
   await storeMnemonic(walletId, mnemonic);
-  restoreDone.delete(walletId);
+  clearRestoreDone(walletId);
+  pendingRestore.delete(walletId);
   return openHdWalletFromKeystore(walletId, { runRestore: opts.runRestore !== false });
 }
 
 /** Persist mnemonic only — no Wallet.create / restore (for passkey child rematerialize). */
 export async function seedMnemonicOnly(walletId: string, mnemonic: string): Promise<void> {
   await storeMnemonic(walletId, mnemonic);
-  restoreDone.delete(walletId);
+  // Next openWalletAndSync should gap-scan once (create/import), not every cold start.
+  markRestorePending(walletId);
 }
 
 export type OpenWalletOpts = {
