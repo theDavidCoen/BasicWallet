@@ -1,7 +1,7 @@
 /**
  * Intermediate onboarding screen while passkey / PRF / labels run.
- * Mirrors Glow “Detecting passkey…” / “Discovering labels…” so the UI
- * never looks frozen behind the system Credential Manager sheet.
+ * Logo chrome (no back / Get Started). Timed mid-phases so long provision
+ * does not look frozen. Style aligned with WalletWarmup WELCOME BACK.
  */
 
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
@@ -14,7 +14,9 @@ import {
   Text,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { RootNav, RootStackParamList } from "../navigation/types";
+import { BasicLogo } from "../components/BasicLogo";
 import {
   createNewPrfEntropy,
   createOrGetPrfEntropy,
@@ -26,26 +28,51 @@ import {
   PRF_PROVIDER_HELP,
 } from "../onboarding/passkeyProviderSettings";
 import { colors } from "../theme/colors";
-import { ui } from "../theme/ui";
 import { useWallet } from "../wallet/WalletProvider";
 
-type Phase = "detecting" | "creating" | "discovering" | "opening";
+type CreatePhase = "creating" | "deriving" | "almostReady";
+type DetectPhase =
+  | "detecting"
+  | "discoveringIndexes"
+  | "discoveringLabels"
+  | "almostReady";
+type Phase = CreatePhase | DetectPhase;
 
-const PHASE_LABEL: Record<Phase, string> = {
-  detecting: "Detecting passkey…",
-  creating: "Creating passkey…",
-  discovering: "Discovering labels…",
-  opening: "Opening wallet…",
+const PHASE_TITLE: Record<Phase, string> = {
+  detecting: "DETECTING PASSKEY",
+  creating: "CREATING PASSKEY",
+  deriving: "DERIVING SECRETS",
+  discoveringIndexes: "DISCOVERING INDEXES",
+  discoveringLabels: "DISCOVERING LABELS",
+  almostReady: "ALMOST READY",
+};
+
+const PHASE_CAPTION: Partial<Record<Phase, string>> = {
+  detecting:
+    "Looking for an existing passkey.\nIf the wrong manager opens, tap Sign-in options or use the links below.",
+  creating:
+    "Save the passkey in Google Password Manager\n(or another provider that supports PRF).",
+  deriving: "Building your wallet keys from the passkey proof.",
+  discoveringIndexes: "Scanning for passkey wallets…",
+  discoveringLabels: "Fetching names from Nostr…",
+  almostReady: "Opening your wallet…",
 };
 
 export function PasskeyProgressScreen() {
   const navigation = useNavigation<RootNav>();
   const route = useRoute<RouteProp<RootStackParamList, "PasskeyProgress">>();
+  const insets = useSafeAreaInsets();
   const { provisionFromPasskeyEntropy } = useWallet();
   const mode = route.params.mode;
   const [phase, setPhase] = useState<Phase>(mode === "create" ? "creating" : "detecting");
   const started = useRef(false);
   const cancelled = useRef(false);
+  const phaseTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const clearPhaseTimers = useCallback(() => {
+    for (const t of phaseTimers.current) clearTimeout(t);
+    phaseTimers.current = [];
+  }, []);
 
   const fail = useCallback(
     (title: string, message: string) => {
@@ -87,16 +114,47 @@ export function PasskeyProgressScreen() {
     [navigation],
   );
 
+  const runTimedProvisionPhases = useCallback(
+    async (kind: "create" | "detect", entropy: Uint8Array) => {
+      clearPhaseTimers();
+      if (kind === "create") {
+        setPhase("deriving");
+        phaseTimers.current.push(
+          setTimeout(() => {
+            if (!cancelled.current) setPhase("almostReady");
+          }, 1600),
+        );
+      } else {
+        setPhase("discoveringIndexes");
+        phaseTimers.current.push(
+          setTimeout(() => {
+            if (!cancelled.current) setPhase("discoveringLabels");
+          }, 900),
+        );
+        phaseTimers.current.push(
+          setTimeout(() => {
+            if (!cancelled.current) setPhase("almostReady");
+          }, 2200),
+        );
+      }
+      try {
+        await provisionFromPasskeyEntropy(entropy);
+      } finally {
+        clearPhaseTimers();
+      }
+    },
+    [clearPhaseTimers, provisionFromPasskeyEntropy],
+  );
+
   const runCreate = useCallback(async () => {
     setPhase("creating");
     const entropy = await createNewPrfEntropy();
     if (cancelled.current) return;
-    setPhase("discovering");
-    await provisionFromPasskeyEntropy(entropy);
+    await runTimedProvisionPhases("create", entropy);
     if (cancelled.current) return;
-    setPhase("opening");
+    setPhase("almostReady");
     navigation.replace("Ready");
-  }, [navigation, provisionFromPasskeyEntropy]);
+  }, [navigation, runTimedProvisionPhases]);
 
   const offerCreateOrRestore = useCallback(() => {
     Alert.alert(
@@ -133,10 +191,9 @@ export function PasskeyProgressScreen() {
     try {
       const entropy = await createOrGetPrfEntropy();
       if (cancelled.current) return;
-      setPhase("discovering");
-      await provisionFromPasskeyEntropy(entropy);
+      await runTimedProvisionPhases("detect", entropy);
       if (cancelled.current) return;
-      setPhase("opening");
+      setPhase("almostReady");
       navigation.replace("Ready");
     } catch (e) {
       if (cancelled.current) return;
@@ -146,7 +203,7 @@ export function PasskeyProgressScreen() {
       }
       throw e;
     }
-  }, [navigation, offerCreateOrRestore, provisionFromPasskeyEntropy]);
+  }, [navigation, offerCreateOrRestore, runTimedProvisionPhases]);
 
   useEffect(() => {
     if (started.current) return;
@@ -168,67 +225,54 @@ export function PasskeyProgressScreen() {
         fail(mode === "create" ? "Could not create wallet" : "Could not open wallet", msg);
       }
     })();
-  }, [fail, mode, offerCreateOrRestore, runCreate, runDetect]);
+    return () => {
+      cancelled.current = true;
+      clearPhaseTimers();
+    };
+  }, [clearPhaseTimers, fail, mode, offerCreateOrRestore, runCreate, runDetect]);
+
+  const showPasskeySettings =
+    phase === "detecting" || phase === "creating";
+  /** Always available on detect path (fresh install or after reset). */
+  const showCreateInstead = mode === "detect";
 
   return (
-    <View style={styles.root}>
-      <View style={styles.header}>
-        <Pressable
-          onPress={() => {
-            cancelled.current = true;
-            if (navigation.canGoBack()) navigation.goBack();
-            else navigation.replace("OnboardingCreate");
-          }}
-          hitSlop={12}
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-        >
-          <Text style={styles.back}>‹</Text>
-        </Pressable>
-        <Text style={styles.headerTitle}>Get Started</Text>
-        <View style={styles.headerSpacer} />
+    <View style={[styles.root, { paddingTop: Math.max(insets.top, 12) + 8 }]}>
+      <View style={styles.logoRow}>
+        <BasicLogo scale={1.2} />
       </View>
 
       <View style={styles.center}>
-        <ActivityIndicator size="large" color={colors.fg} />
-        <Text style={styles.status}>{PHASE_LABEL[phase]}</Text>
-        {phase === "detecting" ? (
-          <Text style={styles.hint}>
-            Looking for an existing passkey.{"\n"}
-            If the wrong manager opens, tap{" "}
-            <Text style={styles.hintEm}>Sign-in options</Text> or use the links below.
-          </Text>
-        ) : null}
-        {phase === "creating" ? (
-          <Text style={styles.hint}>
-            Save the passkey in <Text style={styles.hintEm}>Google Password Manager</Text>
-            {"\n"}
-            (or another provider that supports PRF).
-          </Text>
+        <Text style={styles.title}>{PHASE_TITLE[phase]}</Text>
+        <Text style={styles.caption}>{PHASE_CAPTION[phase] ?? "Please wait…"}</Text>
+        <ActivityIndicator color={colors.fg} style={styles.spin} />
+        <Text style={styles.hint}>Please wait</Text>
+
+        {showPasskeySettings || showCreateInstead ? (
+          <View style={styles.links}>
+            {showPasskeySettings ? (
+              <Pressable
+                style={styles.linkBtn}
+                onPress={() => void openPasskeyProviderSettings()}
+              >
+                <Text style={styles.linkText}>Open passkey settings</Text>
+              </Pressable>
+            ) : null}
+            {showCreateInstead ? (
+              <Pressable
+                style={styles.linkBtn}
+                onPress={() => {
+                  cancelled.current = true;
+                  clearPhaseTimers();
+                  navigation.replace("PasskeyProgress", { mode: "create" });
+                }}
+              >
+                <Text style={styles.linkText}>Create new passkey instead</Text>
+              </Pressable>
+            ) : null}
+          </View>
         ) : null}
       </View>
-
-      {phase === "detecting" || phase === "creating" ? (
-        <View style={styles.footer}>
-          <Pressable
-            style={styles.secondaryBtn}
-            onPress={() => void openPasskeyProviderSettings()}
-          >
-            <Text style={styles.secondaryBtnText}>Open passkey settings</Text>
-          </Pressable>
-          {phase === "detecting" ? (
-            <Pressable
-              style={styles.secondaryBtn}
-              onPress={() => {
-                cancelled.current = true;
-                navigation.replace("PasskeyProgress", { mode: "create" });
-              }}
-            >
-              <Text style={styles.secondaryBtnText}>Create new passkey instead</Text>
-            </Pressable>
-          ) : null}
-        </View>
-      ) : null}
     </View>
   );
 }
@@ -238,66 +282,55 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bg,
   },
-  header: {
-    flexDirection: "row",
+  logoRow: {
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
     paddingTop: 8,
     minHeight: 48,
   },
-  back: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 32,
-    color: colors.fg,
-    lineHeight: 36,
-    width: 40,
-  },
-  headerTitle: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 16,
-    color: colors.fg,
-  },
-  headerSpacer: { width: 40 },
   center: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    gap: 20,
     paddingHorizontal: 28,
-    paddingBottom: 64,
+    paddingBottom: 48,
   },
-  status: {
-    ...ui.caption,
-    fontSize: 15,
+  title: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 20,
     color: colors.fg,
+    textAlign: "center",
+  },
+  caption: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 13,
+    color: colors.caption,
+    textAlign: "center",
+    lineHeight: 20,
+    marginTop: 16,
+  },
+  spin: {
+    marginTop: 32,
   },
   hint: {
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 12,
     color: colors.hint,
     textAlign: "center",
-    lineHeight: 18,
-    marginTop: 4,
+    marginTop: 16,
   },
-  hintEm: {
-    color: colors.fg,
-    fontFamily: "JetBrainsMono_700Bold",
+  links: {
+    alignItems: "center",
+    marginTop: 28,
+    gap: 4,
   },
-  secondaryBtn: {
-    alignSelf: "center",
+  linkBtn: {
     paddingVertical: 12,
     paddingHorizontal: 20,
   },
-  secondaryBtnText: {
+  linkText: {
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 14,
     color: colors.fg,
     textDecorationLine: "underline",
-  },
-  footer: {
-    alignItems: "center",
-    marginBottom: 36,
-    gap: 4,
   },
 });
