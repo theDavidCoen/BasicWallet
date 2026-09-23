@@ -277,7 +277,7 @@ Hub `05 Settings` structure (Expo source of truth):
 | Block | Rows |
 | ----- | ---- |
 | (top) | Display currencies → `05b` |
-| **Account** (section header) | Privacy `05c` · Nostr identity `05d` · Contacts `08` · Duress PIN `05g` |
+| **Account** (section header) | Privacy `05c` · Nostr identity `05d` · Archived wallets · Contacts `08` · Duress PIN `05g` |
 | **Wallet Settings** (section header) | Connected node · Hardware wallet `07` · Multisig `10` · Backup `05e` · Restore |
 | **Provider Settings** (section header) | **Arkade** (nested → Arkade Settings screen) |
 | (footer) | Reset app (danger) · About `05f` |

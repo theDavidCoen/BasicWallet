@@ -6,6 +6,7 @@ import { ScreenChrome } from "../components/ScreenChrome";
 import { generateAndStoreNostrIdentity, hasNostrIdentity } from "../nostr/identityStore";
 import { requireUserPresence } from "../security/userPresence";
 import { ui } from "../theme/ui";
+import { getMnemonicSource } from "../wallet/mnemonicMeta";
 
 /** Penpot 05k — destroy/replace Nostr identity. */
 export function GenerateIdentityWarningScreen() {
@@ -15,6 +16,15 @@ export function GenerateIdentityWarningScreen() {
   async function onGenerate() {
     setBusy(true);
     try {
+      const source = await getMnemonicSource();
+      if (source === "passkey-prf") {
+        Alert.alert(
+          "Passkey identity",
+          "Your Nostr key is derived from your passkey. Generating a random nsec would break " +
+            "label-directory restore. Continue with passkey again to restore the derived identity.",
+        );
+        return;
+      }
       const exists = await hasNostrIdentity();
       const auth = await requireUserPresence(
         exists ? "Confirm to replace your Nostr identity" : "Confirm to create a Nostr identity",

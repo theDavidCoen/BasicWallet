@@ -2,7 +2,7 @@
   "expo": {
     "name": "Basic",
     "slug": "basic-wallet",
-    "version": "0.1.0-alpha.1",
+    "version": "0.3.0-alpha.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "splash": {
@@ -16,7 +16,9 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "app.basic.wallet",
-      "associatedDomains": ["webcredentials:basic.davidcoen.it"],
+      "associatedDomains": [
+        "webcredentials:basic.davidcoen.it"
+      ],
       "infoPlist": {
         "NSCameraUsageDescription": "Scan Arkade addresses and payment QR codes."
       }
@@ -31,7 +33,9 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "permissions": ["android.permission.CAMERA"]
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
     },
     "plugins": [
       "expo-secure-store",

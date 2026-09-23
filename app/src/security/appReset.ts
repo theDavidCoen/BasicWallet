@@ -1,7 +1,7 @@
 /**
  * Factory reset — wipe device wallet secrets and disposable account data.
  * Preserves:
- * - passkey child labels (PRF rematerialize)
+ * - passkey child index map (active + archived for rematerialize)
  * - `tx_meta` (notes / name / category) in SQLite — only gone on uninstall
  * - local Path C AEAD cipher + meta in AsyncStorage (still needs nsec+passphrase to open)
  */
@@ -23,7 +23,7 @@ const SECURE_OPTIONS: SecureStore.SecureStoreOptions = {
 
 /** Survive factory reset (uninstall still wipes the app sandbox). */
 const PRESERVE_ASYNC_KEYS = [
-  "basic.wallet.passkey.childLabels.v1",
+  "basic.wallet.passkey.childIndexMap.v1",
   "basic.wallet.nostr.backup.meta.v1",
   "basic.wallet.nostr.backup.cipher.v1",
 ];
@@ -116,7 +116,7 @@ async function clearSecureSlots(walletIds: string[]): Promise<void> {
 
 /**
  * Wipe seeds, Nostr nsec, caches, and registry.
- * Keeps tx_meta + local AEAD package blob + passkey child labels.
+ * Keeps tx_meta + local AEAD package blob + passkey child index map.
  */
 export async function factoryResetWipeDevice(): Promise<void> {
   const networkId = getNetworkConfig().id;

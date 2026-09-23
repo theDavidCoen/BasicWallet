@@ -22,19 +22,33 @@ import {
 } from "../account/walletRegistry";
 import { getNetworkConfig } from "../config/network";
 import { queueEncryptedBackupSync } from "../nostr/backupSync";
+import { storeNostrKeyPair } from "../nostr/identityStore";
+import {
+  fetchAndApplyLabelDirectory,
+  publishLabelDirectory,
+  queuePublishLabelDirectory,
+} from "../nostr/labelDirectory";
 import { mnemonicFromEntropy } from "../onboarding/mnemonicFromEntropy";
 import { combineCsprngWithMotion } from "../onboarding/motionEntropy";
 import { isPresencePromptInFlight } from "../security/presencePrompt";
 import { friendlyNetworkError } from "../util/friendlyNetworkError";
 import {
-  addPasskeyChildLabel,
-  readPasskeyChildLabels,
-  removePasskeyChildLabel,
-} from "../onboarding/passkeyChildLabels";
+  allocatePasskeyChild,
+  archivePasskeyChildByIndex,
+  listActivePasskeyChildren,
+  passkeyIndexFromMeta,
+  readPasskeyChildIndexMap,
+  renamePasskeyChildByIndex,
+  restorePasskeyChildByIndex,
+  writePasskeyChildIndexMap,
+  type PasskeyChildEntry,
+} from "../onboarding/passkeyChildIndexMap";
 import {
-  mnemonicFromPasskeyRoot,
+  mnemonicFromPasskeyChildIndex,
+  mnemonicFromPersonalRoot,
   normalizeWalletLabel,
-  passkeyChildWalletId,
+  nostrPairFromPasskeyRoot,
+  passkeyChildWalletIdByIndex,
   PERSONAL_WALLET_LABEL,
 } from "../onboarding/passkeyChildWallets";
 import { getExistingPrfEntropy } from "../onboarding/passkeyPrf";
@@ -148,7 +162,7 @@ type WalletContextValue = {
   rotateBoardingAddress: () => Promise<string>;
   settleBoarding: () => Promise<string>;
   provisionFromMnemonic: (mnemonic: string, source: MnemonicSource) => Promise<void>;
-  /** Rematerialize Personal + all passkey child labels from PRF root entropy. */
+  /** Rematerialize Personal + active passkey children from PRF root entropy. */
   provisionFromPasskeyEntropy: (rootEntropy32: Uint8Array) => Promise<void>;
   /**
    * Suppress FundsReceived while HD restore / first balance settle after import.
@@ -161,6 +175,8 @@ type WalletContextValue = {
   ) => Promise<WalletRecord>;
   renameWallet: (walletId: string, label: string) => Promise<void>;
   removeWalletById: (walletId: string) => Promise<void>;
+  /** Re-activate an archived passkey child by index (Settings → Archived wallets). */
+  restoreArchivedPasskeyWallet: (index: number) => Promise<WalletRecord>;
   selectWallet: (walletId: string) => Promise<void>;
   refreshWalletList: () => void;
   bootstrapExisting: () => Promise<void>;
@@ -1674,6 +1690,27 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [beginQuietImportSync, openWalletAndSync],
   );
 
+  const seedPasskeyChildEntry = useCallback(
+    async (rootEntropy32: Uint8Array, entry: PasskeyChildEntry) => {
+      const networkId = getNetworkConfig().id;
+      const id = passkeyChildWalletIdByIndex(entry.index);
+      const existing = getWallet(networkId, id);
+      if (!existing) {
+        insertWallet(networkId, {
+          id,
+          kind: "arkade",
+          label: entry.label,
+          tag: "passkey",
+          meta: { derivedFrom: "passkey-index", passkeyIndex: entry.index },
+        });
+      } else if (existing.label !== entry.label) {
+        updateWalletLabel(networkId, id, entry.label);
+      }
+      await seedMnemonicOnly(id, mnemonicFromPasskeyChildIndex(rootEntropy32, entry.index));
+    },
+    [],
+  );
+
   const provisionFromPasskeyEntropy = useCallback(
     async (rootEntropy32: Uint8Array) => {
       await setMnemonicSource("passkey-prf");
@@ -1681,24 +1718,91 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const personal = ensurePersonalWallet(networkId);
       beginQuietImportSync();
 
-      // Seed Keystore only — Wallet.create / restore / balance stay off the Terms spinner.
-      const personalMnemonic = mnemonicFromPasskeyRoot(rootEntropy32, PERSONAL_WALLET_LABEL);
-      await seedMnemonicOnly(personal.id, personalMnemonic);
+      // Deterministic Nostr identity from the same PRF root (before label directory fetch).
+      await storeNostrKeyPair(nostrPairFromPasskeyRoot(rootEntropy32));
 
-      const labels = await readPasskeyChildLabels();
-      for (const label of labels) {
-        const id = passkeyChildWalletId(label);
-        const existing = getWallet(networkId, id);
-        if (!existing) {
-          insertWallet(networkId, {
-            id,
-            kind: "arkade",
-            label,
-            tag: "passkey",
-            meta: { derivedFrom: "passkey-label" },
-          });
+      // Seed Keystore only — Wallet.create / restore / balance stay off the Terms spinner.
+      await seedMnemonicOnly(personal.id, mnemonicFromPersonalRoot(rootEntropy32));
+
+      let directoryOk = false;
+      try {
+        const fetched = await fetchAndApplyLabelDirectory();
+        directoryOk = fetched !== null;
+      } catch (e) {
+        console.warn("[basic] label directory fetch failed", e);
+      }
+
+      let actives = await listActivePasskeyChildren();
+
+      // Fallback when relays unreachable and local map empty: probe low indices for funds.
+      if (!directoryOk && actives.length === 0) {
+        const discovered: PasskeyChildEntry[] = [];
+        let emptyStreak = 0;
+        const maxProbe = 8;
+        const gapLimit = 3;
+        for (let i = 0; i < maxProbe && emptyStreak < gapLimit; i++) {
+          try {
+            const mnemonic = mnemonicFromPasskeyChildIndex(rootEntropy32, i);
+            const probeId = `w_pk_probe_${i}`;
+            await seedMnemonicOnly(probeId, mnemonic);
+            const w = await openHdWalletFromKeystore(probeId);
+            let total = 0;
+            try {
+              const b = await w.getBalance();
+              total = balanceFromSdk(b).total;
+            } finally {
+              clearOpenWallet();
+              try {
+                await deleteMnemonic(probeId);
+              } catch {
+                /* ignore */
+              }
+            }
+            if (total > 0) {
+              emptyStreak = 0;
+              discovered.push({
+                index: i,
+                label: `Wallet ${i + 1}`,
+                status: "active",
+              });
+            } else {
+              emptyStreak += 1;
+            }
+          } catch {
+            emptyStreak += 1;
+          }
         }
-        await seedMnemonicOnly(id, mnemonicFromPasskeyRoot(rootEntropy32, label));
+        if (discovered.length) {
+          const map = await readPasskeyChildIndexMap();
+          const maxIdx = discovered.reduce((m, e) => Math.max(m, e.index), -1);
+          await writePasskeyChildIndexMap({
+            version: 1,
+            nextIndex: Math.max(map.nextIndex, maxIdx + 1),
+            entries: [
+              ...map.entries.filter((e) => e.status === "archived"),
+              ...discovered,
+            ],
+          });
+          actives = discovered;
+        }
+      }
+
+      for (const entry of actives) {
+        await seedPasskeyChildEntry(rootEntropy32, entry);
+      }
+
+      // Drop registry shells for archived indices if a prior scan resurrected them.
+      const mapAfter = await readPasskeyChildIndexMap();
+      for (const entry of mapAfter.entries) {
+        if (entry.status !== "archived") continue;
+        const id = passkeyChildWalletIdByIndex(entry.index);
+        if (!getWallet(networkId, id)) continue;
+        try {
+          await deleteMnemonic(id);
+        } catch {
+          /* ignore */
+        }
+        removeWallet(networkId, id);
       }
 
       await writeZeroCachedBalance(networkId, personal.id);
@@ -1717,8 +1821,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setBalanceStatus("loading");
 
       void openWalletAndSync(personal.id);
+      queuePublishLabelDirectory("provision");
     },
-    [beginQuietImportSync, openWalletAndSync],
+    [beginQuietImportSync, openWalletAndSync, seedPasskeyChildEntry],
   );
 
   const createExtraArkadeWallet = useCallback(
@@ -1737,23 +1842,30 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
       if (mode === "passkey") {
         const root = await getExistingPrfEntropy();
-        const id = passkeyChildWalletId(name);
+        const entry = await allocatePasskeyChild(name);
+        const id = passkeyChildWalletIdByIndex(entry.index);
         if (getWallet(networkId, id) || (await hasMnemonic(id))) {
-          throw new Error("A passkey wallet with this label already exists");
+          throw new Error("A passkey wallet with this index already exists");
         }
         insertWallet(networkId, {
           id,
           kind: "arkade",
-          label: name,
+          label: entry.label,
           tag: "passkey",
-          meta: { derivedFrom: "passkey-label" },
+          meta: { derivedFrom: "passkey-index", passkeyIndex: entry.index },
         });
-        const mnemonic = mnemonicFromPasskeyRoot(root, name);
+        const mnemonic = mnemonicFromPasskeyChildIndex(root, entry.index);
         // Keystore only — Wallet.create + restore run once via selectWallet (background).
         await seedMnemonicOnly(id, mnemonic);
-        await addPasskeyChildLabel(name);
         await writeZeroCachedBalance(networkId, id);
         await setMnemonicSource("passkey-prf");
+        // Ensure nsec matches passkey (first child create if identity was random).
+        await storeNostrKeyPair(nostrPairFromPasskeyRoot(root));
+        try {
+          await publishLabelDirectory();
+        } catch (e) {
+          console.warn("[basic] label directory publish after create failed", e);
+        }
         setWallets(listWallets(networkId));
         await selectWallet(id);
         created = getWallet(networkId, id)!;
@@ -1799,6 +1911,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       throw new Error("Label “Personal” is reserved");
     }
     updateWalletLabel(networkId, walletId, name);
+    const idx = passkeyIndexFromMeta(record.meta);
+    if (
+      idx !== null &&
+      (record.meta?.derivedFrom === "passkey-index" || record.tag === "passkey")
+    ) {
+      await renamePasskeyChildByIndex(idx, name);
+      queuePublishLabelDirectory(`rename:${idx}`);
+    }
     setWallets(listWallets(networkId));
     if (selectedIdRef.current === walletId) {
       const next = getWallet(networkId, walletId);
@@ -1818,14 +1938,25 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         throw new Error("Cannot remove the last Arkade wallet — use Reset app instead");
       }
 
+      const passkeyIndex = passkeyIndexFromMeta(record.meta);
+      const isPasskeyChild =
+        record.kind === "arkade" &&
+        passkeyIndex !== null &&
+        (record.meta?.derivedFrom === "passkey-index" || record.tag === "passkey");
+
       if (record.kind === "arkade") {
         try {
           await deleteMnemonic(walletId);
         } catch {
           /* missing ok */
         }
-        if (record.tag === "passkey" || record.meta?.derivedFrom === "passkey-label") {
-          await removePasskeyChildLabel(record.label);
+        if (isPasskeyChild && passkeyIndex !== null) {
+          await archivePasskeyChildByIndex(passkeyIndex);
+          try {
+            await publishLabelDirectory();
+          } catch (e) {
+            console.warn("[basic] label directory publish after archive failed", e);
+          }
         }
       }
 
@@ -1866,6 +1997,27 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       }
     },
     [selectWallet],
+  );
+
+  const restoreArchivedPasskeyWallet = useCallback(
+    async (index: number) => {
+      const root = await getExistingPrfEntropy();
+      const entry = await restorePasskeyChildByIndex(index);
+      await seedPasskeyChildEntry(root, entry);
+      const networkId = getNetworkConfig().id;
+      const id = passkeyChildWalletIdByIndex(entry.index);
+      await writeZeroCachedBalance(networkId, id);
+      try {
+        await publishLabelDirectory();
+      } catch (e) {
+        console.warn("[basic] label directory publish after restore failed", e);
+      }
+      setWallets(listWallets(networkId));
+      queueEncryptedBackupSync(`restore-archived:${index}`);
+      await selectWallet(id);
+      return getWallet(networkId, id)!;
+    },
+    [seedPasskeyChildEntry, selectWallet],
   );
 
   const applyFactoryReset = useCallback(async () => {
@@ -2096,6 +2248,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       createExtraArkadeWallet,
       renameWallet,
       removeWalletById,
+      restoreArchivedPasskeyWallet,
       selectWallet,
       refreshWalletList,
       bootstrapExisting,
@@ -2142,6 +2295,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       createExtraArkadeWallet,
       renameWallet,
       removeWalletById,
+      restoreArchivedPasskeyWallet,
       selectWallet,
       refreshWalletList,
       bootstrapExisting,

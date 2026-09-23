@@ -15,6 +15,7 @@ type NavTarget =
   | "DisplayCurrencies"
   | "AdvancedBackup"
   | "NostrIdentity"
+  | "ArchivedWallets"
   | "RestoreWallet"
   | "ResetApp"
   | "Logs"
@@ -41,6 +42,7 @@ const BLOCKS: Block[] = [
   { kind: "section", title: "Account" },
   { kind: "row", row: { label: "Privacy", on: "Privacy" } },
   { kind: "row", row: { label: "Nostr identity", on: "NostrIdentity" } },
+  { kind: "row", row: { label: "Archived wallets", on: "ArchivedWallets" } },
   { kind: "row", row: { label: "Contacts", stub: true } },
   { kind: "row", row: { label: "Duress PIN", stub: true } },
 

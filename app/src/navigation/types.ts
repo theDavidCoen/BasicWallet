@@ -59,6 +59,7 @@ export type RootStackParamList = {
     | undefined;
   ExportRecoveryPhrase: { walletId?: string } | undefined;
   NostrIdentity: undefined;
+  ArchivedWallets: undefined;
   ExportNsecWarning: undefined;
   ExportNsecReveal: undefined;
   GenerateIdentityWarning: undefined;

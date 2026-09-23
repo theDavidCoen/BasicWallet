@@ -26,6 +26,11 @@ export function RemoveWalletScreen() {
   const wallet = getWallet(networkId, route.params.walletId);
   const [busy, setBusy] = useState(false);
 
+  const isPasskeyChild =
+    wallet?.tag === "passkey" ||
+    wallet?.meta?.derivedFrom === "passkey-index" ||
+    wallet?.meta?.derivedFrom === "passkey-label";
+
   if (!wallet) {
     return (
       <ScreenChrome logoScale={0.77}>
@@ -57,28 +62,41 @@ export function RemoveWalletScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={ui.title}>REMOVE WALLET?</Text>
+      <Text style={ui.title}>{isPasskeyChild ? "ARCHIVE WALLET?" : "REMOVE WALLET?"}</Text>
       <Text style={ui.caption}>
-        {wallet.label} will be deleted from this device.{"\n"}
-        Without a backup you cannot recover funds.
+        {isPasskeyChild
+          ? `${wallet.label} will leave your wallet list and move to Archived wallets.\nAfter a fresh install it stays archived until you restore it.`
+          : `${wallet.label} will be deleted from this device.\nWithout a backup you cannot recover funds.`}
       </Text>
 
-      <View style={ui.card}>
-        <Text style={ui.cardTitle}>Recommended</Text>
-        <Text style={ui.caption}>
-          Export the recovery phrase first,{"\n"}then remove this wallet.
-        </Text>
-      </View>
+      {!isPasskeyChild ? (
+        <View style={ui.card}>
+          <Text style={ui.cardTitle}>Recommended</Text>
+          <Text style={ui.caption}>
+            Export the recovery phrase first,{"\n"}then remove this wallet.
+          </Text>
+        </View>
+      ) : (
+        <View style={ui.card}>
+          <Text style={ui.cardTitle}>Archived</Text>
+          <Text style={ui.caption}>
+            Settings → Account → Archived wallets{"\n"}
+            to restore this passkey child later.
+          </Text>
+        </View>
+      )}
 
-      <Pressable
-        style={[ui.primaryBtn, { marginTop: 28 }, busy && { opacity: 0.6 }]}
-        disabled={busy}
-        onPress={() =>
-          navigation.navigate("ExportRecoveryPhrase", { walletId: wallet.id })
-        }
-      >
-        <Text style={ui.primaryBtnText}>Backup recovery phrase</Text>
-      </Pressable>
+      {!isPasskeyChild ? (
+        <Pressable
+          style={[ui.primaryBtn, { marginTop: 28 }, busy && { opacity: 0.6 }]}
+          disabled={busy}
+          onPress={() =>
+            navigation.navigate("ExportRecoveryPhrase", { walletId: wallet.id })
+          }
+        >
+          <Text style={ui.primaryBtnText}>Backup recovery phrase</Text>
+        </Pressable>
+      ) : null}
 
       <Pressable
         style={styles.dangerHit}
@@ -88,7 +106,9 @@ export function RemoveWalletScreen() {
         {busy ? (
           <ActivityIndicator color="#E5484D" />
         ) : (
-          <Text style={styles.dangerText}>Remove without backup</Text>
+          <Text style={styles.dangerText}>
+            {isPasskeyChild ? "Archive wallet" : "Remove without backup"}
+          </Text>
         )}
       </Pressable>
 

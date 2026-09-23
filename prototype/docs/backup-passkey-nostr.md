@@ -79,11 +79,22 @@ Basic is zero-knowledge:
 ## Path A — Passkey (default)
 
 1. Create WebAuthn passkey (iCloud Keychain / Google Password Manager / compatible PM).
-2. `PRF(passkey, salt)` → 256-bit root → **BIP39 24-word** mnemonic (internal; never shown at create).
-3. Fixed salt may derive Nostr identity; labeled child wallets for the switcher.
-4. Wallet factory: Arkade `Wallet.create({ walletMode: "hd", … })`.
-5. **Passkey onboarding is always cross-device.** `11b Terms of Use (passkey)` shows only **Across your devices** (never the device-only card).
-6. Settings `05h` may still surface device-only risk if the OS later reports unsynced credentials.
+2. `PRF(passkey, salt)` → 256-bit root → **Personal** BIP39 mnemonic (internal; never shown at create).
+3. **Nostr identity** = HKDF(root, `basic.wallet.nostr.sk.v1`) — rematerialized on every Continue with passkey (no separate enable step).
+4. Extra wallets = **index** children: HKDF(root, `basic.wallet.child.idx.v1:{i}`) + display **label**. Indices are monotonic and never reused.
+5. **Label directory** (always on): NIP-44 self-encrypted kind 30078 (`d` = opaque from nsec + `basic.wallet.labels.d.v1`) stores `{ index, label, status: active|archived }`. Published on create / rename / archive / restore. **No Path C passphrase.** Metadata only (never seeds).
+6. Remove from Wallets modal → **archive** (tombstone in directory). Fresh install rematerializes **active** only. Settings → Account → **Archived wallets** can restore.
+7. Wallet factory: Arkade `Wallet.create({ walletMode: "hd", … })`.
+8. **Passkey onboarding is always cross-device.** `11b Terms of Use (passkey)` shows only **Across your devices** (never the device-only card).
+9. Settings `05h` may still surface device-only risk if the OS later reports unsynced credentials.
+
+### Fresh install matrix
+
+| Path | What returns |
+|------|----------------|
+| Passkey only | Personal + active index children + derived nsec + labels from directory; archived stay in Archived wallets |
+| Passkey + Path C | Same as passkey only for rematerialize; Path C package still needs passphrase for full seed/tx-meta package |
+| Path C only (no passkey) | Unchanged: nsec + passphrase unwrap package |
 
 ### Happy path (first run)
 
@@ -139,7 +150,7 @@ Basic is zero-knowledge:
 
 | Board | Copy / role |
 |-------|-------------|
-| `14 Add wallet` | ADD WALLET · With passkey (derive labeled wallet) · Without passkey (motion). |
+| `14 Add wallet` | ADD WALLET · With passkey (derive indexed child + name) · Without passkey (motion). |
 | `14b Create without passkey` | ADD ENTROPY · motion pad · entropy meter · Continue to name wallet. |
 | `14c Name new wallet` | NAME WALLET · label field · **Create wallet**. |
 

@@ -22,9 +22,10 @@ import { ui } from "../theme/ui";
 import { AddEntropyPanel } from "./AddEntropyPanel";
 
 const CAPTION_PASSKEY =
-  "Create Wallet derives a labeled child from your passkey PRF proof. " +
-  "The same label + passkey always rematerializes this wallet. " +
-  "On a fresh install, sign in with your passkey to recover it.";
+  "Create Wallet derives a named child from your passkey (stable index). " +
+  "After a fresh install, Continue with passkey rematerializes every active child; " +
+  "names come back from the automatic Nostr label directory. " +
+  "Removed wallets stay archived under Settings → Account.";
 
 const CAPTION_DEVICE =
   "Create Wallet makes a new wallet on this device using the strongest " +

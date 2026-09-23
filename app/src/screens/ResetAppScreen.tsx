@@ -77,7 +77,7 @@ export function ResetAppScreen() {
             "Transaction notes stay in the local database until you uninstall the app",
             "You will land on the create / restore onboarding screen",
             "Passkey link on this device is cleared — Continue with passkey asks your password manager to pick an existing key (never silent create)",
-            "Passkey child wallet labels are kept so labeled wallets rematerialize from the same PRF",
+            "Passkey child index map (active + archived) is kept for rematerialize from the same PRF",
             "Any wallets not in the passkey tree will be removed (restore them from a Nostr / home backup)",
           ].map((line) => (
             <Text key={line} style={[ui.caption, { textAlign: "left", marginBottom: 10 }]}>

@@ -1,13 +1,14 @@
 /**
- * Passkey PRF root → labeled child wallet entropy (Glow-style).
- * Personal uses the root entropy; other labels = HKDF(root, label).
+ * Passkey PRF root → indexed child wallet entropy.
+ * Personal uses the root entropy; children = HKDF(root, index).
  * Never logs entropy or mnemonics.
  */
 
 import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
+import { utf8ToBytes } from "@noble/hashes/utils.js";
 import { mnemonicFromEntropy } from "../onboarding/mnemonicFromEntropy";
+import { pairFromSecretKey, type NostrKeyPair } from "../nostr/keys";
 
 export const PERSONAL_WALLET_LABEL = "Personal";
 
@@ -19,38 +20,56 @@ export function isPersonalLabel(label: string): boolean {
   return normalizeWalletLabel(label).toLowerCase() === PERSONAL_WALLET_LABEL.toLowerCase();
 }
 
-/**
- * Stable wallet_id for a passkey-derived child so rematerialize is idempotent.
- * Personal keeps the registry Personal / main slot (not this id).
- */
-export function passkeyChildWalletId(label: string): string {
-  const norm = normalizeWalletLabel(label);
-  if (!norm || isPersonalLabel(norm)) {
-    throw new Error("Personal wallet does not use a child id");
-  }
-  const digest = sha256(utf8ToBytes(`basic.wallet.id.v1:${norm}`));
-  return `w_pk_${bytesToHex(digest).slice(0, 16)}`;
-}
-
-/** Derive 32-byte entropy for a labeled wallet from the PRF root. */
-export function deriveChildEntropy(rootEntropy32: Uint8Array, label: string): Uint8Array {
+function assertRoot(rootEntropy32: Uint8Array): void {
   if (rootEntropy32.length !== 32) {
     throw new Error("Expected 32-byte PRF root");
   }
-  const norm = normalizeWalletLabel(label);
-  if (!norm) throw new Error("Wallet label required");
-  if (isPersonalLabel(norm)) {
-    return new Uint8Array(rootEntropy32);
+}
+
+/** Stable wallet_id for a passkey-derived child (Personal uses registry main slot). */
+export function passkeyChildWalletIdByIndex(index: number): string {
+  if (!Number.isInteger(index) || index < 0) {
+    throw new Error("Passkey child index must be a non-negative integer");
+  }
+  return `w_pk_i_${index}`;
+}
+
+/** Derive 32-byte entropy for child index `i` from the PRF root. */
+export function deriveChildEntropyByIndex(rootEntropy32: Uint8Array, index: number): Uint8Array {
+  assertRoot(rootEntropy32);
+  if (!Number.isInteger(index) || index < 0) {
+    throw new Error("Passkey child index must be a non-negative integer");
   }
   return hkdf(
     sha256,
     rootEntropy32,
     undefined,
-    utf8ToBytes(`basic.wallet.child.v1:${norm}`),
+    utf8ToBytes(`basic.wallet.child.idx.v1:${index}`),
     32,
   );
 }
 
-export function mnemonicFromPasskeyRoot(rootEntropy32: Uint8Array, label: string): string {
-  return mnemonicFromEntropy(deriveChildEntropy(rootEntropy32, label));
+export function mnemonicFromPersonalRoot(rootEntropy32: Uint8Array): string {
+  assertRoot(rootEntropy32);
+  return mnemonicFromEntropy(new Uint8Array(rootEntropy32));
+}
+
+export function mnemonicFromPasskeyChildIndex(rootEntropy32: Uint8Array, index: number): string {
+  return mnemonicFromEntropy(deriveChildEntropyByIndex(rootEntropy32, index));
+}
+
+/** Deterministic Nostr secret from the same PRF root (domain-separated). */
+export function deriveNostrSecretKey(rootEntropy32: Uint8Array): Uint8Array {
+  assertRoot(rootEntropy32);
+  return hkdf(
+    sha256,
+    rootEntropy32,
+    undefined,
+    utf8ToBytes("basic.wallet.nostr.sk.v1"),
+    32,
+  );
+}
+
+export function nostrPairFromPasskeyRoot(rootEntropy32: Uint8Array): NostrKeyPair {
+  return pairFromSecretKey(deriveNostrSecretKey(rootEntropy32));
 }
