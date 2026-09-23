@@ -104,14 +104,18 @@ export function HomeServerBackupScreen() {
 
       Alert.alert(
         "Home backup enabled",
-        `${meta.walletCount} wallet(s) uploaded to\n${fileUrl}`,
+        `${meta.walletCount} wallet(s) uploaded to\n${fileUrl}\n\n` +
+          "Next: save your nsec offline. You need nsec + passphrase to restore.",
+        [
+          {
+            text: "Export nsec",
+            onPress: () =>
+              navigation.replace("ExportNsecWarning", {
+                afterEnable: wasEmpty ? "Ready" : "AdvancedBackup",
+              }),
+          },
+        ],
       );
-
-      if (wasEmpty) {
-        navigation.reset({ index: 0, routes: [{ name: "Ready" }] });
-      } else {
-        navigation.navigate("AdvancedBackup");
-      }
     } catch (e) {
       Alert.alert("Could not enable backup", e instanceof Error ? e.message : "Unknown error");
     } finally {

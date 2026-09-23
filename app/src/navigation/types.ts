@@ -60,8 +60,17 @@ export type RootStackParamList = {
   ExportRecoveryPhrase: { walletId?: string } | undefined;
   NostrIdentity: undefined;
   ArchivedWallets: undefined;
-  ExportNsecWarning: undefined;
-  ExportNsecReveal: undefined;
+  ExportNsecWarning:
+    | {
+        /** After Path C enable — Done continues here instead of Nostr identity. */
+        afterEnable?: "AdvancedBackup" | "Ready";
+      }
+    | undefined;
+  ExportNsecReveal:
+    | {
+        afterEnable?: "AdvancedBackup" | "Ready";
+      }
+    | undefined;
   GenerateIdentityWarning: undefined;
   ImportNsecWarning: undefined;
   ResetApp: undefined;

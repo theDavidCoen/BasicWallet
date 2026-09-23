@@ -1,5 +1,5 @@
 import * as Clipboard from "expo-clipboard";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -13,7 +13,7 @@ import {
   View,
 } from "react-native";
 import * as ScreenCapture from "expo-screen-capture";
-import type { RootNav } from "../navigation/types";
+import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
 import { loadNostrKeyPairForCrypto } from "../nostr/identityStore";
 import { requireUserPresence } from "../security/userPresence";
@@ -23,6 +23,8 @@ import { ui } from "../theme/ui";
 /** Penpot 05j — reveal nsec after biometrics; FLAG_SECURE. */
 export function ExportNsecRevealScreen() {
   const navigation = useNavigation<RootNav>();
+  const route = useRoute<RouteProp<RootStackParamList, "ExportNsecReveal">>();
+  const afterEnable = route.params?.afterEnable;
   const [busy, setBusy] = useState(true);
   const [nsec, setNsec] = useState<string | null>(null);
   const nsecRef = useRef<string | null>(null);
@@ -89,6 +91,14 @@ export function ExportNsecRevealScreen() {
 
   function onDone() {
     clearReveal();
+    if (afterEnable === "Ready") {
+      navigation.reset({ index: 0, routes: [{ name: "Ready" }] });
+      return;
+    }
+    if (afterEnable === "AdvancedBackup") {
+      navigation.navigate("AdvancedBackup");
+      return;
+    }
     navigation.navigate("NostrIdentity");
   }
 
@@ -96,7 +106,12 @@ export function ExportNsecRevealScreen() {
     <ScreenChrome logoScale={0.77}>
       <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
         <Text style={ui.title}>YOUR NSEC</Text>
-        <Text style={ui.caption}>Write it down · then leave this screen</Text>
+        <Text style={ui.caption}>
+          Write it down · then leave this screen
+          {afterEnable
+            ? "\n\nKeep this nsec with your backup passphrase\nto restore Nostr / home packages later."
+            : ""}
+        </Text>
 
         {busy || !nsec ? (
           <ActivityIndicator color={colors.fg} style={{ marginTop: 40 }} />

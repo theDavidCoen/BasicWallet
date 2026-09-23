@@ -192,20 +192,22 @@ export function NostrBackupScreen() {
 
       const publishNote = await publishAfterPack(meta);
 
+      const afterEnable = wasEmpty ? ("Ready" as const) : ("AdvancedBackup" as const);
       Alert.alert(
         "Nostr backup enabled",
         `${meta.walletCount} wallet(s)` +
           (meta.txMetaCount ? `, ${meta.txMetaCount} note(s)` : "") +
           " packaged (passphrase AEAD).\n\n" +
           publishNote +
-          "\n\nRelays never see seeds or labels — only NIP-44 ciphertext.",
+          "\n\nNext: save your nsec offline. You need nsec + passphrase to restore.",
+        [
+          {
+            text: "Export nsec",
+            onPress: () =>
+              navigation.replace("ExportNsecWarning", { afterEnable }),
+          },
+        ],
       );
-
-      if (wasEmpty) {
-        navigation.reset({ index: 0, routes: [{ name: "Ready" }] });
-      } else {
-        navigation.navigate("AdvancedBackup");
-      }
     } catch (e) {
       Alert.alert("Could not enable backup", e instanceof Error ? e.message : "Unknown error");
     } finally {
