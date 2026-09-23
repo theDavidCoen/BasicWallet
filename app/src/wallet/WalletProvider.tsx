@@ -1,6 +1,6 @@
 /**
  * Wallet context — multi-wallet registry + selected Arkade engine.
- * Arkade behavior aligned with arkade.money; account activity DB materializes on reload.
+ * Arkade behavior aligned with arkade.money; activity DB rematerializes on Activity open/pull.
  */
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
@@ -56,7 +56,6 @@ import { scheduleAutoPrepare } from "../exit/autoPrepare";
 import {
   readCachedBalance,
   readLastAckBalance,
-  readLastNotifiedActivityAt,
   writeCachedBalance,
   writeLastAckBalance,
   writeLastNotifiedActivityAt,
@@ -175,8 +174,10 @@ const WalletContext = createContext<WalletContextValue | null>(null);
 const RELOAD_DEBOUNCE_MS = 1_000;
 /** After SDK notifyIncomingFunds — shorter so POS receives feel live. */
 const RELOAD_URGENT_MS = 150;
-/** Background balance poll (notifyIncomingFunds is flaky on Expo). */
+/** Background balance poll when notifyIncomingFunds is unavailable. */
 const BALANCE_POLL_MS = 4_000;
+/** Idle poll when notify is subscribed (Expo safety net; official has no interval). */
+const BALANCE_POLL_FALLBACK_MS = 30_000;
 /** While Receive POS / QR is open — keep under ~0.5s so notices feel live. */
 const BALANCE_POLL_BOOST_MS = 1000;
 
@@ -428,6 +429,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   /** >0 while POS sheet open — skip balance polls (keypad must stay responsive). */
   const posUiHoldRef = useRef(0);
   const [incomingWatchBoostEpoch, setIncomingWatchBoostEpoch] = useState(0);
+  /** True while notifyIncomingFunds returned an unsub — idle poll can be slow. */
+  const [notifySubscribed, setNotifySubscribed] = useState(false);
   /** Serialize balance pulls — stacked getBalance timeouts were delaying notices. */
   const balanceInFlightRef = useRef(false);
   const balancePullAgainRef = useRef(false);
@@ -680,6 +683,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const ack = lastAckRef.current;
 
       // Same live numbers → skip setState / DB. POS keypad stays responsive under poll.
+      // Still mark ready so Home leaves "syncing…" after a quiet open / POS hold skip.
       const displayed = prevBalanceRef.current;
       if (
         !quiet &&
@@ -692,6 +696,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         ack.available === bal.available &&
         ack.boarding === bal.boarding
       ) {
+        setBalanceStatus("ready");
         return;
       }
 
@@ -880,91 +885,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     balanceBaselineReadyRef.current = true;
   }
 
-  async function maybeNoticeFromActivity(
-    networkId: ReturnType<typeof getNetworkConfig>["id"],
-    walletId: string,
-  ) {
-    if (selectedIdRef.current !== walletId) return;
-    if (Date.now() < suppressIncomingUntilRef.current) return;
-    if (quietImportSyncRef.current) {
-      try {
-        const db = getAccountDb(networkId);
-        const maxRow = db.getFirstSync<{ m: number | null }>(
-          `SELECT MAX(created_at) AS m FROM activity_idx WHERE wallet_id = ? AND amount_sats > 0`,
-          [walletId],
-        );
-        const seed = typeof maxRow?.m === "number" && maxRow.m > 0 ? maxRow.m : Date.now();
-        await writeLastNotifiedActivityAt(networkId, walletId, seed);
-        console.warn("[basic] activityAck seeded (quiet import)", seed);
-      } catch (e) {
-        console.warn("[basic] quiet activity seed failed", e);
-      }
-      return;
-    }
-
-    try {
-      const db = getAccountDb(networkId);
-      const lastAt = await readLastNotifiedActivityAt(networkId, walletId);
-      if (lastAt == null) {
-        const maxRow = db.getFirstSync<{ m: number | null }>(
-          `SELECT MAX(created_at) AS m FROM activity_idx WHERE wallet_id = ? AND amount_sats > 0`,
-          [walletId],
-        );
-        const seed = typeof maxRow?.m === "number" && maxRow.m > 0 ? maxRow.m : Date.now();
-        await writeLastNotifiedActivityAt(networkId, walletId, seed);
-        console.warn("[basic] activityAck seeded", seed);
-        return;
-      }
-
-      const rows = db.getAllSync<{ amount_sats: number; created_at: number; kind: string }>(
-        `SELECT amount_sats, created_at, kind FROM activity_idx
-         WHERE wallet_id = ? AND amount_sats > 0 AND created_at > ?
-         ORDER BY created_at ASC`,
-        [walletId, lastAt],
-      );
-      if (!rows.length) return;
-
-      const activitySum = rows.reduce((s, r) => s + (r.amount_sats || 0), 0);
-      if (activitySum <= 0) return;
-
-      // Cap to balance delta vs lastAck — rematerialize used to bump all created_at
-      // and sum the whole history (= total balance).
-      const ack = lastAckRef.current;
-      const bal = prevBalanceRef.current;
-      const balanceDelta =
-        ack && bal ? Math.max(0, bal.total - ack.total, bal.boarding - ack.boarding) : activitySum;
-      const amount = balanceDelta > 0 ? Math.min(activitySum, balanceDelta) : 0;
-      const maxAt = Math.max(...rows.map((r) => r.created_at));
-      await writeLastNotifiedActivityAt(networkId, walletId, maxAt);
-
-      if (amount <= 0) {
-        console.warn("[basic] activity catch-up skipped (no balance delta)", {
-          activitySum,
-          count: rows.length,
-          lastAt,
-        });
-        return;
-      }
-
-      const onlyBoarding = rows.every((r) => r.kind === "boarding");
-      console.warn("[basic] activity catch-up", {
-        amount,
-        activitySum,
-        balanceDelta,
-        count: rows.length,
-        lastAt,
-      });
-      forcedArkAddressRef.current = null;
-      emitFundsNotice(amount, onlyBoarding ? "boarding" : "arkade");
-      if (bal) {
-        lastAckRef.current = bal;
-        void writeLastAckBalance(networkId, walletId, bal);
-      }
-    } catch (e) {
-      console.warn("[basic] activity catch-up failed", e);
-    }
-  }
-
   const loadBalance = useCallback(
     async (w: BasicWallet, walletId: string) => {
       if (aspPollPausedRef.current > 0) {
@@ -990,7 +910,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         });
         if (selectedIdRef.current !== walletId) return null;
         if (aspPollPausedRef.current > 0) return null;
-        if (posUiHoldRef.current > 0) return null;
+        // POS opened mid-flight: still adopt the result so we don't stick on "syncing…".
+        // Skip boarding rotate under the keypad (ensureBoardingRotatedAfterClear is heavier).
+        if (posUiHoldRef.current > 0) {
+          await persistBalance(walletId, bal);
+          return bal;
+        }
         await persistBalance(walletId, bal);
         await ensureBoardingRotatedAfterClear(w, prevBoarding, bal.boarding);
         return bal;
@@ -1028,41 +953,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     void loadBalance(w, walletId);
   };
 
+  /** Balance-only refresh (official-style). Activity rematerializes via refreshActivity. */
   const reloadWallet = useCallback(
     async (w: BasicWallet, walletId: string) => {
       if (selectedIdRef.current !== walletId) return;
       if (posUiHoldRef.current > 0) return;
       await loadBalance(w, walletId);
-      if (selectedIdRef.current !== walletId) return;
-      if (posUiHoldRef.current > 0) return;
-      // Rotator advances ark display on vtxo_received — re-read after balance sync.
-      await syncReceiveAddresses(w);
-      if (selectedIdRef.current !== walletId) return;
-      if (posUiHoldRef.current > 0) return;
-      const networkId = getNetworkConfig().id;
-      await afterInteractionsOrTimeout(800);
-      if (selectedIdRef.current !== walletId) return;
-      if (posUiHoldRef.current > 0) return;
-      try {
-        await withTimeout(
-          materializeFromArkadeWallet(networkId, walletId, w),
-          20_000,
-          "materializeFromArkadeWallet",
-        );
-        void backfillMissingFiat(networkId);
-      } catch (e) {
-        console.warn("[basic] activity materialize failed", e);
-      }
-      try {
-        await maybeNoticeFromActivity(networkId, walletId);
-      } catch (e) {
-        console.warn("[basic] activity catch-up failed", e);
-      }
-      if (selectedIdRef.current === walletId) {
-        setActivityEpoch((n) => n + 1);
-      }
     },
-    [loadBalance, syncReceiveAddresses, emitFundsNotice],
+    [loadBalance],
   );
   reloadWalletRef.current = reloadWallet;
 
@@ -1193,6 +1091,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 console.warn("[basic] openSyncQuiet off (open settle done)", {
                   ackTotal: lastAckRef.current?.total ?? null,
                 });
+                // Cache/ack already on screen — leave syncing even if live reload was
+                // skipped (POS hold) or persist early-returned.
+                if (prevBalanceRef.current) setBalanceStatus("ready");
               } else {
                 console.warn("[basic] open settle done, quiet awaits first live", {
                   ackTotal: lastAckRef.current?.total ?? null,
@@ -1943,11 +1844,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const w = wallet;
     const walletId = selectedIdRef.current;
     if (!w || !walletId || selectedWallet?.kind !== "arkade") return;
-    // Expo notifyIncomingFunds is flaky — poll balance so live receives still surface.
-    // Faster while Receive POS / QR is open (incomingWatchBoost).
+    // Expo notify is flaky — keep a safety poll. Slow when subscribed; 4s if dead; 1s under POS.
     const boosted = incomingWatchBoostRef.current > 0;
-    const intervalMs = boosted ? BALANCE_POLL_BOOST_MS : BALANCE_POLL_MS;
-    console.warn("[basic] balancePoll", { intervalMs, boosted });
+    const intervalMs = boosted
+      ? BALANCE_POLL_BOOST_MS
+      : notifySubscribed
+        ? BALANCE_POLL_FALLBACK_MS
+        : BALANCE_POLL_MS;
+    console.warn("[basic] balancePoll", { intervalMs, boosted, notifySubscribed });
     void loadBalance(w, walletId);
     const t = setInterval(() => {
       if (selectedIdRef.current !== walletId) return;
@@ -1955,7 +1859,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       void loadBalance(w, walletId);
     }, intervalMs);
     return () => clearInterval(t);
-  }, [wallet, selectedWallet, loadBalance, incomingWatchBoostEpoch]);
+  }, [wallet, selectedWallet, loadBalance, incomingWatchBoostEpoch, notifySubscribed]);
 
   useEffect(() => {
     const w = wallet;
@@ -1964,6 +1868,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     let stop: (() => void) | undefined;
     let cancelled = false;
     let sawSubscribeReplay = false;
+    setNotifySubscribed(false);
 
     void (async () => {
       try {
@@ -2011,8 +1916,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           return;
         }
         stop = unsub;
+        setNotifySubscribed(true);
       } catch (e) {
         console.warn("[basic] notifyIncomingFunds unavailable", e);
+        if (!cancelled) setNotifySubscribed(false);
       }
     })();
 
@@ -2020,6 +1927,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
       clearTimeout(reloadTimerRef.current);
       stop?.();
+      setNotifySubscribed(false);
     };
   }, [wallet, selectedWallet, scheduleReload, emitFundsNotice, acknowledgeIncomingAmount]);
 
