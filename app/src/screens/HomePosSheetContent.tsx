@@ -23,7 +23,7 @@ export function HomePosSheetContent({
     ensureBoardingAddress,
     selectedWallet,
     walletInteractive,
-    openRestoreDone,
+    balanceStatus,
   } = useWallet();
 
   const isLightning = selectedWallet?.kind === "lightning";
@@ -57,10 +57,11 @@ export function HomePosSheetContent({
     );
   }
 
-  // Keep overlay until Keystore open, initial restore/sync, and receive URI
-  // are ready — otherwise keypad taps race with background sync.
-  const posReady =
-    walletInteractive && openRestoreDone && Boolean(bip21Uri);
+  // Same readiness as Home's "syncing…" (balanceStatus), not openRestoreDone —
+  // live balance can land and clear Home sync before HD restore finishes.
+  // Request stays disabled in the panel until bip21Uri exists.
+  const posReady = walletInteractive && balanceStatus !== "loading";
+
 
   return (
     <View style={styles.fill}>
