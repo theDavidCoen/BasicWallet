@@ -2,8 +2,8 @@
 # Build a release APK (reproducible recipe). See docs/reproducible-builds.md
 #
 # ABI mode (env BASIC_WALLET_ABI):
-#   universal (default) — all ABIs in one APK
-#   arm64-v8a           — phone-sized APK (Xiaomi / Pixel / most modern devices)
+#   arm64-v8a (default) — phone-sized APK (Xiaomi / Pixel / most modern devices)
+#   universal           — all ABIs in one APK (optional / emulators)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -11,7 +11,7 @@ APP="$ROOT/app"
 ANDROID="$APP/android"
 DIST="$ROOT/dist"
 VERSION="$(node -p "require('$APP/package.json').version")"
-ABI_MODE="${BASIC_WALLET_ABI:-universal}"
+ABI_MODE="${BASIC_WALLET_ABI:-arm64-v8a}"
 if [[ "$ABI_MODE" == "universal" ]]; then
   OUT_NAME="basic-wallet-${VERSION}-universal.apk"
 else
@@ -112,8 +112,30 @@ if re.search(r"^reactNativeArchitectures=.*$", props_text, re.M):
     )
 else:
     props_text += f"\nreactNativeArchitectures={arches}\n"
+
+# APK size knobs (android/ is gitignored; also mirrored in app.json expo-build-properties)
+size_props = {
+    "expo.useLegacyPackaging": "true",
+    "expo.gif.enabled": "false",
+    "android.enableMinifyInReleaseBuilds": "true",
+    "android.enableShrinkResourcesInReleaseBuilds": "true",
+    "android.enableBundleCompression": "true",
+}
+for key, val in size_props.items():
+    if re.search(rf"^{re.escape(key)}=.*$", props_text, re.M):
+        props_text = re.sub(
+            rf"^{re.escape(key)}=.*$",
+            f"{key}={val}",
+            props_text,
+            count=1,
+            flags=re.M,
+        )
+    else:
+        props_text += f"\n{key}={val}\n"
+
 props.write_text(props_text)
 print("gradle.properties reactNativeArchitectures=", arches)
+print("gradle.properties size props:", ", ".join(f"{k}={v}" for k, v in size_props.items()))
 
 if abi_mode == "universal":
     text = text.replace(

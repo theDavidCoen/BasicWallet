@@ -1,4 +1,4 @@
-import { useFonts, JetBrainsMono_400Regular, JetBrainsMono_700Bold } from "@expo-google-fonts/jetbrains-mono";
+import { useFonts } from "expo-font";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, LogBox, Text, View } from "react-native";
@@ -40,8 +40,8 @@ LogBox.ignoreLogs([
 
 export default function App() {
   const [fontsLoaded] = useFonts({
-    JetBrainsMono_400Regular,
-    JetBrainsMono_700Bold,
+    JetBrainsMono_400Regular: require("./assets/fonts/JetBrainsMono_400Regular.ttf"),
+    JetBrainsMono_700Bold: require("./assets/fonts/JetBrainsMono_700Bold.ttf"),
   });
   const [dbKeyReady, setDbKeyReady] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);

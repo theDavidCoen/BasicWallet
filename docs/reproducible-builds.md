@@ -1,7 +1,7 @@
 # Reproducible Android APK builds (Basic Wallet)
 
 Goal: anyone with this repo + the documented toolchain can rebuild the same
-Universal release APK (byte-identical JS/native inputs; APK signature uses the
+arm64-v8a release APK (byte-identical JS/native inputs; APK signature uses the
 release keystore held offline).
 
 ## Identity
@@ -21,7 +21,7 @@ gpg --verify dist/basic-wallet-0.1.0-alpha.1-arm64-v8a.apk.sha256.asc \
 sha256sum -c dist/basic-wallet-0.1.0-alpha.1-arm64-v8a.apk.sha256
 ```
 
-Universal APKs (all ABIs) are optional local builds; prefer `BASIC_WALLET_ABI=arm64-v8a`.
+Universal APKs (all ABIs) are optional: `BASIC_WALLET_ABI=universal ./scripts/build-release-apk.sh`.
 
 ## Toolchain (pin these)
 
@@ -58,7 +58,7 @@ Certificate SHA-256 (public, safe to publish):
 
 `1D:C5:9A:35:69:CD:47:97:D1:99:17:CC:57:27:D0:3C:D0:4F:70:2E:55:BD:84:E8:B0:DF:79:3B:7D:ED:87:DD`
 
-## Build (Universal APK)
+## Build (arm64-v8a APK, default)
 
 ```bash
 cd app
@@ -67,13 +67,22 @@ export SOURCE_DATE_EPOCH=$(git -C .. show -s --format=%ct HEAD)
 ../scripts/build-release-apk.sh
 ```
 
+Optional universal (all ABIs):
+
+```bash
+BASIC_WALLET_ABI=universal ../scripts/build-release-apk.sh
+```
+
 The script:
 
 1. Syncs `versionName` / `versionCode` into `android/app/build.gradle`
 2. Wires the release signing config from env (never commits secrets)
-3. Disables ABI splits → one **Universal** APK
+3. Sets ABI filters for arm64-v8a (or disables splits for universal)
 4. Runs `./gradlew :app:assembleRelease`
 5. Copies APK to `dist/`, writes `.sha256`, detaches-signs with PGP `5351632C…`
+
+Release size knobs (set via `expo-build-properties` / `gradle.properties`): R8 minify,
+resource shrink, legacy `.so` packaging, Hermes bundle compression.
 
 Dev clients (Metro) stay on debug signing; do not install this APK over a
 debug build without uninstalling first (signature mismatch).

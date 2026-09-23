@@ -62,7 +62,11 @@
           "android": {
             "compileSdkVersion": 36,
             "targetSdkVersion": 35,
-            "minSdkVersion": 26
+            "minSdkVersion": 26,
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "useLegacyPackaging": true,
+            "extraProguardRules": "-keep class com.facebook.react.** { *; }\n-keep class com.facebook.hermes.** { *; }\n-keep class com.facebook.jni.** { *; }\n-keep class com.swmansion.reanimated.** { *; }\n-keep class com.swmansion.worklets.** { *; }\n-keep class com.swmansion.rnscreens.** { *; }\n-keep class com.th3rdwave.safeareacontext.** { *; }\n-keep class expo.modules.** { *; }\n-keep class net.zetetic.** { *; }\n-keep class net.sqlcipher.** { *; }\n-keep class org.bouncycastle.** { *; }\n-keep class androidx.credentials.** { *; }\n-keep class androidx.biometric.** { *; }\n-keep class com.google.mlkit.** { *; }\n-keep class com.google.android.gms.internal.mlkit_vision_barcode.** { *; }\n-dontwarn net.sqlcipher.**\n-dontwarn org.bouncycastle.**\n-dontwarn com.google.mlkit.**"
           },
           "ios": {
             "deploymentTarget": "16.4"
