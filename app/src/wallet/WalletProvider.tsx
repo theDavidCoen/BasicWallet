@@ -6,7 +6,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { InteractionManager } from "react-native";
 import { Ramps } from "@arkade-os/sdk";
-import { materializeFromArkadeWallet } from "../account/activityStore";
+import { materializeFromArkadeWallet, recordOptimisticArkadeReceive } from "../account/activityStore";
 import { backfillMissingFiat } from "../account/fiatRate";
 import {
   avatarLetter,
@@ -174,6 +174,8 @@ const WalletContext = createContext<WalletContextValue | null>(null);
 const RELOAD_DEBOUNCE_MS = 1_000;
 /** After SDK notifyIncomingFunds — shorter so POS receives feel live. */
 const RELOAD_URGENT_MS = 150;
+/** Official SW VTXO/UTXO debounce — indexer catch-up before balance+activity reload. */
+const RELOAD_EVENT_MS = 1_000;
 /** Background balance poll when notifyIncomingFunds is unavailable. */
 const BALANCE_POLL_MS = 4_000;
 /** Idle poll when notify is subscribed (Expo safety net; official has no interval). */
@@ -410,6 +412,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [activityEpoch, setActivityEpoch] = useState(0);
   const [fundsNotice, setFundsNotice] = useState<FundsNotice | null>(null);
   const suppressIncomingUntilRef = useRef(0);
+  /** Total before local spend — used to detect stale pre-spend indexer reads. */
+  const preSendTotalRef = useRef<number | null>(null);
   /** >0 while an outbound send holds the ASP — skip balance poll / reload. */
   const aspPollPausedRef = useRef(0);
   /** True during passkey/seed/Nostr rematerialize until post-restore balance is acked. */
@@ -449,6 +453,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const reloadWalletRef = useRef<(w: BasicWallet, walletId: string) => Promise<void>>(
     async () => {},
   );
+  const refreshActivityRef = useRef<() => Promise<void>>(async () => {});
 
   const refreshWalletList = useCallback(() => {
     const networkId = getNetworkConfig().id;
@@ -511,6 +516,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const noteLocalSend = useCallback(() => {
+    if (preSendTotalRef.current == null && prevBalanceRef.current) {
+      preSendTotalRef.current = prevBalanceRef.current.total;
+    }
     suppressIncomingUntilRef.current = Date.now() + 60_000;
     setFundsNotice(null);
   }, []);
@@ -538,6 +546,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const walletId = selectedIdRef.current;
     setBalance((prev) => {
       if (!prev) return prev;
+      if (preSendTotalRef.current == null) {
+        preSendTotalRef.current = prev.total;
+      }
       const available = Math.max(0, prev.available - spend);
       const next = {
         available,
@@ -551,7 +562,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         void writeCachedBalance(networkId, walletId, next);
         void writeLastAckBalance(networkId, walletId, next);
       }
-      console.warn("[basic] applyLocalSpend", { spend, total: next.total });
+      console.warn("[basic] applyLocalSpend", {
+        spend,
+        total: next.total,
+        preSend: preSendTotalRef.current,
+      });
       return next;
     });
     setBalanceStatus("ready");
@@ -644,14 +659,19 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const acknowledgeIncomingAmount = useCallback((amount: number) => {
     const add = Math.max(0, Math.floor(amount));
     if (!(add > 0)) return;
-    const prev = lastAckRef.current;
-    if (!prev) return;
+    const prev = lastAckRef.current ?? prevBalanceRef.current ?? {
+      available: 0,
+      boarding: 0,
+      total: 0,
+    };
     const next = {
       available: prev.available + add,
       boarding: prev.boarding,
       total: prev.total + add,
     };
     lastAckRef.current = next;
+    // Notify is authoritative — do not keep post-send optimistic 0 while live ≈ preSend.
+    preSendTotalRef.current = null;
     const walletId = selectedIdRef.current;
     if (walletId) {
       void writeLastAckBalance(getNetworkConfig().id, walletId, next);
@@ -660,6 +680,31 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       add,
       ackTotal: next.total,
     });
+  }, []);
+
+  /** Mirror applyLocalSpend for SDK push — Home updates with the notice, not after getBalance. */
+  const applyLocalReceive = useCallback((amountSats: number) => {
+    const add = Math.max(0, Math.floor(amountSats));
+    if (!(add > 0)) return;
+    const networkId = getNetworkConfig().id;
+    const walletId = selectedIdRef.current;
+    preSendTotalRef.current = null;
+    setBalance((prev) => {
+      const base = prev ?? { available: 0, boarding: 0, total: 0 };
+      const next = {
+        available: base.available + add,
+        boarding: base.boarding,
+        total: base.total + add,
+      };
+      prevBalanceRef.current = next;
+      prevBoardingRef.current = next.boarding;
+      if (walletId) {
+        void writeCachedBalance(networkId, walletId, next);
+      }
+      console.warn("[basic] applyLocalReceive", { add, total: next.total });
+      return next;
+    });
+    setBalanceStatus("ready");
   }, []);
 
   const beginQuietImportSync = useCallback(() => {
@@ -823,14 +868,35 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       }
 
       // After local send, indexer may still report the pre-spend total — do not
-      // wipe the optimistic deduction by writing the stale higher balance back.
-      if (suppressed && displayed && bal.total > displayed.total + 1) {
-        console.warn("[basic] persistBalance keep optimistic spend", {
+      // wipe the optimistic deduction. Exception: notify already advanced ack to
+      // this live total (send-max then receive same amount → live === preSend).
+      if (
+        suppressed &&
+        preSendTotalRef.current != null &&
+        bal.total >= preSendTotalRef.current - 1
+      ) {
+        const ackMatchesLive =
+          !!ack && Math.abs(bal.total - ack.total) <= 1 && bal.total > (displayed?.total ?? 0) + 1;
+        if (!ackMatchesLive) {
+          console.warn("[basic] persistBalance keep optimistic spend", {
+            live: bal.total,
+            preSend: preSendTotalRef.current,
+            displayed: displayed?.total,
+          });
+          setBalanceStatus("ready");
+          return;
+        }
+        console.warn("[basic] persistBalance adopt after notify ack", {
           live: bal.total,
-          displayed: displayed.total,
+          ackTotal: ack?.total,
+          preSend: preSendTotalRef.current,
         });
-        setBalanceStatus("ready");
-        return;
+      }
+
+      if (!suppressed) {
+        preSendTotalRef.current = null;
+      } else if (preSendTotalRef.current != null) {
+        preSendTotalRef.current = null;
       }
 
       prevBoardingRef.current = bal.boarding;
@@ -953,7 +1019,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     void loadBalance(w, walletId);
   };
 
-  /** Balance-only refresh (official-style). Activity rematerializes via refreshActivity. */
+  /** Balance-only refresh. Activity rematerializes via refreshActivity / event reload. */
   const reloadWallet = useCallback(
     async (w: BasicWallet, walletId: string) => {
       if (selectedIdRef.current !== walletId) return;
@@ -965,17 +1031,31 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   reloadWalletRef.current = reloadWallet;
 
   const scheduleReload = useCallback(
-    (w: BasicWallet, walletId: string, opts?: { urgent?: boolean }) => {
+    (w: BasicWallet, walletId: string, opts?: { urgent?: boolean; event?: boolean }) => {
       if (aspPollPausedRef.current > 0) return;
       if (posUiHoldRef.current > 0) return;
       clearTimeout(reloadTimerRef.current);
-      const ms = opts?.urgent ? RELOAD_URGENT_MS : RELOAD_DEBOUNCE_MS;
+      const ms = opts?.event
+        ? RELOAD_EVENT_MS
+        : opts?.urgent
+          ? RELOAD_URGENT_MS
+          : RELOAD_DEBOUNCE_MS;
+      const isEvent = !!opts?.event;
       reloadTimerRef.current = setTimeout(() => {
         if (aspPollPausedRef.current > 0) return;
         if (posUiHoldRef.current > 0) return;
-        // While POS was open we skipped work — never rematerialize under the keypad.
-        if (incomingWatchBoostRef.current > 0) {
+        // POS keypad / boost: balance only — never rematerialize under the finger.
+        if (!isEvent && incomingWatchBoostRef.current > 0) {
           void loadBalance(w, walletId);
+          return;
+        }
+        if (isEvent) {
+          void (async () => {
+            await loadBalance(w, walletId);
+            if (selectedIdRef.current !== walletId) return;
+            if (posUiHoldRef.current > 0) return;
+            await refreshActivityRef.current();
+          })();
           return;
         }
         void reloadWalletRef.current(w, walletId);
@@ -1169,6 +1249,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       openingRef.current = false;
       // Send-suppress is per active wallet session — never block catch-up on switch.
       suppressIncomingUntilRef.current = 0;
+      preSendTotalRef.current = null;
       aspPollPausedRef.current = 0;
       aspPollPausedRef.current = 0;
       setSelectedWalletId(networkId, walletId);
@@ -1387,6 +1468,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setActivityEpoch((n) => n + 1);
     }
   }, [wallet, selectedWallet]);
+  refreshActivityRef.current = refreshActivity;
 
   const rotateReceiveAddress = useCallback(async () => {
     const walletId = selectedIdRef.current;
@@ -1891,7 +1973,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                     (ackTotal > 0 && amount >= ackTotal * 0.9));
                 if (looksLikeFullReplay) {
                   console.warn("[basic] notifyIncomingFunds skip replay", { amount, ackAvail });
-                  scheduleReload(w, walletId, { urgent: true });
+                  scheduleReload(w, walletId, { event: true });
                   return;
                 }
               }
@@ -1905,11 +1987,23 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 });
                 if (shown === "shown") {
                   acknowledgeIncomingAmount(amount);
+                  applyLocalReceive(amount);
+                  const wid = selectedIdRef.current;
+                  if (wid) {
+                    try {
+                      recordOptimisticArkadeReceive(getNetworkConfig().id, wid, {
+                        amountSats: amount,
+                      });
+                      setActivityEpoch((n) => n + 1);
+                    } catch (e) {
+                      console.warn("[basic] optimistic receive activity failed", e);
+                    }
+                  }
                 }
               }
             }
           }
-          scheduleReload(w, walletId, { urgent: true });
+          scheduleReload(w, walletId, { event: true });
         });
         if (cancelled) {
           unsub();
@@ -1929,7 +2023,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       stop?.();
       setNotifySubscribed(false);
     };
-  }, [wallet, selectedWallet, scheduleReload, emitFundsNotice, acknowledgeIncomingAmount]);
+  }, [
+    wallet,
+    selectedWallet,
+    scheduleReload,
+    emitFundsNotice,
+    acknowledgeIncomingAmount,
+    applyLocalReceive,
+  ]);
 
   const balanceSats = balance?.total ?? null;
   const avatarLabel = selectedWallet ? avatarLetter(selectedWallet.label) : "P";

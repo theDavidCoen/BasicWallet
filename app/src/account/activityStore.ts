@@ -37,6 +37,14 @@ function isLocalPendingSendId(activityId: string): boolean {
   return activityId.startsWith("pending:") || activityId.startsWith("local-send:");
 }
 
+function isLocalPendingReceiveId(activityId: string): boolean {
+  return activityId.startsWith("local-recv:");
+}
+
+function isLocalOptimisticId(activityId: string): boolean {
+  return isLocalPendingSendId(activityId) || isLocalPendingReceiveId(activityId);
+}
+
 /** Snapshot optimistic / pending sends so rematerialize does not wipe them. */
 function readLocalPendingSendRows(
   networkId: ArkadeNetworkId,
@@ -140,6 +148,103 @@ export function recordOptimisticArkadeSend(
   return id;
 }
 
+/**
+ * Immediate inbound row so Activity updates with FundsNotice before SDK history
+ * (materializeFromArkadeWallet often times out on Expo).
+ */
+export function recordOptimisticArkadeReceive(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+  opts: { amountSats: number; txid?: string },
+): string {
+  const amount = Math.abs(Math.floor(opts.amountSats));
+  const raw = opts.txid?.trim() ?? "";
+  const id =
+    raw && /^[0-9a-fA-F]{64}$/.test(raw) ? raw : `local-recv:${Date.now()}`;
+  const arkTxid = id.startsWith("local-recv:") ? "" : id;
+  const now = Date.now();
+  const row: ActivityRow = {
+    id,
+    title: "Receive",
+    subtitle: arkTxid ? arkTxid.slice(0, 16) : "Incoming",
+    amount: amount > 0 ? amount : 0,
+    settled: false,
+    status: "preconfirmed",
+    createdAt: now,
+    tags: ["offchain"],
+    txs: [
+      {
+        type: "RECEIVED",
+        amount: amount > 0 ? amount : 0,
+        settled: false,
+        createdAt: now,
+        tag: "offchain",
+        boardingTxid: "",
+        commitmentTxid: "",
+        arkTxid,
+      },
+    ],
+  };
+  upsertActivityRows(networkId, walletId, [row]);
+  return id;
+}
+
+/** Snapshot optimistic / pending receives so rematerialize does not wipe them. */
+function readLocalPendingReceiveRows(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+): ActivityRow[] {
+  const db = getAccountDb(networkId);
+  try {
+    const rows = db.getAllSync<{
+      activity_id: string;
+      amount_sats: number;
+      created_at: number;
+      settled: number;
+      title: string;
+      subtitle: string | null;
+      tags_json: string | null;
+      txs_json: string | null;
+      status: string | null;
+    }>(
+      `SELECT activity_id, amount_sats, created_at, settled, title, subtitle, tags_json, txs_json, status
+       FROM activity_idx WHERE wallet_id = ?
+         AND activity_id LIKE 'local-recv:%'`,
+      [walletId],
+    );
+    return rows.map((r) => {
+      let tags: string[] = ["offchain"];
+      let txs: ActivityRow["txs"] = [];
+      try {
+        tags = r.tags_json ? (JSON.parse(r.tags_json) as string[]) : ["offchain"];
+      } catch {
+        tags = ["offchain"];
+      }
+      try {
+        txs = r.txs_json ? (JSON.parse(r.txs_json) as ActivityRow["txs"]) : [];
+      } catch {
+        txs = [];
+      }
+      const base = {
+        id: r.activity_id,
+        title: r.title || "Receive",
+        subtitle: r.subtitle ?? "",
+        amount: r.amount_sats,
+        settled: r.settled === 1,
+        createdAt: r.created_at,
+        tags,
+        txs,
+      };
+      return {
+        ...base,
+        status: (r.status as ActivityStatus) || deriveActivityStatus(base),
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
 /** Snapshot local unilateral-exit rows so SDK rematerialize does not wipe them. */
 function readLocalExitRows(
   networkId: ArkadeNetworkId,
@@ -226,6 +331,7 @@ export function replaceActivityRows(
   const preserved = new Map<string, number>();
   const localExits = readLocalExitRows(networkId, walletId);
   const localPending = readLocalPendingSendRows(networkId, walletId);
+  const localReceives = readLocalPendingReceiveRows(networkId, walletId);
   try {
     const prev = db.getAllSync<{ activity_id: string; created_at: number }>(
       `SELECT activity_id, created_at FROM activity_idx WHERE wallet_id = ?`,
@@ -239,7 +345,7 @@ export function replaceActivityRows(
   }
 
   const withoutDupLocals = rows.filter(
-    (r) => !isLocalExitActivityId(r.id) && !isLocalPendingSendId(r.id),
+    (r) => !isLocalExitActivityId(r.id) && !isLocalOptimisticId(r.id),
   );
 
   // Partial SDK history must not wipe older local rows (seen: 1 receive → empty list).
@@ -251,6 +357,9 @@ export function replaceActivityRows(
     upsertActivityRows(networkId, walletId, withoutDupLocals, preserved);
     if (localExits.length > 0) {
       upsertActivityRows(networkId, walletId, localExits, preserved);
+    }
+    if (localReceives.length > 0) {
+      upsertActivityRows(networkId, walletId, localReceives, preserved);
     }
     return;
   }
@@ -280,6 +389,21 @@ export function replaceActivityRows(
   });
   if (pendingToKeep.length > 0) {
     upsertActivityRows(networkId, walletId, pendingToKeep, preserved);
+  }
+  const receivesToKeep = localReceives.filter((p) => {
+    const abs = Math.abs(p.amount);
+    const ark = (p.txs[0]?.arkTxid || "").toLowerCase();
+    const matched = withoutDupLocals.some((r) => {
+      if (!(r.amount > 0)) return false;
+      if (Math.abs(Math.abs(r.amount) - abs) > 1) return false;
+      if (ark && r.id.toLowerCase() === ark) return true;
+      if (ark && r.txs.some((t) => (t.arkTxid || "").toLowerCase() === ark)) return true;
+      return Math.abs(r.createdAt - p.createdAt) < 120_000;
+    });
+    return !matched;
+  });
+  if (receivesToKeep.length > 0) {
+    upsertActivityRows(networkId, walletId, receivesToKeep, preserved);
   }
 }
 
