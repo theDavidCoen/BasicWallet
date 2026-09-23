@@ -49,6 +49,7 @@ import { UnilateralExitExecuteScreen } from "../screens/UnilateralExitExecuteScr
 import { CollaborativeOffboardScreen } from "../screens/CollaborativeOffboardScreen";
 import { ExitRecoveryAddressScreen } from "../screens/ExitRecoveryAddressScreen";
 import { AboutScreen } from "../screens/AboutScreen";
+import { WalletWarmupScreen } from "../screens/WalletWarmupScreen";
 import { BackupReminderBanner } from "./BackupReminderBanner";
 import { RecoveryAddressReminder } from "./RecoveryAddressReminder";
 import { SheetHost } from "./SheetHost";
@@ -72,7 +73,7 @@ const navTheme = {
 };
 
 export function RootNavigator() {
-  const { ready, hasWallet } = useWallet();
+  const { ready, hasWallet, sessionPhase } = useWallet();
   const navigationRef = useNavigationContainerRef<RootStackParamList>();
 
   if (!ready) {
@@ -83,17 +84,22 @@ export function RootNavigator() {
     );
   }
 
+  // One AppLockGate for the whole session — remounting around warmup caused a
+  // second biometric prompt when switching to Home.
   return (
-    <NavigationContainer ref={navigationRef} theme={navTheme}>
-      <AppLockGate>
-        <UserPresenceHost />
-        <SheetHost>
-          <BackupReminderBanner navigationRef={navigationRef} />
-          <RecoveryAddressReminder navigationRef={navigationRef} />
-          <Stack.Navigator
-            initialRouteName={hasWallet ? "Home" : "OnboardingCreate"}
-            screenOptions={{ headerShown: false, animation: "fade" }}
-          >
+    <AppLockGate>
+      <UserPresenceHost />
+      {hasWallet && sessionPhase === "warming" ? (
+        <WalletWarmupScreen />
+      ) : (
+        <NavigationContainer ref={navigationRef} theme={navTheme}>
+          <SheetHost>
+            <BackupReminderBanner navigationRef={navigationRef} />
+            <RecoveryAddressReminder navigationRef={navigationRef} />
+            <Stack.Navigator
+              initialRouteName={hasWallet ? "Home" : "OnboardingCreate"}
+              screenOptions={{ headerShown: false, animation: "fade" }}
+            >
             <Stack.Screen name="OnboardingCreate" component={OnboardingCreateScreen} />
             <Stack.Screen name="OnboardingSecurity" component={OnboardingSecurityScreen} />
             <Stack.Screen name="TermsOfUse" component={TermsOfUseScreen} />
@@ -156,9 +162,10 @@ export function RootNavigator() {
               component={ActivityDetailScreen}
               options={{ animation: "slide_from_right" }}
             />
-          </Stack.Navigator>
-        </SheetHost>
-      </AppLockGate>
-    </NavigationContainer>
+            </Stack.Navigator>
+          </SheetHost>
+        </NavigationContainer>
+      )}
+    </AppLockGate>
   );
 }

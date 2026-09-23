@@ -108,6 +108,11 @@ export function extractLightningPayFromScan(raw: string): string | null {
 type ScanQrViewProps = {
   /** When false, camera pauses and lock resets. */
   active: boolean;
+  /**
+   * When false, camera still runs but accepted QRs wait until true
+   * (wallet Keystore still opening). Cancel never waits.
+   */
+  acceptScans?: boolean;
   onClose: () => void;
   /** Return non-null when the QR is accepted (destination string). */
   parse?: (raw: string) => string | null;
@@ -123,6 +128,7 @@ type ScanQrViewProps = {
 
 export function ScanQrView({
   active,
+  acceptScans = true,
   onClose,
   onScan,
   parse = extractArkAddressFromScan,
@@ -134,6 +140,7 @@ export function ScanQrView({
   const [permission, requestPermission] = useCameraPermissions();
   const locked = useRef(false);
   const lastRejectAt = useRef(0);
+  const pendingRef = useRef<{ value: string; raw: string } | null>(null);
   const [hint, setHint] = useState(idleHint);
   const [torch, setTorch] = useState(false);
 
@@ -141,6 +148,7 @@ export function ScanQrView({
     if (!active) {
       locked.current = false;
       lastRejectAt.current = 0;
+      pendingRef.current = null;
       setHint(idleHint);
       setTorch(false);
       return;
@@ -150,6 +158,17 @@ export function ScanQrView({
       void requestPermission();
     }
   }, [active, permission, requestPermission, idleHint]);
+
+  // Flush a scan that landed while the wallet was still opening.
+  useEffect(() => {
+    if (!active || !acceptScans) return;
+    const pending = pendingRef.current;
+    if (!pending) return;
+    pendingRef.current = null;
+    locked.current = true;
+    onScan(pending.value, pending.raw);
+    onClose();
+  }, [active, acceptScans, onClose, onScan]);
 
   const onBarcode = useCallback(
     (result: BarcodeScanningResult) => {
@@ -166,11 +185,17 @@ export function ScanQrView({
         }
         return;
       }
+      if (!acceptScans) {
+        pendingRef.current = { value, raw: data };
+        locked.current = true;
+        setHint("Wallet still syncing — hold on…");
+        return;
+      }
       locked.current = true;
       onScan(value, data);
       onClose();
     },
-    [active, onClose, onScan, parse, rejectHint],
+    [acceptScans, active, onClose, onScan, parse, rejectHint],
   );
 
   return (

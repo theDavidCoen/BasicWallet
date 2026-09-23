@@ -4,6 +4,7 @@
  */
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { InteractionManager } from "react-native";
 import { Ramps } from "@arkade-os/sdk";
 import { materializeFromArkadeWallet } from "../account/activityStore";
 import { backfillMissingFiat } from "../account/fiatRate";
@@ -43,6 +44,7 @@ import {
   hasMnemonic,
   migrateLegacyMnemonicIfNeeded,
 } from "../security/mnemonicStore";
+import { markWarmupSeen, clearWarmupSeen } from "./warmupSeen";
 import { balanceFromSdk, type BalanceBreakdown } from "./balance";
 import { loadLndRestCredentials, clearLndRestIfWallet } from "../lightning/lndCredentials";
 import { lndChannelBalance } from "../lightning/lndRest";
@@ -78,10 +80,23 @@ export type FundsNotice = {
 };
 
 export type BalanceStatus = "idle" | "loading" | "ready" | "error";
+export type SessionPhase = "booting" | "warming" | "live";
 
 type WalletContextValue = {
   ready: boolean;
   hasWallet: boolean;
+  /**
+   * booting: inventory not done.
+   * warming: has wallet, Keystore/restore still settling (pre-Home gate).
+   * live: Home shell may navigate freely.
+   */
+  sessionPhase: SessionPhase;
+  /** Keystore open — UI may navigate; balance/addresses may still load. */
+  walletInteractive: boolean;
+  /** HD restore finished (or soft-failed); warmup may dismiss. */
+  openRestoreDone: boolean;
+  /** Call when pre-Home warmup finishes (or times out). */
+  markSessionLive: () => void;
   wallets: WalletRecord[];
   selectedWallet: WalletRecord | null;
   wallet: BasicWallet | null;
@@ -124,6 +139,8 @@ type WalletContextValue = {
   /** Optimistic UI after a successful outbound send (before live getBalance catches up). */
   applyLocalSpend: (amountSats: number) => void;
   refresh: () => Promise<void>;
+  /** Cheap getBalance only — no activity materialize (Receive boarding poll). */
+  refreshBalanceOnly: () => Promise<void>;
   /** Rematerialize activity_idx only (no balance). Safe for Activity pull-to-refresh. */
   refreshActivity: () => Promise<void>;
   ensureBoardingAddress: () => Promise<string>;
@@ -181,6 +198,27 @@ async function callGetNewBoardingAddress(w: BasicWallet): Promise<string | null>
     console.warn("[basic] getNewBoardingAddress failed", e);
     return null;
   }
+}
+
+/** Yield to UI; fall back after `ms` so cold-start sync still runs if idle. */
+function afterInteractionsOrTimeout(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const task = InteractionManager.runAfterInteractions(finish);
+    setTimeout(() => {
+      try {
+        (task as { cancel?: () => void }).cancel?.();
+      } catch {
+        /* ignore */
+      }
+      finish();
+    }, ms);
+  });
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -351,6 +389,10 @@ async function fetchLightningBalance(walletId: string): Promise<BalanceBreakdown
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [hasWallet, setHasWallet] = useState(false);
+  /** Pre-Home warmup finished (or timed out / onboarding). */
+  const [sessionLive, setSessionLive] = useState(false);
+  /** Mirror of openRestoreDoneRef for React consumers (warmup gate). */
+  const [openRestoreDone, setOpenRestoreDone] = useState(false);
   const [wallets, setWallets] = useState<WalletRecord[]>([]);
   const [selectedWallet, setSelectedWallet] = useState<WalletRecord | null>(null);
   const [wallet, setWallet] = useState<BasicWallet | null>(null);
@@ -376,6 +418,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const openRestoreDoneRef = useRef(false);
   const openSyncQuietGenRef = useRef(0);
   const openingRef = useRef(false);
+  /** Single-flight Keystore open — ensureBoardingAddress awaits this instead of opening again. */
+  const openInFlightRef = useRef<Promise<void> | null>(null);
   const openRetryCountRef = useRef(0);
   const reloadTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   /** Nested boosts from POS / Receive QR — poll balance more often while > 0. */
@@ -431,6 +475,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const clearFundsNotice = useCallback(() => setFundsNotice(null), []);
+
+  const markSessionLive = useCallback(() => {
+    setSessionLive(true);
+  }, []);
 
   const pullBalanceNowRef = useRef<() => void>(() => {});
 
@@ -991,6 +1039,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       if (selectedIdRef.current !== walletId) return;
       if (posUiHoldRef.current > 0) return;
       const networkId = getNetworkConfig().id;
+      await afterInteractionsOrTimeout(800);
+      if (selectedIdRef.current !== walletId) return;
+      if (posUiHoldRef.current > 0) return;
       try {
         await withTimeout(
           materializeFromArkadeWallet(networkId, walletId, w),
@@ -1042,12 +1093,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       // Suppress FundsReceived until first live balance after restore settles.
       openSyncQuietRef.current = true;
       openRestoreDoneRef.current = false;
+      setOpenRestoreDone(false);
       const quietGen = ++openSyncQuietGenRef.current;
       setTimeout(() => {
         if (openSyncQuietGenRef.current !== quietGen) return;
         if (!openSyncQuietRef.current) return;
         // Last resort: arm notices but treat the next full-wallet jump as baseline.
         openRestoreDoneRef.current = true;
+        setOpenRestoreDone(true);
         console.warn("[basic] openSyncQuiet still on (timeout) — waiting first live");
       }, 45_000);
       // Keep cache baseline so catch-up can detect receives while away.
@@ -1088,92 +1141,97 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         setBalance({ total: 0, available: 0, boarding: 0 });
       }
 
-      try {
-        const w = await openHdWalletFromKeystore(walletId, { runRestore: false });
-        if (selectedIdRef.current !== walletId) {
+      const run = (async () => {
+        try {
+          const w = await openHdWalletFromKeystore(walletId, { runRestore: false });
+          if (selectedIdRef.current !== walletId) {
+            openingRef.current = false;
+            return;
+          }
+          openRetryCountRef.current = 0;
+          setWallet(w);
+          setHasWallet(true);
+          selectedIdRef.current = walletId;
+          // Addresses + restore + balance off the open critical path.
           openingRef.current = false;
-          return;
-        }
-        openRetryCountRef.current = 0;
-        setWallet(w);
-        setHasWallet(true);
-        selectedIdRef.current = walletId;
-        // Addresses + restore + balance off the open critical path.
-        openingRef.current = false;
-        void (async () => {
-          if (selectedIdRef.current !== walletId) return;
-          void syncReceiveAddresses(w);
-          // Restore before first live balance ack — balance-then-restore set ack=0 then
-          // jumped to full wallet and fired FundsReceived.
-          try {
-            await runWalletRestore(walletId, w);
+          void (async () => {
             if (selectedIdRef.current !== walletId) return;
-            await reloadWallet(w, walletId);
-            if (selectedIdRef.current !== walletId) return;
-            if (quietImportSyncRef.current) {
-              const bal = prevBalanceRef.current;
-              if (bal && bal.total > 0) {
-                quietImportSyncRef.current = false;
-                console.warn("[basic] quietImportSync off (post-restore)");
-              } else {
-                // Empty or indexer lag: one more pull, then clear quiet so a later
-                // real receive (0 → N) can still notify.
-                await new Promise((r) => setTimeout(r, 2_500));
-                if (selectedIdRef.current !== walletId) return;
-                await reloadWallet(w, walletId);
-                quietImportSyncRef.current = false;
-                console.warn("[basic] quietImportSync off (post-retry)");
-              }
-            }
-          } finally {
-            openRestoreDoneRef.current = true;
-            // Drain in-flight pulls that started under quiet before we rely on
-            // the next persist to clear openSyncQuiet.
-            const deadline = Date.now() + 5_000;
-            while (balanceInFlightRef.current && Date.now() < deadline) {
-              await new Promise((r) => setTimeout(r, 40));
-            }
-            // If a live balance already landed under quiet, clear now; otherwise
-            // the next persistBalance (poll/reload) will clear after adopting.
-            if (openSyncQuietRef.current && (lastAckRef.current?.total ?? 0) > 0) {
-              openSyncQuietRef.current = false;
-              console.warn("[basic] openSyncQuiet off (restore done)", {
-                ackTotal: lastAckRef.current?.total ?? null,
-              });
-            } else {
-              console.warn("[basic] open restore done, quiet awaits first live", {
-                ackTotal: lastAckRef.current?.total ?? null,
-              });
-            }
-          }
-          if (selectedIdRef.current !== walletId) return;
-          scheduleCatchUpPolls(w, walletId);
-          try {
-            const mgr = await withTimeout(
-              (
-                w as BasicWallet & {
-                  getVtxoManager: () => Promise<{ renewVtxos: () => Promise<unknown> }>;
+            void syncReceiveAddresses(w);
+            // Defer heavy restore so first Home gestures / Cancel are not starved.
+            try {
+              await afterInteractionsOrTimeout(800);
+              if (selectedIdRef.current !== walletId) return;
+              await runWalletRestore(walletId, w);
+              if (selectedIdRef.current !== walletId) return;
+              await reloadWallet(w, walletId);
+              if (selectedIdRef.current !== walletId) return;
+              if (quietImportSyncRef.current) {
+                const bal = prevBalanceRef.current;
+                if (bal && bal.total > 0) {
+                  quietImportSyncRef.current = false;
+                  console.warn("[basic] quietImportSync off (post-restore)");
+                } else {
+                  // Empty or indexer lag: one more pull, then clear quiet so a later
+                  // real receive (0 → N) can still notify.
+                  await new Promise((r) => setTimeout(r, 2_500));
+                  if (selectedIdRef.current !== walletId) return;
+                  await reloadWallet(w, walletId);
+                  quietImportSyncRef.current = false;
+                  console.warn("[basic] quietImportSync off (post-retry)");
                 }
-              ).getVtxoManager(),
-              8_000,
-              "getVtxoManager",
-            );
-            void mgr.renewVtxos().catch((e) => {
-              const msg = e instanceof Error ? e.message : String(e);
-              if (!/No VTXOs available to renew/i.test(msg)) {
-                console.warn("[basic] renewVtxos", e);
               }
-            });
-          } catch {
-            /* optional */
-          }
-        })();
-      } catch (e) {
-        console.warn("[basic] openWalletAndSync failed", e);
-        openSyncQuietRef.current = false;
-        if (selectedIdRef.current === walletId) setBalanceStatus("error");
-        openingRef.current = false;
-      }
+            } finally {
+              openRestoreDoneRef.current = true;
+              setOpenRestoreDone(true);
+              // If a live balance already landed under quiet, clear now; otherwise
+              // the next persistBalance (poll/reload) will clear after adopting.
+              if (openSyncQuietRef.current && (lastAckRef.current?.total ?? 0) > 0) {
+                openSyncQuietRef.current = false;
+                console.warn("[basic] openSyncQuiet off (restore done)", {
+                  ackTotal: lastAckRef.current?.total ?? null,
+                });
+              } else {
+                console.warn("[basic] open restore done, quiet awaits first live", {
+                  ackTotal: lastAckRef.current?.total ?? null,
+                });
+              }
+            }
+            if (selectedIdRef.current !== walletId) return;
+            scheduleCatchUpPolls(w, walletId);
+            try {
+              const mgr = await withTimeout(
+                (
+                  w as BasicWallet & {
+                    getVtxoManager: () => Promise<{ renewVtxos: () => Promise<unknown> }>;
+                  }
+                ).getVtxoManager(),
+                8_000,
+                "getVtxoManager",
+              );
+              void mgr.renewVtxos().catch((e) => {
+                const msg = e instanceof Error ? e.message : String(e);
+                if (!/No VTXOs available to renew/i.test(msg)) {
+                  console.warn("[basic] renewVtxos", e);
+                }
+              });
+            } catch {
+              /* optional */
+            }
+          })();
+        } catch (e) {
+          console.warn("[basic] openWalletAndSync failed", e);
+          openSyncQuietRef.current = false;
+          openRestoreDoneRef.current = true;
+          setOpenRestoreDone(true);
+          if (selectedIdRef.current === walletId) setBalanceStatus("error");
+          openingRef.current = false;
+        }
+      })();
+
+      openInFlightRef.current = run.finally(() => {
+        if (openInFlightRef.current === run) openInFlightRef.current = null;
+      });
+      await openInFlightRef.current;
     },
     [reloadWallet, syncReceiveAddresses],
   );
@@ -1277,9 +1335,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
     let w = getOpenWallet() ?? wallet;
     if (!w) {
-      w = await openHdWalletFromKeystore(walletId);
-      setWallet(w);
-      setHasWallet(true);
+      // Prefer the in-flight openWalletAndSync instead of a second Keystore open.
+      if (openInFlightRef.current) {
+        await openInFlightRef.current;
+        w = getOpenWallet() ?? wallet;
+      }
+      if (!w) {
+        w = await openHdWalletFromKeystore(walletId);
+        setWallet(w);
+        setHasWallet(true);
+      }
     }
     try {
       const boarding = await withTimeout(w.getBoardingAddress(), 8_000, "getBoardingAddress");
@@ -1355,6 +1420,31 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setWallet(w);
     await reloadWallet(w, walletId);
   }, [wallet, selectedWallet, reloadWallet, openWalletAndSync]);
+
+  /** getBalance only — Receive boarding poll must not rematerialize activity. */
+  const refreshBalanceOnly = useCallback(async () => {
+    const walletId = selectedIdRef.current;
+    if (!walletId) return;
+    if (selectedWallet?.kind === "lightning") {
+      try {
+        const bal = await fetchLightningBalance(walletId);
+        if (selectedIdRef.current !== walletId) return;
+        setBalance(bal);
+        setBalanceStatus("ready");
+        void writeCachedBalance(getNetworkConfig().id, walletId, bal);
+      } catch (e) {
+        console.warn("[basic] lightning balance-only failed", e);
+      }
+      return;
+    }
+    if (selectedWallet?.kind !== "arkade") return;
+    if (openInFlightRef.current) {
+      await openInFlightRef.current;
+    }
+    const w = getOpenWallet() ?? wallet;
+    if (!w) return;
+    await loadBalance(w, walletId);
+  }, [wallet, selectedWallet, loadBalance]);
 
   /** Activity pull-to-refresh: history only — never block on getBalance. */
   const refreshActivity = useCallback(async () => {
@@ -1512,6 +1602,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
     const present = arkadePresent || lightningPresent;
     setHasWallet(present);
+    // Existing wallet ⇒ returning user (Welcome back). Await so the flag is
+    // durable before ready flips and WalletWarmupScreen reads it.
+    if (present) await markWarmupSeen();
 
     if (present && selected.kind === "arkade") {
       const cached = await readCachedBalance(networkId, selected.id, {
@@ -1810,6 +1903,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setBalanceStatus("idle");
     setFundsNotice(null);
     setActivityEpoch((n) => n + 1);
+    setSessionLive(false);
+    setOpenRestoreDone(false);
+    openRestoreDoneRef.current = false;
+    await clearWarmupSeen();
   }, []);
 
   useEffect(() => {
@@ -1925,6 +2022,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const balanceSats = balance?.total ?? null;
   const avatarLabel = selectedWallet ? avatarLetter(selectedWallet.label) : "P";
+  const walletInteractive = wallet != null;
+  const sessionPhase: SessionPhase = !ready
+    ? "booting"
+    : hasWallet && !sessionLive
+      ? "warming"
+      : "live";
+
+  // Onboarding / no wallet: skip warmup gate.
+  useEffect(() => {
+    if (ready && !hasWallet) setSessionLive(true);
+  }, [ready, hasWallet]);
 
   // Debounced background exit package when recovery address is set.
   useEffect(() => {
@@ -1938,6 +2046,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     () => ({
       ready,
       hasWallet,
+      sessionPhase,
+      walletInteractive,
+      openRestoreDone,
+      markSessionLive,
       wallets,
       selectedWallet,
       wallet,
@@ -1960,6 +2072,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       endOutboundSend,
       applyLocalSpend,
       refresh,
+      refreshBalanceOnly,
       refreshActivity,
       ensureBoardingAddress,
       rotateReceiveAddress,
@@ -1980,6 +2093,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [
       ready,
       hasWallet,
+      sessionPhase,
+      walletInteractive,
+      openRestoreDone,
+      markSessionLive,
       wallets,
       selectedWallet,
       wallet,
@@ -2001,6 +2118,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       endOutboundSend,
       applyLocalSpend,
       refresh,
+      refreshBalanceOnly,
+      refreshActivity,
       ensureBoardingAddress,
       rotateReceiveAddress,
       rotateBoardingAddress,

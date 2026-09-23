@@ -2,12 +2,15 @@ import { useNavigation } from "@react-navigation/native";
 import { useEffect } from "react";
 import { Text, View } from "react-native";
 import type { RootNav } from "../navigation/types";
+import { markWarmupSeen } from "../wallet/warmupSeen";
 import { ui } from "../theme/ui";
 
 export function ReadyScreen() {
   const navigation = useNavigation<RootNav>();
 
   useEffect(() => {
+    // Next cold start should say WELCOME BACK, not SETTING UP.
+    void markWarmupSeen();
     const t = setTimeout(() => {
       navigation.reset({ index: 0, routes: [{ name: "Home" }] });
     }, 600);

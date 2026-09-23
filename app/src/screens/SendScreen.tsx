@@ -342,6 +342,8 @@ export function SendScreen() {
     balanceHidden,
     toggleBalanceHidden,
     refresh,
+    balanceStatus,
+    walletInteractive,
     beginOutboundSend,
     endOutboundSend,
     applyLocalSpend,
@@ -354,6 +356,7 @@ export function SendScreen() {
   const [busy, setBusy] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
   const isLightning = selectedWallet?.kind === "lightning";
+  const sendBlocked = !walletInteractive || balanceStatus === "loading";
 
   useEffect(() => {
     const to = route.params?.to?.trim();
@@ -715,6 +718,7 @@ export function SendScreen() {
   if (isLightning) {
     const previewAmt = lnProbe?.amountSats;
     const canSend =
+      !sendBlocked &&
       lnRole !== "invoice" &&
       !!lnProbe &&
       lnProbe.kind !== "bolt12" &&
@@ -739,6 +743,12 @@ export function SendScreen() {
         <Text style={styles.caption}>
           Lightning · invoice / LNURL / address · {selectedWallet?.label ?? "node"}
         </Text>
+
+        {sendBlocked ? (
+          <Text style={styles.warn}>
+            Wallet still syncing — sending unavailable until ready.
+          </Text>
+        ) : null}
 
         {lnRole === "invoice" ? (
           <Text style={styles.warn}>
@@ -876,6 +886,12 @@ export function SendScreen() {
       </Pressable>
       <Text style={styles.caption}>Arkade → ark… · {network.label}</Text>
 
+      {sendBlocked ? (
+        <Text style={styles.warn}>
+          Wallet still syncing — sending unavailable until ready.
+        </Text>
+      ) : null}
+
       <View style={styles.toRow}>
         <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>Amount (sats)</Text>
         <Pressable
@@ -923,8 +939,8 @@ export function SendScreen() {
       />
 
       <Pressable
-        style={[styles.primary, busy && { opacity: 0.6 }]}
-        disabled={busy}
+        style={[styles.primary, (busy || sendBlocked) && { opacity: 0.6 }]}
+        disabled={busy || sendBlocked}
         onPress={() => void onSend()}
       >
         {busy ? (

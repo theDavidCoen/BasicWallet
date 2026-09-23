@@ -172,7 +172,8 @@ function closeNoticeSheets(
 
 export function SheetHost({ children }: { children: ReactNode }) {
   const navigation = useNavigation<RootNav>();
-  const { fundsNotice, clearFundsNotice, selectedWallet, setPosUiHold } = useWallet();
+  const { fundsNotice, clearFundsNotice, selectedWallet, setPosUiHold, walletInteractive } =
+    useWallet();
 
   const activityRef = useRef<InteractiveBottomSheetRef>(null);
   const walletRef = useRef<InteractiveBottomSheetRef>(null);
@@ -304,8 +305,11 @@ export function SheetHost({ children }: { children: ReactNode }) {
   }, [dismissPosSheet]);
 
   const dismissScanAnimated = useCallback(() => {
-    scanRef.current?.dismiss() ?? dismissScanSheet();
-  }, [dismissScanSheet]);
+    // Drop camera / barcode callbacks immediately — then spring closed.
+    setScanOpen(false);
+    setScanSkipEnter(false);
+    scanRef.current?.dismiss();
+  }, []);
 
   const prepareWalletSheet = useCallback(() => {
     setActivityOpen(false);
@@ -477,6 +481,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
     if (activityOpen) return;
     // POS already open — never open Scan underneath / replace it.
     if (posOpen) return;
+    // Already open (or mid interactive open) — avoid a second enter spring.
+    if (scanOpen) return;
     setActivityOpen(false);
     setWalletOpen(false);
     resetWalletFlow();
@@ -491,7 +497,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
     );
     setScanSkipEnter(true);
     setScanOpen(true);
-  }, [activityOpen, clearFundsNotice, posOpen, resetWalletFlow]);
+  }, [activityOpen, clearFundsNotice, posOpen, resetWalletFlow, scanOpen]);
 
   const settleScanOpen = useCallback(() => {
     setScanSkipEnter(false);
@@ -515,6 +521,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
   }, [clearFundsNotice, resetWalletFlow]);
 
   const openScanSheet = useCallback(() => {
+    // Interactive swipe already owns the sheet — do not re-run enter spring.
+    if (scanOpen || scanSkipEnter) return;
     setActivityOpen(false);
     setWalletOpen(false);
     resetWalletFlow();
@@ -529,7 +537,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
     );
     setScanSkipEnter(false);
     setScanOpen(true);
-  }, [clearFundsNotice, resetWalletFlow]);
+  }, [clearFundsNotice, resetWalletFlow, scanOpen, scanSkipEnter]);
 
   const setActivityAnchorY = useCallback(
     (y: number) => {
@@ -916,6 +924,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
         >
           <ScanQrView
             active={scanOpen}
+            acceptScans={walletInteractive}
             onClose={dismissScanAnimated}
             onScan={onHomeScanned}
             parse={parseHomeQr}

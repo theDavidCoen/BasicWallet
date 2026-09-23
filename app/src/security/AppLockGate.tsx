@@ -49,6 +49,8 @@ export function AppLockGate({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const unlockingRef = useRef(false);
   const autoPromptedRef = useRef(false);
+  /** Sync unlock for AppState — setState alone races with presence end → second bio. */
+  const unlockedRef = useRef(false);
   /** AppLockGate mounts only after wallet bootstrap — track mid-session provision. */
   const prevHasWalletRef = useRef(hasWallet);
 
@@ -68,6 +70,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
   }, []);
 
   const afterUnlock = useCallback(async () => {
+    unlockedRef.current = true;
     setUnlocked(true);
     setError(null);
     setMode("bio");
@@ -117,8 +120,13 @@ export function AppLockGate({ children }: { children: ReactNode }) {
         if (pinSet) setMode("pin");
         return;
       }
-      // End presence *before* afterUnlock — passphrase/backup work must not
-      // keep isPresencePromptActive true (that ate FundsReceived notices).
+      // Mark unlocked before clearing the presence latch — ending presence can
+      // let an AppState "active" event re-enter enterLocked (second bio prompt).
+      unlockedRef.current = true;
+      setUnlocked(true);
+      setError(null);
+      setMode("bio");
+      // End presence *before* backup/passphrase work so FundsReceived notices work.
       endPresencePrompt(0);
       await afterUnlock();
     } finally {
@@ -129,6 +137,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
   }, [afterUnlock, refreshPinAvailable]);
 
   const enterLocked = useCallback(async () => {
+    if (unlockedRef.current) return;
     setUnlocked(false);
     setMode("bio");
     setError(null);
@@ -152,6 +161,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
 
       const presentAtBoot = prevHasWalletRef.current;
       if (!presentAtBoot || !p.biometricsLock) {
+        unlockedRef.current = true;
         setUnlocked(true);
         if (presentAtBoot) {
           const loaded = await unlockBackupPassphraseSession();
@@ -188,19 +198,20 @@ export function AppLockGate({ children }: { children: ReactNode }) {
         lockBackupPassphraseSession();
         if (lockEnabled && hasWallet) {
           autoPromptedRef.current = false;
+          unlockedRef.current = false;
           setUnlocked(false);
           setMode("bio");
         }
         return;
       }
-      if (next === "active" && lockEnabled && hasWallet && !unlocked) {
+      if (next === "active" && lockEnabled && hasWallet && !unlockedRef.current) {
         if (isPresencePromptActive()) return;
         void enterLocked();
       }
     };
     const sub = AppState.addEventListener("change", onState);
     return () => sub.remove();
-  }, [hasWallet, lockEnabled, unlocked, enterLocked]);
+  }, [hasWallet, lockEnabled, enterLocked]);
 
   if (!ready) return <>{children}</>;
 

@@ -3,7 +3,7 @@
  */
 
 import { useCallback, useEffect, useMemo } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { useWallet } from "../wallet/WalletProvider";
 import { encodeReceiveBip21 } from "../wallet/bip21Receive";
 import { colors } from "../theme/colors";
@@ -22,18 +22,21 @@ export function HomePosSheetContent({
     boardingError,
     ensureBoardingAddress,
     selectedWallet,
+    walletInteractive,
+    openRestoreDone,
   } = useWallet();
 
   const isLightning = selectedWallet?.kind === "lightning";
 
   useEffect(() => {
+    if (!active) return;
     if (isLightning) return;
     if (!selectedWallet || selectedWallet.kind !== "arkade") return;
     if (boardingAddress) return;
     void ensureBoardingAddress().catch(() => {
       /* boardingError set on provider */
     });
-  }, [boardingAddress, ensureBoardingAddress, isLightning, selectedWallet]);
+  }, [active, boardingAddress, ensureBoardingAddress, isLightning, selectedWallet]);
 
   const bip21Uri = useMemo(
     () => encodeReceiveBip21(boardingAddress, arkAddress, null),
@@ -54,8 +57,11 @@ export function HomePosSheetContent({
     );
   }
 
-  // Show keypad immediately; Request stays disabled until BIP21 is ready.
-  // Full-screen spinner previously delayed the first tappable frame.
+  // Keep overlay until Keystore open, initial restore/sync, and receive URI
+  // are ready — otherwise keypad taps race with background sync.
+  const posReady =
+    walletInteractive && openRestoreDone && Boolean(bip21Uri);
+
   return (
     <View style={styles.fill}>
       {boardingError && !bip21Uri ? (
@@ -65,8 +71,14 @@ export function HomePosSheetContent({
         bip21Uri={bip21Uri}
         onClose={onClose}
         onRequestUri={buildPosBip21}
-        active={active}
+        active={active && posReady}
       />
+      {!posReady ? (
+        <View style={styles.loadingOverlay} pointerEvents="auto">
+          <ActivityIndicator color={colors.fg} size="large" />
+          <Text style={styles.loadingText}>Preparing POS…</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -97,5 +109,19 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingHorizontal: 24,
     paddingTop: 8,
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: colors.bg,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 20,
+  },
+  loadingText: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 13,
+    color: colors.caption,
+    marginTop: 16,
+    textAlign: "center",
   },
 });

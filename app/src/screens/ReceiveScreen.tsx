@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Alert,
   Dimensions,
+  InteractionManager,
   Pressable,
   Share,
   StyleSheet,
@@ -62,6 +63,7 @@ export function ReceiveScreen() {
     rotateBoardingAddress,
     ensureBoardingAddress,
     refresh,
+    refreshBalanceOnly,
     bumpActivity,
     setPosUiHold,
   } = useWallet();
@@ -144,7 +146,16 @@ export function ReceiveScreen() {
   useEffect(() => {
     if (isLightning || !needsBoarding) return;
     if (boardingAddress || boardingLoading || boardingError) return;
-    void loadBoarding();
+    const task = InteractionManager.runAfterInteractions(() => {
+      void loadBoarding();
+    });
+    return () => {
+      try {
+        (task as { cancel?: () => void }).cancel?.();
+      } catch {
+        /* ignore */
+      }
+    };
   }, [
     isLightning,
     needsBoarding,
@@ -154,16 +165,20 @@ export function ReceiveScreen() {
     loadBoarding,
   ]);
 
-  // Official uses Esplora watchAddresses for boarding; RN cannot safely.
-  // BIP21 / Boarding focused: cheap getBalance poll (stop on leave).
+  // BIP21 / Boarding: cheap getBalance only — defer first pull so navigate paints first.
   useEffect(() => {
     if (isLightning || !needsBoarding) return;
-    void refresh();
+    const first = setTimeout(() => {
+      void refreshBalanceOnly();
+    }, 400);
     const id = setInterval(() => {
-      void refresh();
+      void refreshBalanceOnly();
     }, 15_000);
-    return () => clearInterval(id);
-  }, [isLightning, needsBoarding, refresh]);
+    return () => {
+      clearTimeout(first);
+      clearInterval(id);
+    };
+  }, [isLightning, needsBoarding, refreshBalanceOnly]);
 
   // Poll invoice settle while Lightning invoice is showing (cancellable timer).
   useEffect(() => {
@@ -589,11 +604,7 @@ export function ReceiveScreen() {
                   <ExpandableQrCode value={displayPayload} size={220} />
                 ) : (
                   <View style={styles.qrPlaceholder}>
-                    {showBoardingSpinner ? (
-                      <ActivityIndicator color="#000" />
-                    ) : (
-                      <Text style={styles.qrPlaceholderText}>…</Text>
-                    )}
+                    <ActivityIndicator color="#000" />
                   </View>
                 )}
               </View>
@@ -603,9 +614,7 @@ export function ReceiveScreen() {
                   <Text style={styles.pillText} numberOfLines={1}>
                     {displayPayload
                       ? midEllipsis(displayPayload, mode === "bip21" ? 18 : 14, 8)
-                      : showBoardingSpinner
-                        ? "loading…"
-                        : "…"}
+                      : "loading…"}
                   </Text>
                 </View>
                 <Pressable

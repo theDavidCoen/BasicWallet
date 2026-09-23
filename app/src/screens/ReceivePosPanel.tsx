@@ -311,7 +311,10 @@ export function ReceivePosPanel({
         onPress={onRequest}
       >
         {!bip21Uri ? (
-          <ActivityIndicator color="#000" />
+          <View style={styles.ctaBusy}>
+            <ActivityIndicator color="#000" />
+            <Text style={styles.ctaPreparing}>Preparing receive…</Text>
+          </View>
         ) : (
           <Text style={styles.ctaText}>Request</Text>
         )}
@@ -422,6 +425,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   ctaDisabled: { opacity: 0.4 },
+  ctaBusy: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  ctaPreparing: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 13,
+    color: "#000",
+  },
   ctaText: {
     fontFamily: "JetBrainsMono_700Bold",
     fontSize: 17,

@@ -692,13 +692,13 @@ export function HomeScreen() {
               <View style={styles.actions}>
                 <Pressable
                   style={styles.ghostBtn}
-                  onPress={() => navigation.navigate("Receive")}
+                  onPressIn={() => navigation.navigate("Receive")}
                 >
                   <Text style={styles.ghostLabel}>Receive</Text>
                 </Pressable>
                 <Pressable
                   style={styles.ghostBtn}
-                  onPress={() => navigation.navigate("Send")}
+                  onPressIn={() => navigation.navigate("Send")}
                 >
                   <Text style={styles.ghostLabel}>Send</Text>
                 </Pressable>
