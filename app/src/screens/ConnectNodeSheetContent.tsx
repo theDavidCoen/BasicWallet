@@ -5,7 +5,7 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { ConnectProviderStep } from "../navigation/connectFlow";
 import { colors } from "../theme/colors";
-import { ui } from "../theme/ui";
+import { sheetUi } from "../theme/sheetUi";
 
 const ROWS: {
   letter: string;
@@ -52,8 +52,8 @@ type Props = {
 export function ConnectNodeSheetContent({ onSelect }: Props) {
   return (
     <View style={styles.root}>
-      <Text style={ui.title}>CONNECT NODE</Text>
-      <Text style={ui.caption}>Link Lightning for payments.</Text>
+      <Text style={sheetUi.title}>CONNECT NODE</Text>
+      <Text style={sheetUi.caption}>Link Lightning for payments.</Text>
 
       <View style={styles.list}>
         {ROWS.map((row) => (
@@ -80,7 +80,7 @@ export function ConnectNodeSheetContent({ onSelect }: Props) {
         ))}
       </View>
 
-      <Text style={[ui.hint, { marginTop: 28 }]}>
+      <Text style={[sheetUi.hint, { marginTop: 28 }]}>
         Send / receive only.{"\n"}No channel management in-app.
       </Text>
     </View>

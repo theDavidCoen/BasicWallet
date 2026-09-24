@@ -18,7 +18,7 @@ import {
 import { getMnemonicSource } from "../wallet/mnemonicMeta";
 import { useWallet } from "../wallet/WalletProvider";
 import { colors } from "../theme/colors";
-import { ui } from "../theme/ui";
+import { sheetUi } from "../theme/sheetUi";
 import { AddEntropyPanel } from "./AddEntropyPanel";
 
 const CAPTION_PASSKEY =
@@ -152,13 +152,13 @@ export function AddWalletSheetContent({
   if (!passkeyRoot && deviceStep === "intro") {
     return (
       <View style={styles.root}>
-        <Text style={styles.title}>ADD WALLET</Text>
-        <Text style={styles.caption}>{CAPTION_DEVICE}</Text>
-        <Pressable style={styles.primary} onPress={() => setDeviceStep("entropy")}>
-          <Text style={styles.primaryText}>Continue</Text>
+        <Text style={sheetUi.title}>ADD WALLET</Text>
+        <Text style={sheetUi.caption}>{CAPTION_DEVICE}</Text>
+        <Pressable style={sheetUi.primaryBtn} onPress={() => setDeviceStep("entropy")}>
+          <Text style={sheetUi.primaryBtnText}>Continue</Text>
         </Pressable>
-        <Pressable style={ui.secondaryBtn} onPress={onImportWallet}>
-          <Text style={ui.secondaryBtnText}>Import Wallet</Text>
+        <Pressable style={sheetUi.secondaryBtn} onPress={onImportWallet}>
+          <Text style={sheetUi.secondaryBtnText}>Import Wallet</Text>
         </Pressable>
       </View>
     );
@@ -167,16 +167,16 @@ export function AddWalletSheetContent({
   // Passkey: name + create. Device after entropy: name + create.
   return (
     <View style={styles.root}>
-      <Text style={styles.title}>{passkeyRoot ? "ADD WALLET" : "NAME WALLET"}</Text>
-      <Text style={styles.caption}>
+      <Text style={sheetUi.title}>{passkeyRoot ? "ADD WALLET" : "NAME WALLET"}</Text>
+      <Text style={sheetUi.caption}>
         {passkeyRoot
           ? CAPTION_PASSKEY
           : "Label this wallet, then create it with CSPRNG strengthened by your motion."}
       </Text>
 
-      <Text style={styles.fieldLabel}>NAME WALLET</Text>
+      <Text style={sheetUi.label}>NAME WALLET</Text>
       <TextInput
-        style={styles.input}
+        style={sheetUi.input}
         value={label}
         onChangeText={setLabel}
         placeholder="Savings"
@@ -186,20 +186,20 @@ export function AddWalletSheetContent({
       />
 
       <Pressable
-        style={[styles.primary, busy && { opacity: 0.6 }]}
+        style={[sheetUi.primaryBtn, busy && { opacity: 0.6 }]}
         disabled={busy}
         onPress={() => void (passkeyRoot ? onCreatePasskey() : onCreateDevice())}
       >
         {busy ? (
           <ActivityIndicator color={colors.bg} />
         ) : (
-          <Text style={styles.primaryText}>Create Wallet</Text>
+          <Text style={sheetUi.primaryBtnText}>Create Wallet</Text>
         )}
       </Pressable>
 
       {passkeyRoot ? (
-        <Pressable style={ui.secondaryBtn} disabled={busy} onPress={onImportWallet}>
-          <Text style={ui.secondaryBtnText}>Import Wallet</Text>
+        <Pressable style={sheetUi.secondaryBtn} disabled={busy} onPress={onImportWallet}>
+          <Text style={sheetUi.secondaryBtnText}>Import Wallet</Text>
         </Pressable>
       ) : null}
     </View>
@@ -209,48 +209,4 @@ export function AddWalletSheetContent({
 const styles = StyleSheet.create({
   root: { flex: 1 },
   center: { alignItems: "center", justifyContent: "center" },
-  title: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 20,
-    color: colors.fg,
-    textAlign: "center",
-    marginTop: 4,
-  },
-  caption: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 13,
-    color: colors.caption,
-    textAlign: "center",
-    marginTop: 6,
-    marginBottom: 24,
-    lineHeight: 18,
-  },
-  fieldLabel: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 11,
-    color: colors.caption,
-    marginBottom: 8,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: colors.fg,
-    borderRadius: 10,
-    paddingVertical: 14,
-    paddingHorizontal: 12,
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 16,
-    color: colors.fg,
-  },
-  primary: {
-    marginTop: 24,
-    borderRadius: 10,
-    backgroundColor: colors.fg,
-    paddingVertical: 16,
-    alignItems: "center",
-  },
-  primaryText: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 14,
-    color: colors.bg,
-  },
 });

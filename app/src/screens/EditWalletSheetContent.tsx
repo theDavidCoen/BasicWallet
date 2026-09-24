@@ -15,7 +15,7 @@ import {
 import { getNetworkConfig } from "../config/network";
 import { getWallet } from "../account/walletRegistry";
 import { colors } from "../theme/colors";
-import { ui } from "../theme/ui";
+import { sheetUi } from "../theme/sheetUi";
 import { useWallet } from "../wallet/WalletProvider";
 
 type Props = {
@@ -42,10 +42,10 @@ export function EditWalletSheetContent({
   if (!wallet) {
     return (
       <View style={styles.root}>
-        <Text style={ui.title}>EDIT WALLET</Text>
-        <Text style={ui.caption}>Wallet not found.</Text>
-        <Pressable style={ui.primaryBtn} onPress={onDone}>
-          <Text style={ui.primaryBtnText}>Done</Text>
+        <Text style={sheetUi.title}>EDIT WALLET</Text>
+        <Text style={sheetUi.caption}>Wallet not found.</Text>
+        <Pressable style={sheetUi.primaryBtn} onPress={onDone}>
+          <Text style={sheetUi.primaryBtnText}>Done</Text>
         </Pressable>
       </View>
     );
@@ -73,8 +73,8 @@ export function EditWalletSheetContent({
 
   return (
     <View style={styles.root}>
-      <Text style={ui.title}>EDIT WALLET</Text>
-      <Text style={ui.caption}>
+      <Text style={sheetUi.title}>EDIT WALLET</Text>
+      <Text style={sheetUi.caption}>
         {wallet.label} · {kindLabel}
       </Text>
 
@@ -90,14 +90,14 @@ export function EditWalletSheetContent({
       />
 
       <Pressable
-        style={[ui.primaryBtn, { marginTop: 24 }, busy && { opacity: 0.6 }]}
+        style={[sheetUi.primaryBtn, { marginTop: 24 }, busy && { opacity: 0.6 }]}
         disabled={busy}
         onPress={() => void onSave()}
       >
         {busy ? (
           <ActivityIndicator color="#000" />
         ) : (
-          <Text style={ui.primaryBtnText}>Save name</Text>
+          <Text style={sheetUi.primaryBtnText}>Save name</Text>
         )}
       </Pressable>
 
@@ -114,11 +114,11 @@ export function EditWalletSheetContent({
       </Pressable>
 
       {wallet.kind !== "lightning" ? (
-        <Text style={[ui.hint, { marginTop: 16 }]}>
+        <Text style={[sheetUi.hint, { marginTop: 16 }]}>
           Removing a seed wallet is permanent{"\n"}unless you backed up the phrase.
         </Text>
       ) : (
-        <Text style={[ui.hint, { marginTop: 16 }]}>
+        <Text style={[sheetUi.hint, { marginTop: 16 }]}>
           Removes the Lightning connection from Basic.{"\n"}Funds stay on your node.
         </Text>
       )}

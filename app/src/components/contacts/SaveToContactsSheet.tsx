@@ -25,6 +25,7 @@ import type { Contact, IdentifierKind } from "../../contacts/types";
 import { IDENTIFIER_KIND_LABELS, IDENTIFIER_KIND_ORDER } from "../../contacts/types";
 import { InteractiveBottomSheet } from "../sheet/InteractiveBottomSheet";
 import { colors } from "../../theme/colors";
+import { sheetUi } from "../../theme/sheetUi";
 import { ContactPickList } from "./ContactPickList";
 
 export function SaveToContactsSheet({
@@ -98,10 +99,16 @@ export function SaveToContactsSheet({
   }
 
   return (
-    <InteractiveBottomSheet open={open} onDismiss={resetAndClose} visibleFraction={0.72}>
+    <InteractiveBottomSheet
+      open={open}
+      onDismiss={resetAndClose}
+      visibleFraction={0.72}
+      avoidKeyboard
+      portal
+    >
       <View style={styles.body}>
-        <Text style={styles.title}>SAVE TO CONTACTS</Text>
-        <Text style={styles.caption} numberOfLines={2}>
+        <Text style={sheetUi.title}>SAVE TO CONTACTS</Text>
+        <Text style={sheetUi.caption} numberOfLines={2}>
           {destination.trim()}
         </Text>
 
@@ -134,15 +141,15 @@ export function SaveToContactsSheet({
 
         {mode === "new" ? (
           <ScrollView keyboardShouldPersistTaps="handled" style={styles.scroll}>
-            <Text style={styles.label}>name</Text>
+            <Text style={sheetUi.label}>name</Text>
             <TextInput
               value={name}
               onChangeText={setName}
               placeholder="Alice"
               placeholderTextColor={colors.hint}
-              style={styles.input}
+              style={sheetUi.input}
             />
-            <Text style={styles.label}>type</Text>
+            <Text style={sheetUi.label}>type</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.kinds}>
               {IDENTIFIER_KIND_ORDER.map((k) => (
                 <Pressable
@@ -158,22 +165,22 @@ export function SaveToContactsSheet({
             </ScrollView>
             {kind === "custom" ? (
               <>
-                <Text style={styles.label}>custom type label</Text>
+                <Text style={sheetUi.label}>custom type label</Text>
                 <TextInput
                   value={customLabel}
                   onChangeText={setCustomLabel}
                   placeholder="e.g. Telegram"
                   placeholderTextColor={colors.hint}
-                  style={styles.input}
+                  style={sheetUi.input}
                 />
               </>
             ) : null}
             <Pressable
-              style={[styles.primary, (!name.trim() || !!existing) && { opacity: 0.5 }]}
+              style={[sheetUi.primaryBtn, (!name.trim() || !!existing) && { opacity: 0.5 }]}
               disabled={!name.trim() || !!existing}
               onPress={saveNew}
             >
-              <Text style={styles.primaryText}>Save contact</Text>
+              <Text style={sheetUi.primaryBtnText}>Save contact</Text>
             </Pressable>
           </ScrollView>
         ) : (
@@ -198,26 +205,11 @@ export function SaveToContactsSheet({
 
 const styles = StyleSheet.create({
   body: {
-    paddingHorizontal: 20,
     paddingBottom: 12,
-  },
-  title: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 16,
-    color: colors.fg,
-    textAlign: "center",
-    marginBottom: 6,
-  },
-  caption: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 11,
-    color: colors.caption,
-    textAlign: "center",
-    marginBottom: 12,
   },
   warn: {
     fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 12,
+    fontSize: 13,
     color: "#E07070",
     textAlign: "center",
     marginBottom: 8,
@@ -231,8 +223,8 @@ const styles = StyleSheet.create({
     flex: 1,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 8,
-    paddingVertical: 10,
+    borderRadius: 10,
+    paddingVertical: 14,
     alignItems: "center",
   },
   tabOn: {
@@ -241,7 +233,7 @@ const styles = StyleSheet.create({
   },
   tabText: {
     fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 12,
+    fontSize: 14,
     color: colors.caption,
   },
   tabTextOn: {
@@ -251,23 +243,6 @@ const styles = StyleSheet.create({
   scroll: {
     maxHeight: 320,
   },
-  label: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 12,
-    color: colors.caption,
-    marginBottom: 6,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: colors.fg,
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 14,
-    marginBottom: 12,
-  },
   kinds: {
     marginBottom: 12,
     flexGrow: 0,
@@ -276,8 +251,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     marginRight: 8,
     backgroundColor: "#111",
   },
@@ -287,28 +262,16 @@ const styles = StyleSheet.create({
   },
   kindChipText: {
     fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 11,
+    fontSize: 13,
     color: colors.caption,
   },
   kindChipTextOn: {
     color: "#000",
     fontFamily: "JetBrainsMono_700Bold",
   },
-  primary: {
-    backgroundColor: colors.fg,
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: "center",
-    marginTop: 4,
-  },
-  primaryText: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 15,
-    color: "#000",
-  },
   cancel: {
     fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 13,
+    fontSize: 14,
     color: colors.caption,
     textAlign: "center",
   },

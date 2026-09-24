@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { useWallet } from "../wallet/WalletProvider";
 import { colors } from "../theme/colors";
+import { sheetUi } from "../theme/sheetUi";
 
 type Props = {
   onClose: () => void;
@@ -55,8 +56,8 @@ export function WalletSwitcherSheetContent({
 
   return (
     <View style={styles.root}>
-      <Text style={styles.title}>WALLETS</Text>
-      <Text style={styles.caption}>Select your default wallet</Text>
+      <Text style={sheetUi.title}>WALLETS</Text>
+      <Text style={sheetUi.caption}>Select your default wallet</Text>
 
       <FlatList
         data={wallets}
@@ -65,20 +66,20 @@ export function WalletSwitcherSheetContent({
         ListFooterComponent={
           <View>
             <Pressable
-              style={styles.addBtn}
+              style={sheetUi.primaryBtn}
               onPress={() => {
                 onAddWallet();
               }}
             >
-              <Text style={styles.addLabel}>+ Create wallet</Text>
+              <Text style={sheetUi.primaryBtnText}>+ Create wallet</Text>
             </Pressable>
             <Pressable
-              style={styles.addBtn}
+              style={sheetUi.primaryBtn}
               onPress={() => {
                 onConnectNode();
               }}
             >
-              <Text style={styles.addLabel}>Connect Lightning Node</Text>
+              <Text style={sheetUi.primaryBtnText}>Connect Lightning Node</Text>
             </Pressable>
           </View>
         }
@@ -127,21 +128,6 @@ export function WalletSwitcherSheetContent({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  title: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 20,
-    color: colors.fg,
-    textAlign: "center",
-    marginTop: 4,
-  },
-  caption: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 13,
-    color: colors.caption,
-    textAlign: "center",
-    marginTop: 6,
-    marginBottom: 16,
-  },
   list: { paddingBottom: 24, gap: 8 },
   row: {
     flexDirection: "row",
@@ -195,17 +181,5 @@ const styles = StyleSheet.create({
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 22,
     color: "#666666",
-  },
-  addBtn: {
-    marginTop: 12,
-    borderRadius: 10,
-    backgroundColor: colors.fg,
-    paddingVertical: 16,
-    alignItems: "center",
-  },
-  addLabel: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 14,
-    color: colors.bg,
   },
 });

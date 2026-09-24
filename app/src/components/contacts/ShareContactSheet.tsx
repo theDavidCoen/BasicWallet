@@ -18,6 +18,7 @@ import { contactDisplayName, midEllipsis } from "../../contacts/types";
 import { hasNostrIdentity } from "../../nostr/identityStore";
 import { InteractiveBottomSheet } from "../sheet/InteractiveBottomSheet";
 import { colors } from "../../theme/colors";
+import { sheetUi } from "../../theme/sheetUi";
 
 export function ShareContactSheet({
   open,
@@ -70,17 +71,23 @@ export function ShareContactSheet({
   }
 
   return (
-    <InteractiveBottomSheet open={open} onDismiss={onDismiss} visibleFraction={0.55} avoidKeyboard>
+    <InteractiveBottomSheet
+      open={open}
+      onDismiss={onDismiss}
+      visibleFraction={0.62}
+      avoidKeyboard
+      portal
+    >
       <View style={styles.body}>
-        <Text style={styles.title}>SHARE CONTACT</Text>
-        <Text style={styles.caption} numberOfLines={2}>
+        <Text style={sheetUi.title}>SHARE CONTACT</Text>
+        <Text style={sheetUi.caption} numberOfLines={2}>
           {contactDisplayName(contact)}
         </Text>
-        <Text style={styles.hint}>
+        <Text style={sheetUi.hint}>
           Send an encrypted Nostr gift wrap to another Basic Wallet. Enter their npub or NIP-05.
         </Text>
 
-        <Text style={styles.label}>npub or NIP-05</Text>
+        <Text style={sheetUi.label}>npub or NIP-05</Text>
         <TextInput
           value={recipient}
           onChangeText={setRecipient}
@@ -89,11 +96,11 @@ export function ShareContactSheet({
           autoCapitalize="none"
           autoCorrect={false}
           editable={!busy}
-          style={styles.input}
+          style={sheetUi.input}
         />
 
         <Pressable
-          style={[styles.primary, (!recipient.trim() || busy) && { opacity: 0.5 }]}
+          style={[sheetUi.primaryBtn, (!recipient.trim() || busy) && { opacity: 0.5 }]}
           disabled={!recipient.trim() || busy}
           onPress={() => void onSend()}
           accessibilityRole="button"
@@ -102,7 +109,7 @@ export function ShareContactSheet({
           {busy ? (
             <ActivityIndicator color="#000" />
           ) : (
-            <Text style={styles.primaryText}>Send</Text>
+            <Text style={sheetUi.primaryBtnText}>Send</Text>
           )}
         </Pressable>
       </View>
@@ -112,58 +119,6 @@ export function ShareContactSheet({
 
 const styles = StyleSheet.create({
   body: {
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 28,
-  },
-  title: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 16,
-    color: colors.fg,
-    textAlign: "center",
-    marginBottom: 8,
-  },
-  caption: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 13,
-    color: colors.caption,
-    textAlign: "center",
-    marginBottom: 10,
-  },
-  hint: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 12,
-    color: colors.hint,
-    textAlign: "center",
-    lineHeight: 17,
-    marginBottom: 18,
-  },
-  label: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 12,
-    color: colors.caption,
-    marginBottom: 6,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: colors.fg,
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 14,
-    marginBottom: 16,
-  },
-  primary: {
-    backgroundColor: colors.fg,
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: "center",
-  },
-  primaryText: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 15,
-    color: "#000",
+    paddingBottom: 12,
   },
 });

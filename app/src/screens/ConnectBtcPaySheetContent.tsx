@@ -23,7 +23,7 @@ import { saveLndRestCredentials } from "../lightning/lndCredentials";
 import { probeLndRest } from "../lightning/lndRest";
 import { insertLightningWalletRow } from "../account/lightningActivity";
 import { colors } from "../theme/colors";
-import { ui } from "../theme/ui";
+import { sheetUi } from "../theme/sheetUi";
 import { useWallet } from "../wallet/WalletProvider";
 import { ScanQrModal } from "./ScanQrModal";
 import type { NodeStatusPayload } from "../navigation/connectFlow";
@@ -110,8 +110,8 @@ export function ConnectBtcPaySheetContent({ open, onConnected }: Props) {
         contentContainerStyle={{ paddingBottom: 24 }}
         style={{ flex: 1 }}
       >
-        <Text style={ui.title}>BTCPAY</Text>
-        <Text style={ui.caption}>
+        <Text style={sheetUi.title}>BTCPAY</Text>
+        <Text style={sheetUi.caption}>
           BTCPay → Services → LND (REST).{"\n"}
           Scan the pairing QR or paste the config.
         </Text>
@@ -133,34 +133,34 @@ export function ConnectBtcPaySheetContent({ open, onConnected }: Props) {
         />
 
         <Pressable
-          style={ui.secondaryBtn}
+          style={sheetUi.secondaryBtn}
           disabled={busy}
           onPress={() => void onPasteClipboard()}
         >
-          <Text style={ui.secondaryBtnText}>Paste from clipboard</Text>
+          <Text style={sheetUi.secondaryBtnText}>Paste from clipboard</Text>
         </Pressable>
 
         <Pressable
-          style={ui.secondaryBtn}
+          style={sheetUi.secondaryBtn}
           disabled={busy}
           onPress={() => setScanOpen(true)}
         >
-          <Text style={ui.secondaryBtnText}>Scan pairing QR</Text>
+          <Text style={sheetUi.secondaryBtnText}>Scan pairing QR</Text>
         </Pressable>
 
         <Pressable
-          style={[ui.primaryBtn, busy && { opacity: 0.6 }]}
+          style={[sheetUi.primaryBtn, busy && { opacity: 0.6 }]}
           disabled={busy}
           onPress={() => void connectWithRaw(payload)}
         >
           {busy ? (
             <ActivityIndicator color="#000" />
           ) : (
-            <Text style={ui.primaryBtnText}>Connect BTCPay</Text>
+            <Text style={sheetUi.primaryBtnText}>Connect BTCPay</Text>
           )}
         </Pressable>
 
-        <Text style={[ui.hint, { marginTop: 20 }]}>
+        <Text style={[sheetUi.hint, { marginTop: 20 }]}>
           Payments only — no channel management.{"\n"}
           Connection secrets stay on this device.
         </Text>

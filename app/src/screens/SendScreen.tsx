@@ -1951,7 +1951,7 @@ const styles = StyleSheet.create({
   },
   sheetTitle: {
     fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 18,
+    fontSize: 20,
     color: colors.fg,
     textAlign: "center",
     marginBottom: 8,

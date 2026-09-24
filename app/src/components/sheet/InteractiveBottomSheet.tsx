@@ -13,8 +13,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Dimensions, Keyboard, Platform, Pressable, StyleSheet, View } from "react-native";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { Dimensions, Keyboard, Modal, Platform, Pressable, StyleSheet, View } from "react-native";
+import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import Animated, {
   cancelAnimation,
   runOnJS,
@@ -73,6 +73,12 @@ type Props = {
   avoidKeyboard?: boolean;
   /** Host-owned shared values (Activity driven from Home). */
   motion?: SheetMotionShared;
+  /**
+   * Render in a transparent window Modal so ancestor padding (e.g. ScreenChrome)
+   * cannot inset the sheet. Required for sheets opened from padded screens.
+   * Leave false for SheetHost (shared motion / peek).
+   */
+  portal?: boolean;
 };
 
 function useMotion(
@@ -111,6 +117,7 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
       visibleFraction = SNAP_OPEN,
       avoidKeyboard = false,
       motion: motionProp,
+      portal = false,
     },
     ref,
   ) {
@@ -351,7 +358,7 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
       return { opacity: Math.max(0, Math.min(1, progress)) * 0.4 };
     });
 
-    return (
+    const sheetTree = (
       <View style={[StyleSheet.absoluteFill, styles.host]} pointerEvents="box-none">
         {open ? (
           <Animated.View style={[styles.scrim, scrimStyle]} pointerEvents="auto">
@@ -379,10 +386,29 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
         </Animated.View>
       </View>
     );
+
+    if (portal) {
+      return (
+        <Modal
+          visible={open}
+          transparent
+          animationType="none"
+          statusBarTranslucent
+          onRequestClose={dismissAnimated}
+        >
+          <GestureHandlerRootView style={styles.portalRoot}>{sheetTree}</GestureHandlerRootView>
+        </Modal>
+      );
+    }
+
+    return sheetTree;
   },
 );
 
 const styles = StyleSheet.create({
+  portalRoot: {
+    flex: 1,
+  },
   /** Above FundsNoticeOverlay (zIndex 100) so Save to contacts / Activity sheets win taps. */
   host: {
     zIndex: 200,

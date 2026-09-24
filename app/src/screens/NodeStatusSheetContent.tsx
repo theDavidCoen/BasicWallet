@@ -4,6 +4,7 @@
 
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { colors } from "../theme/colors";
+import { sheetUi } from "../theme/sheetUi";
 import { ui } from "../theme/ui";
 import type { NodeStatusPayload } from "../navigation/connectFlow";
 
@@ -24,7 +25,7 @@ export function NodeStatusSheetContent({
 
   return (
     <View style={styles.root}>
-      <Text style={ui.title}>NODE</Text>
+      <Text style={sheetUi.title}>NODE</Text>
       <View style={ui.card}>
         <Text style={styles.ok}>Connected · Lightning</Text>
         <Text style={styles.alias}>{alias?.trim() || "Lightning"}</Text>
@@ -37,13 +38,13 @@ export function NodeStatusSheetContent({
         ) : null}
       </View>
 
-      <Text style={[ui.hint, { marginTop: 20 }]}>
+      <Text style={[sheetUi.hint, { marginTop: 20 }]}>
         Switcher row uses this balance on Home.{"\n"}
         Send and receive Lightning invoices from this node. No channels UI.
       </Text>
 
-      <Pressable style={ui.primaryBtn} onPress={onDone}>
-        <Text style={ui.primaryBtnText}>Done</Text>
+      <Pressable style={sheetUi.primaryBtn} onPress={onDone}>
+        <Text style={sheetUi.primaryBtnText}>Done</Text>
       </Pressable>
     </View>
   );
