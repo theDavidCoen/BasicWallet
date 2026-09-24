@@ -51,8 +51,8 @@ Declare only what features need (camera for QR when that screen ships, etc.). Do
 - [x] `storeMnemonic` / `loadMnemonicForCrypto` only in `src/security/mnemonicStore.ts`
 - [x] No seed in UI except gated export (`ExportRecoveryPhrase` + biometrics + screen capture block)
 - [x] HD `Wallet.create({ walletMode: "hd" })` + onboarding nav (Create → Terms → Ready → Home)
-- [x] `__DEV__` CSPRNG path for device testing until native passkey PRF is wired
-- [ ] Native WebAuthn / Credential Manager **PRF**
+- [x] `__DEV__` CSPRNG path for device testing when native passkey PRF is unavailable
+- [x] Native WebAuthn / Credential Manager **PRF** (`passkeyPrf.ts` + assetlinks RP)
 - [x] Persistent SDK repositories (expo-sqlite per wallet)
 - [x] Export phrase screen with biometrics gate + `FLAG_SECURE` (`expo-screen-capture`)
 - [x] Path C Advanced Backup (Nostr / home server local package)

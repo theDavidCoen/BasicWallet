@@ -38,16 +38,39 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 
 - Create or restore an Arkade seed wallet (HD)
 - Receive Arkade funds and send to addresses / contacts
+- **Multisend** — one Arkade send to several `ark…` recipients (amounts per line; activity shows all destinations)
 - Browse activity and manage multiple wallets
 - Connect a Lightning node (BTCPay LND REST, LNDHub) for node balance / LN flows
 - Collaborative offboard and unilateral exit related settings (escape hatches)
 - Set app PIN / biometrics gates for sensitive actions
 - Export recovery phrase only after presence checks (screen capture blocked where wired)
+- **Continue with passkey** — platform WebAuthn / Credential Manager **PRF** derives Personal seed + Nostr identity (see below)
 - Manage a Nostr identity; Advanced Backup (Nostr relays and/or home server)
 - Maintain contacts (npub, NIP-05, BIP-353, etc.) and share a contact over Nostr
 - Prefer mainnet or Mutinynet (and optional custom ASP) from Settings
 
 Expect bugs, incomplete screens, and breaking changes between `0.x` alphas.
+
+### Passkey PRF — what we have vs hardening
+
+**PRF** (Pseudo-Random Function) is a WebAuthn extension: the authenticator (phone OS / password manager) derives secret bytes from the passkey + an app salt, without exposing the passkey itself. Basic uses that 32-byte output as the wallet root.
+
+**What works today (Android focus):**
+
+- `react-native-passkeys` against Android Credential Manager (and iOS where PRF exists)
+- Fixed public salt `basic.wallet.passkey.prf.v1` → 256-bit root
+- Root → Personal BIP39 mnemonic; same root → deterministic Nostr nsec (`HKDF …nostr.sk.v1`)
+- Indexed child wallets from the same root; rematerialize on **Continue with passkey**
+- Relying party `basic.davidcoen.it` with Digital Asset Links (release + debug certs) — see [`docs/passkey-assetlinks.md`](./docs/passkey-assetlinks.md)
+- Discoverable get preferred after wipe so the OS picker avoids a silent wrong wallet
+- Needs a device/OS that actually returns PRF (practically Android 14+ / recent iOS); otherwise Basic falls back to other create/restore paths
+
+**What “PRF hardening” still means (wishlist):**
+
+- Treat PRF as the **only** default onboarding entropy on supported devices (less `__DEV__` / CSPRNG dual-path confusion)
+- Stronger handling when PRF is missing (clear UX, no accidental new passkey)
+- Broader device matrix, iOS parity, and fewer edge cases around credential id vs discoverable credentials
+- Ongoing review that PRF bytes never hit logs/UI and that rpId / assetlinks stay aligned with signing keys
 
 ## Repository layout
 
@@ -78,11 +101,10 @@ Release checksums may be PGP-signed with fingerprint `5351632CBBF23EF29F1815ACD2
 
 Ideas on the roadmap (design, Penpot, or partial code; not commitments):
 
-- **Multisend** — send to many recipients in one flow (boards exist; Expo polish TBD)
 - **Pay in Chat** — chat-adjacent payment UX (Penpot page; product TBD)
 - **Multi-asset** — USDT / EUR-linked stablecoin corridors when intents exist
 - **Hardware wallet & multisig** — colder signing paths beyond the soft wallet
-- **Passkey PRF hardening** — full native WebAuthn / Credential Manager PRF as default entropy
+- **Passkey PRF hardening** — see [Passkey PRF](#passkey-prf--what-we-have-vs-hardening) above (PRF already ships; harden defaults and edge cases)
 - **Richer Lightning** — smoother Arkade↔LN intents, clearer node vs Personal UX
 - **Contacts** — richer identifiers, better share/receive reliability across relays
 - **iOS** — first-class iOS build (Android is the current focus)
