@@ -10,9 +10,10 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
+  useState,
   type ReactNode,
 } from "react";
-import { Dimensions, Pressable, StyleSheet, View } from "react-native";
+import { Dimensions, Keyboard, Platform, Pressable, StyleSheet, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   cancelAnimation,
@@ -65,6 +66,11 @@ type Props = {
    * Default ~0.92 (Activity / Wallets). Pass 0.5 for compact Send sheets.
    */
   visibleFraction?: number;
+  /**
+   * When true, lift the sheet above the system keyboard so content stays visible
+   * (Send Enter). Caps at visibleFraction when the keyboard is hidden.
+   */
+  avoidKeyboard?: boolean;
   /** Host-owned shared values (Activity driven from Home). */
   motion?: SheetMotionShared;
 };
@@ -103,6 +109,7 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
       skipEnterSnap = false,
       anchorY = null,
       visibleFraction = SNAP_OPEN,
+      avoidKeyboard = false,
       motion: motionProp,
     },
     ref,
@@ -111,14 +118,56 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
     const windowHeight = Dimensions.get("window").height;
     const offscreenY = windowHeight;
     const clampedVisible = Math.max(0.2, Math.min(1, visibleFraction));
-    const computedOpenY = Math.max(
-      translateForVisibleFraction(windowHeight, clampedVisible),
-      insets.top + 12,
-    );
+    const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+    useEffect(() => {
+      if (!avoidKeyboard || !open) {
+        setKeyboardHeight(0);
+        return;
+      }
+      const onShow = Keyboard.addListener(
+        Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
+        (e) => {
+          setKeyboardHeight(Math.max(0, e.endCoordinates?.height ?? 0));
+        },
+      );
+      const onHide = Keyboard.addListener(
+        Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
+        () => setKeyboardHeight(0),
+      );
+      return () => {
+        onShow.remove();
+        onHide.remove();
+      };
+    }, [avoidKeyboard, open]);
+
+    const bottomPad = Math.max(insets.bottom, 12);
+    const kb = avoidKeyboard && open ? keyboardHeight : 0;
+    const maxVisibleH = windowHeight * clampedVisible;
+
+    let resolvedOpenY: number;
+    let sheetHeight: number;
+    let sheetPaddingBottom: number;
+    if (kb > 0) {
+      // Park the sheet directly above the keyboard; cap at visibleFraction.
+      const spaceAboveKb = Math.max(180, windowHeight - kb - insets.top - 8);
+      const visibleH = Math.min(maxVisibleH, spaceAboveKb);
+      resolvedOpenY = Math.max(insets.top + 12, windowHeight - kb - visibleH);
+      sheetHeight = visibleH;
+      sheetPaddingBottom = 8;
+    } else {
+      resolvedOpenY = Math.max(
+        translateForVisibleFraction(windowHeight, clampedVisible),
+        insets.top + 12,
+      );
+      sheetHeight = windowHeight - resolvedOpenY + bottomPad;
+      sheetPaddingBottom = bottomPad;
+    }
+
     const revealFallback =
       anchorY != null && anchorY > 0 && anchorY < windowHeight ? anchorY : offscreenY;
 
-    const motion = useMotion(motionProp, offscreenY, computedOpenY);
+    const motion = useMotion(motionProp, offscreenY, resolvedOpenY);
     const { translateY, openY, revealY, offY, windowH, dragStartY } = motion;
     const wasOpen = useSharedValue(false);
     const openSV = useSharedValue(open ? 1 : 0);
@@ -126,25 +175,30 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
     useEffect(() => {
       windowH.value = windowHeight;
       offY.value = offscreenY;
-      openY.value = computedOpenY;
+      openY.value = resolvedOpenY;
       revealY.value = revealFallback;
       openSV.value = open ? 1 : 0;
       if (!open) {
         cancelAnimation(translateY);
         translateY.value = offscreenY;
+      } else if (wasOpen.value) {
+        // Keyboard changed while open — re-snap to the lifted detent.
+        cancelAnimation(translateY);
+        translateY.value = withSpring(resolvedOpenY, SHEET_SPRING);
       }
     }, [
-      computedOpenY,
       offY,
       offscreenY,
       open,
       openSV,
       openY,
+      resolvedOpenY,
       revealFallback,
       revealY,
       translateY,
       windowH,
       windowHeight,
+      wasOpen,
     ]);
 
     const notifySnap = useCallback(
@@ -297,8 +351,6 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
       return { opacity: Math.max(0, Math.min(1, progress)) * 0.4 };
     });
 
-    const sheetHeight = windowHeight - computedOpenY + Math.max(insets.bottom, 12);
-
     return (
       <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
         {open ? (
@@ -312,7 +364,7 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
             styles.sheet,
             {
               height: sheetHeight,
-              paddingBottom: Math.max(insets.bottom, 12),
+              paddingBottom: sheetPaddingBottom,
             },
             sheetStyle,
           ]}

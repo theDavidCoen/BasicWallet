@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -602,13 +603,20 @@ export function SendScreen() {
   }
 
   function openEnterSheet() {
+    Keyboard.dismiss();
     setEnterDraft(address);
     setEnterSheetOpen(true);
   }
 
+  function closeEnterSheet() {
+    enterInputRef.current?.blur();
+    Keyboard.dismiss();
+    setEnterSheetOpen(false);
+  }
+
   function confirmEnterDestination() {
     applyDestinationInput(enterDraft);
-    setEnterSheetOpen(false);
+    closeEnterSheet();
   }
 
   async function pasteDestination() {
@@ -1200,8 +1208,9 @@ export function SendScreen() {
 
       <InteractiveBottomSheet
         open={enterSheetOpen}
-        onDismiss={() => setEnterSheetOpen(false)}
+        onDismiss={closeEnterSheet}
         visibleFraction={0.5}
+        avoidKeyboard
       >
         <View style={styles.sheetBody}>
           <Text style={styles.sheetTitle}>ENTER</Text>
