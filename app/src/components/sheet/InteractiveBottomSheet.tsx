@@ -352,7 +352,7 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
     });
 
     return (
-      <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      <View style={[StyleSheet.absoluteFill, styles.host]} pointerEvents="box-none">
         {open ? (
           <Animated.View style={[styles.scrim, scrimStyle]} pointerEvents="auto">
             <Pressable style={StyleSheet.absoluteFill} onPress={dismissAnimated} />
@@ -383,6 +383,11 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
 );
 
 const styles = StyleSheet.create({
+  /** Above FundsNoticeOverlay (zIndex 100) so Save to contacts / Activity sheets win taps. */
+  host: {
+    zIndex: 200,
+    elevation: 200,
+  },
   scrim: {
     ...StyleSheet.absoluteFill,
     backgroundColor: "#000",

@@ -1,5 +1,4 @@
-import { StyleSheet, Text, View } from "react-native";
-import { Pressable } from "react-native-gesture-handler";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { colors } from "../theme/colors";
 
 function midEllipsis(s: string, left = 12, right = 8): string {
