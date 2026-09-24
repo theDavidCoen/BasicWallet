@@ -10,10 +10,13 @@ import {
   TextInput,
   View,
 } from "react-native";
+import * as Clipboard from "expo-clipboard";
+import Svg, { Path, Rect } from "react-native-svg";
 import { isBtcAddress, isValidArkAddress } from "@arkade-os/sdk";
 import type { NormalizedExtendedVirtualCoin } from "@arkade-os/sdk";
 import type { RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { InteractiveBottomSheet } from "../components/sheet/InteractiveBottomSheet";
 import { getNetworkConfig } from "../config/network";
 import { upsertLightningPayments } from "../account/lightningActivity";
 import { recordSentFromThisDevice, notePendingSendFromThisDevice } from "../account/txMeta";
@@ -45,6 +48,81 @@ const TXID_GRACE_MS = 1_500;
 const SPEND_POLL_MS = 350;
 /** Mainnet / mutinynet ASP dust (min vtxo). SDK still emits subdust change; ASP rejects it. */
 const DEFAULT_MIN_VTXO_SATS = 330;
+
+function truncateDest(value: string, head = 10, tail = 8): string {
+  const t = value.trim();
+  if (t.length <= head + tail + 1) return t;
+  return `${t.slice(0, head)}…${t.slice(-tail)}`;
+}
+
+function IconEnter({ size = 28 }: { size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" accessibilityElementsHidden>
+      <Rect
+        x={3.5}
+        y={5.5}
+        width={17}
+        height={13}
+        rx={2}
+        stroke={colors.fg}
+        strokeWidth={1.6}
+        fill="none"
+      />
+      <Path
+        d="M7 15.5h6.5M13.5 15.5l-2.2-2.2M13.5 15.5l-2.2 2.2"
+        stroke={colors.fg}
+        strokeWidth={1.6}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+    </Svg>
+  );
+}
+
+function IconPaste({ size = 28 }: { size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" accessibilityElementsHidden>
+      <Path
+        d="M9 5.5h6a1.5 1.5 0 0 1 1.5 1.5v1H19a1.5 1.5 0 0 1 1.5 1.5V19A1.5 1.5 0 0 1 19 20.5H5A1.5 1.5 0 0 1 3.5 19V9.5A1.5 1.5 0 0 1 5 8h2.5V7A1.5 1.5 0 0 1 9 5.5Z"
+        stroke={colors.fg}
+        strokeWidth={1.6}
+        fill="none"
+      />
+      <Path
+        d="M9 8h6V7a.5.5 0 0 0-.5-.5h-5A.5.5 0 0 0 9 7v1Z"
+        stroke={colors.fg}
+        strokeWidth={1.6}
+        fill="none"
+      />
+    </Svg>
+  );
+}
+
+function IconMyWallets({ size = 28 }: { size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" accessibilityElementsHidden>
+      <Rect
+        x={3.5}
+        y={7}
+        width={14}
+        height={10}
+        rx={1.8}
+        stroke={colors.fg}
+        strokeWidth={1.6}
+        fill="none"
+      />
+      <Path d="M17.5 11.5h3v3h-3" stroke={colors.fg} strokeWidth={1.6} fill="none" />
+      <Path
+        d="M6.5 5.5h11"
+        stroke={colors.fg}
+        strokeWidth={1.6}
+        strokeLinecap="round"
+        fill="none"
+      />
+    </Svg>
+  );
+}
 
 /** Local alias — matches Wallet.getSpendableVtxos() / SendParams.selectedVtxos. */
 type SpendableVtxo = NormalizedExtendedVirtualCoin;
@@ -360,6 +438,9 @@ export function SendScreen() {
   const [scanOpen, setScanOpen] = useState(false);
   const [myWalletPeekId, setMyWalletPeekId] = useState<string | null>(null);
   const [myWalletDestLabel, setMyWalletDestLabel] = useState<string | null>(null);
+  const [enterSheetOpen, setEnterSheetOpen] = useState(false);
+  const [myWalletsSheetOpen, setMyWalletsSheetOpen] = useState(false);
+  const [enterDraft, setEnterDraft] = useState("");
   const isLightning = selectedWallet?.kind === "lightning";
   const sendBlocked = !walletInteractive || balanceStatus === "loading";
 
@@ -369,6 +450,8 @@ export function SendScreen() {
       (w) => w.kind === "arkade" && w.id !== selectedWallet.id,
     );
   }, [isLightning, selectedWallet, wallets]);
+
+  const showMyWalletsAction = myArkadeWallets.length > 0;
 
   useEffect(() => {
     const to = route.params?.to?.trim();
@@ -471,6 +554,7 @@ export function SendScreen() {
       if (cached?.arkAddress && isValidArkAddress(cached.arkAddress)) {
         setAddress(cached.arkAddress);
         setMyWalletDestLabel(dest.label);
+        setMyWalletsSheetOpen(false);
         return;
       }
       const addr = await peekArkAddress(dest.id);
@@ -480,6 +564,7 @@ export function SendScreen() {
       await writeCachedArkAddress(network.id, dest.id, addr);
       setAddress(addr);
       setMyWalletDestLabel(dest.label);
+      setMyWalletsSheetOpen(false);
     } catch (e) {
       console.warn("[basic] my-wallet destination failed", e);
       Alert.alert(
@@ -489,6 +574,35 @@ export function SendScreen() {
     } finally {
       setMyWalletPeekId(null);
     }
+  }
+
+  function openEnterSheet() {
+    setEnterDraft(address);
+    setEnterSheetOpen(true);
+  }
+
+  function confirmEnterDestination() {
+    applyDestinationInput(enterDraft);
+    setEnterSheetOpen(false);
+  }
+
+  async function pasteDestination() {
+    try {
+      const text = (await Clipboard.getStringAsync()).trim();
+      if (!text) {
+        Alert.alert("Clipboard empty", "Copy an ark address first.");
+        return;
+      }
+      applyDestinationInput(text);
+    } catch (e) {
+      console.warn("[basic] clipboard paste failed", e);
+      Alert.alert("Paste failed", "Could not read the clipboard.");
+    }
+  }
+
+  function clearDestination() {
+    setAddress("");
+    setMyWalletDestLabel(null);
   }
 
   function fillMaxSend() {
@@ -922,71 +1036,176 @@ export function SendScreen() {
   }
 
   return (
-    <ScreenChrome logoScale={0.77}>
-      <Text style={styles.title}>SEND</Text>
-      <Pressable onPress={toggleBalanceHidden}>
-        <Text style={styles.balance}>{bal}</Text>
-      </Pressable>
-      <Text style={styles.caption}>Arkade → ark… · {network.label}</Text>
-
-      {sendBlocked ? (
-        <Text style={styles.warn}>
-          Wallet still syncing — sending unavailable until ready.
-        </Text>
-      ) : null}
-
-      <View style={styles.toRow}>
-        <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>Amount (sats)</Text>
-        <Pressable
-          onPress={fillMaxSend}
-          disabled={spendable == null || spendable <= 0}
-          hitSlop={8}
-          accessibilityLabel="Max send"
-        >
-          <Text
-            style={[
-              styles.maxLink,
-              (spendable == null || spendable <= 0) && styles.maxLinkDisabled,
-            ]}
-          >
-            Max send
-          </Text>
+    <View style={styles.screenRoot}>
+      <ScreenChrome logoScale={0.77}>
+        <Text style={styles.title}>SEND</Text>
+        <Pressable onPress={toggleBalanceHidden}>
+          <Text style={styles.balance}>{bal}</Text>
         </Pressable>
-      </View>
-      <TextInput
-        value={amountStr}
-        onChangeText={setAmountStr}
-        keyboardType="number-pad"
-        placeholder="0"
-        placeholderTextColor={colors.hint}
-        style={styles.input}
-      />
+        <Text style={styles.caption}>Arkade → ark… · {network.label}</Text>
 
-      <View style={styles.toRow}>
-        <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>To (ark…)</Text>
-        {address.trim() ? (
-          <Pressable onPress={() => setScanOpen(true)} hitSlop={8}>
-            <Text style={styles.scanLink}>Scan QR</Text>
-          </Pressable>
+        {sendBlocked ? (
+          <Text style={styles.warn}>
+            Wallet still syncing — sending unavailable until ready.
+          </Text>
         ) : null}
-      </View>
-      {myWalletDestLabel ? (
-        <Text style={styles.myWalletHint}>My wallet · {myWalletDestLabel}</Text>
-      ) : null}
-      <TextInput
-        value={address}
-        onChangeText={applyDestinationInput}
-        autoCapitalize="none"
-        autoCorrect={false}
-        placeholder="ark1…"
-        placeholderTextColor={colors.hint}
-        multiline
-        style={[styles.input, styles.inputMulti]}
-      />
 
-      {myArkadeWallets.length > 0 ? (
-        <View style={styles.myWallets}>
-          <Text style={styles.fieldLabel}>My wallets</Text>
+        <View style={styles.toRow}>
+          <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>Amount (sats)</Text>
+          <Pressable
+            onPress={fillMaxSend}
+            disabled={spendable == null || spendable <= 0}
+            hitSlop={8}
+            accessibilityLabel="Max send"
+          >
+            <Text
+              style={[
+                styles.maxLink,
+                (spendable == null || spendable <= 0) && styles.maxLinkDisabled,
+              ]}
+            >
+              Max send
+            </Text>
+          </Pressable>
+        </View>
+        <TextInput
+          value={amountStr}
+          onChangeText={setAmountStr}
+          keyboardType="number-pad"
+          placeholder="0"
+          placeholderTextColor={colors.hint}
+          style={styles.input}
+        />
+
+        <Text style={styles.fieldLabel}>To:</Text>
+        {address.trim() ? (
+          <View style={styles.destPreview}>
+            <View style={styles.destPreviewTextWrap}>
+              {myWalletDestLabel ? (
+                <Text style={styles.destPreviewLabel} numberOfLines={1}>
+                  My wallet · {myWalletDestLabel}
+                </Text>
+              ) : null}
+              <Text style={styles.destPreviewAddr} numberOfLines={2}>
+                {truncateDest(address.trim(), 14, 10)}
+              </Text>
+            </View>
+            <Pressable onPress={clearDestination} hitSlop={8} accessibilityLabel="Clear destination">
+              <Text style={styles.scanLink}>Clear</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        <View style={styles.toActions}>
+          <Pressable
+            style={styles.toAction}
+            onPress={openEnterSheet}
+            accessibilityRole="button"
+            accessibilityLabel="Enter destination"
+          >
+            <View style={styles.toActionIcon}>
+              <IconEnter />
+            </View>
+            <Text style={styles.toActionLabel}>Enter</Text>
+          </Pressable>
+          <Pressable
+            style={styles.toAction}
+            onPress={() => void pasteDestination()}
+            accessibilityRole="button"
+            accessibilityLabel="Paste destination"
+          >
+            <View style={styles.toActionIcon}>
+              <IconPaste />
+            </View>
+            <Text style={styles.toActionLabel}>Paste</Text>
+          </Pressable>
+          {showMyWalletsAction ? (
+            <Pressable
+              style={styles.toAction}
+              onPress={() => setMyWalletsSheetOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel="My wallets"
+            >
+              <View style={styles.toActionIcon}>
+                <IconMyWallets />
+              </View>
+              <Text style={styles.toActionLabel}>My wallets</Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        <Pressable
+          style={[styles.primary, (busy || sendBlocked || !!myWalletPeekId) && { opacity: 0.6 }]}
+          disabled={busy || sendBlocked || !!myWalletPeekId}
+          onPress={() => void onSend()}
+        >
+          {busy ? (
+            <ActivityIndicator color="#000" />
+          ) : (
+            <Text style={styles.primaryText}>Confirm send</Text>
+          )}
+        </Pressable>
+
+        {/* Penpot 03 / 03f: large bottom-center scan when recipient empty */}
+        {!address.trim() ? (
+          <View style={styles.scanWrap}>
+            <Pressable
+              style={styles.scanFab}
+              onPress={() => setScanOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Scan QR"
+            >
+              <View style={styles.scanRing} />
+              <Text style={styles.scanLabel}>scan QR</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        <ScanQrModal
+          visible={scanOpen}
+          onClose={() => setScanOpen(false)}
+          parse={extractArkAddressFromScan}
+          onScan={applyScannedPay}
+        />
+      </ScreenChrome>
+
+      <InteractiveBottomSheet
+        open={enterSheetOpen}
+        onDismiss={() => setEnterSheetOpen(false)}
+      >
+        <View style={styles.sheetBody}>
+          <Text style={styles.sheetTitle}>ENTER</Text>
+          <Text style={styles.sheetCaption}>
+            Ark address now. Handles (Lightning Address, BIP353, Nostr) later.
+          </Text>
+          <TextInput
+            value={enterDraft}
+            onChangeText={setEnterDraft}
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoFocus
+            placeholder="ark1…"
+            placeholderTextColor={colors.hint}
+            multiline
+            style={[styles.input, styles.inputMulti, { marginBottom: 12 }]}
+          />
+          <Pressable
+            style={[styles.primary, !enterDraft.trim() && { opacity: 0.5 }]}
+            disabled={!enterDraft.trim()}
+            onPress={confirmEnterDestination}
+          >
+            <Text style={styles.primaryText}>Use destination</Text>
+          </Pressable>
+        </View>
+      </InteractiveBottomSheet>
+
+      <InteractiveBottomSheet
+        open={myWalletsSheetOpen}
+        onDismiss={() => setMyWalletsSheetOpen(false)}
+      >
+        <View style={styles.sheetBody}>
+          <Text style={styles.sheetTitle}>MY WALLETS</Text>
+          <Text style={styles.sheetCaption}>Send to another wallet on this device</Text>
           {myArkadeWallets.map((w) => {
             const peeking = myWalletPeekId === w.id;
             const selected = myWalletDestLabel === w.label && !!address.trim();
@@ -1011,46 +1230,15 @@ export function SendScreen() {
             );
           })}
         </View>
-      ) : null}
-
-      <Pressable
-        style={[styles.primary, (busy || sendBlocked || !!myWalletPeekId) && { opacity: 0.6 }]}
-        disabled={busy || sendBlocked || !!myWalletPeekId}
-        onPress={() => void onSend()}
-      >
-        {busy ? (
-          <ActivityIndicator color="#000" />
-        ) : (
-          <Text style={styles.primaryText}>Confirm send</Text>
-        )}
-      </Pressable>
-
-      {/* Penpot 03 / 03f: large bottom-center scan when recipient empty */}
-      {!address.trim() ? (
-        <View style={styles.scanWrap}>
-          <Pressable
-            style={styles.scanFab}
-            onPress={() => setScanOpen(true)}
-            accessibilityRole="button"
-            accessibilityLabel="Scan QR"
-          >
-            <View style={styles.scanRing} />
-            <Text style={styles.scanLabel}>scan QR</Text>
-          </Pressable>
-        </View>
-      ) : null}
-
-      <ScanQrModal
-        visible={scanOpen}
-        onClose={() => setScanOpen(false)}
-        parse={extractArkAddressFromScan}
-        onScan={applyScannedPay}
-      />
-    </ScreenChrome>
+      </InteractiveBottomSheet>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  screenRoot: {
+    flex: 1,
+  },
   title: {
     fontFamily: "JetBrainsMono_700Bold",
     fontSize: 20,
@@ -1124,15 +1312,79 @@ const styles = StyleSheet.create({
     minHeight: 88,
     textAlignVertical: "top",
   },
-  myWalletHint: {
+  destPreview: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 14,
+    gap: 12,
+  },
+  destPreviewTextWrap: {
+    flex: 1,
+  },
+  destPreviewLabel: {
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 12,
     color: colors.caption,
-    marginBottom: 6,
+    marginBottom: 4,
   },
-  myWallets: {
+  destPreviewAddr: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 13,
+    color: colors.fg,
+  },
+  toActions: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-around",
+    marginBottom: 20,
+    marginTop: 4,
+  },
+  toAction: {
+    flex: 1,
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 4,
+  },
+  toActionIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  toActionLabel: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.caption,
+    textAlign: "center",
+  },
+  sheetBody: {
+    paddingTop: 4,
+    paddingBottom: 24,
+  },
+  sheetTitle: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 18,
+    color: colors.fg,
+    textAlign: "center",
     marginBottom: 8,
-    marginTop: -4,
+  },
+  sheetCaption: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 13,
+    color: colors.caption,
+    textAlign: "center",
+    lineHeight: 18,
+    marginBottom: 20,
+    paddingHorizontal: 8,
   },
   myWalletRow: {
     flexDirection: "row",

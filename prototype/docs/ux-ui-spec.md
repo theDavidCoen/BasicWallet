@@ -190,7 +190,7 @@ Boards: `03` empty → ready → slide early/mid → success; `03f` scan; `08b` 
 | -------- | -------------------------------------------------------------------- |
 | Layout   | Balance shared-element to top; same size as Home                     |
 | Amount   | Sats entry + fiat rate line                                          |
-| To       | Address / npub / contact — paste only inside field; **My wallets** picks another registry Arkade wallet (cached `ark…`, peek on miss) without opening the Wallets sheet |
+| To       | Label **To:**; actions Enter · Paste · My wallets (latter only if other Arkade wallets exist). Enter / My wallets open bottom sheets; Paste reads clipboard. Destination preview + Clear when set |
 | Slide    | Hidden until amount + recipient set; white fill grows while dragging |
 | QR       | Large bottom-center when empty; hidden while slide visible           |
 | Fee      | Only when ready                                                      |
