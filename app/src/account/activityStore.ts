@@ -11,75 +11,31 @@ import type {
 } from "../wallet/activity";
 import { deriveActivityStatus, loadActivityRows } from "../wallet/activity";
 import type { BasicWallet } from "../wallet/hdWallet";
-import { accountKvGet, accountKvSet, getAccountDb } from "./accountDb";
+import { getAccountDb } from "./accountDb";
 import { enqueueFiatCoverage } from "./fiatRate";
+import {
+  looksLikePaymentAddress,
+  normalizeSendRecipients,
+  recallSendRecipients,
+  rememberSendRecipients,
+  takePendingSendDestinations,
+} from "./sendDestinations";
 import { getTxMeta, recordSentFromThisDevice, setTxMeta, syncActivityFts, applyPendingSendStamps } from "./txMeta";
 
-function sendRecipientsKvKey(walletId: string, activityOrTxid: string): string {
-  return `send-recipients:${walletId}:${activityOrTxid}`;
-}
+export {
+  looksLikePaymentAddress,
+  recallSendRecipients,
+  rememberSendRecipients,
+} from "./sendDestinations";
 
-function normalizeRecipients(
-  list: Array<{ address: string; amount: number }> | undefined,
-): SendRecipientSnapshot[] {
-  if (!list?.length) return [];
-  const out: SendRecipientSnapshot[] = [];
-  for (const r of list) {
-    const address = (r.address ?? "").trim();
-    if (!address) continue;
-    const amount = Math.abs(Math.floor(Number(r.amount) || 0));
-    out.push({ address, amount });
-  }
-  return out;
-}
-
-/** Persist destinations so Activity details can list addresses after rematerialize. */
-export function rememberSendRecipients(
-  networkId: ArkadeNetworkId,
-  walletId: string,
-  activityOrTxid: string,
-  recipients: Array<{ address: string; amount: number }>,
-): void {
-  const id = activityOrTxid.trim();
-  const list = normalizeRecipients(recipients);
-  if (!walletId || !id || list.length === 0) return;
-  accountKvSet(networkId, sendRecipientsKvKey(walletId, id), JSON.stringify(list));
-}
-
-export function recallSendRecipients(
-  networkId: ArkadeNetworkId,
-  walletId: string,
-  ...activityOrTxids: Array<string | undefined | null>
-): SendRecipientSnapshot[] {
-  if (!walletId) return [];
-  const seen = new Set<string>();
-  for (const raw of activityOrTxids) {
-    const id = (raw ?? "").trim();
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    const blob = accountKvGet(networkId, sendRecipientsKvKey(walletId, id));
-    if (!blob) continue;
-    try {
-      const parsed = JSON.parse(blob) as Array<{ address?: string; amount?: number }>;
-      const list = normalizeRecipients(
-        parsed.map((p) => ({ address: p.address ?? "", amount: Number(p.amount) || 0 })),
-      );
-      if (list.length > 0) return list;
-    } catch {
-      /* ignore */
-    }
-  }
-  return [];
-}
-
-/** Recipients from txs_json, then account_kv, then a single non-count subtitle. */
+/** Recipients from txs_json, then account_kv, then a single destination address subtitle. */
 export function resolveActivityRecipients(
   networkId: ArkadeNetworkId,
   walletId: string,
   row: ActivityRow,
 ): SendRecipientSnapshot[] {
   for (const t of row.txs) {
-    const fromTx = normalizeRecipients(t.recipients);
+    const fromTx = normalizeSendRecipients(t.recipients);
     if (fromTx.length > 0) return fromTx;
   }
   const fromKv = recallSendRecipients(
@@ -92,10 +48,93 @@ export function resolveActivityRecipients(
   );
   if (fromKv.length > 0) return fromKv;
   const sub = row.subtitle?.trim() ?? "";
-  if (sub && !/^\d+\s+recipients$/i.test(sub) && !sub.includes("…") && !sub.includes("...")) {
+  if (looksLikePaymentAddress(sub)) {
     return [{ address: sub, amount: Math.abs(row.amount) }];
   }
   return [];
+}
+
+function destinationKeysForRow(row: ActivityRow): string[] {
+  return [
+    row.id,
+    ...row.txs.map((t) => t.arkTxid),
+    ...row.txs.map((t) => t.boardingTxid),
+    ...row.txs.map((t) => t.commitmentTxid),
+  ]
+    .map((s) => (s ?? "").trim())
+    .filter(Boolean);
+}
+
+/** Index outbound destinations currently stored for this wallet (before a wipe). */
+function harvestDestinationIndex(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+): Map<string, SendRecipientSnapshot[]> {
+  const map = new Map<string, SendRecipientSnapshot[]>();
+  try {
+    const rows = readActivityFromDb(networkId, { walletId, limit: 500 });
+    for (const row of rows) {
+      if (!(row.amount < 0)) continue;
+      const list = resolveActivityRecipients(networkId, walletId, row);
+      if (list.length === 0) continue;
+      for (const key of destinationKeysForRow(row)) {
+        map.set(key.toLowerCase(), list);
+        rememberSendRecipients(networkId, walletId, key, list);
+      }
+    }
+  } catch {
+    /* empty */
+  }
+  return map;
+}
+
+function withDestinations(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+  rows: ActivityRow[],
+  harvested?: Map<string, SendRecipientSnapshot[]>,
+): ActivityRow[] {
+  const index = harvested ?? new Map<string, SendRecipientSnapshot[]>();
+  return rows.map((row) => {
+    if (!(row.amount < 0)) return row;
+    if (row.txs.some((t) => (t.recipients?.length ?? 0) > 0)) {
+      const list = normalizeSendRecipients(row.txs[0]?.recipients);
+      if (list.length > 0) {
+        for (const key of destinationKeysForRow(row)) {
+          rememberSendRecipients(networkId, walletId, key, list);
+        }
+      }
+      return row;
+    }
+    let list: SendRecipientSnapshot[] = [];
+    for (const key of destinationKeysForRow(row)) {
+      list = index.get(key.toLowerCase()) ?? [];
+      if (list.length > 0) break;
+    }
+    if (list.length === 0) {
+      list = recallSendRecipients(
+        networkId,
+        walletId,
+        ...destinationKeysForRow(row),
+      );
+    }
+    if (list.length === 0) {
+      list = takePendingSendDestinations(networkId, walletId, Math.abs(row.amount));
+    }
+    if (list.length === 0 && looksLikePaymentAddress(row.subtitle ?? "")) {
+      list = [{ address: row.subtitle!.trim(), amount: Math.abs(row.amount) }];
+    }
+    if (list.length === 0 || !row.txs[0]) return row;
+    for (const key of destinationKeysForRow(row)) {
+      rememberSendRecipients(networkId, walletId, key, list);
+    }
+    return {
+      ...row,
+      subtitle:
+        list.length > 1 ? `${list.length} recipients` : list[0]!.address,
+      txs: [{ ...row.txs[0], recipients: list }, ...row.txs.slice(1)],
+    };
+  });
 }
 
 export type ActivityKind = "arkade" | "boarding" | "lightning" | "other";
@@ -206,7 +245,7 @@ export function recordOptimisticArkadeSend(
   const amount = Math.abs(Math.floor(opts.amountSats));
   const raw = opts.txid.trim();
   const address = opts.address?.trim() ?? "";
-  const recipients = normalizeRecipients(
+  const recipients = normalizeSendRecipients(
     opts.recipients ?? (address ? [{ address, amount }] : undefined),
   );
   const nRecipients = recipients.length || (address ? 1 : 0);
@@ -221,7 +260,7 @@ export function recordOptimisticArkadeSend(
   const subtitle =
     nRecipients > 1
       ? `${nRecipients} recipients`
-      : address || recipients[0]?.address || (arkTxid ? arkTxid.slice(0, 16) : "Outgoing");
+      : address || recipients[0]?.address || "Outgoing";
   const row: ActivityRow = {
     id,
     title: "Send",
@@ -278,7 +317,7 @@ export function upgradeOptimisticSendTxid(
 
   const recipients =
     resolveActivityRecipients(networkId, walletId, existing) ||
-    normalizeRecipients(existing.txs[0]?.recipients);
+    normalizeSendRecipients(existing.txs[0]?.recipients);
   const now = Date.now();
   const subtitle =
     recipients.length > 1
@@ -546,8 +585,11 @@ export function replaceActivityRows(
     /* empty */
   }
 
-  const withoutDupLocals = rows.filter(
-    (r) => !isLocalExitActivityId(r.id) && !isLocalOptimisticId(r.id),
+  const withoutDupLocals = withDestinations(
+    networkId,
+    walletId,
+    rows.filter((r) => !isLocalExitActivityId(r.id) && !isLocalOptimisticId(r.id)),
+    harvestDestinationIndex(networkId, walletId),
   );
 
   // Partial SDK history must not wipe older local rows (seen: 1 receive → empty list).
@@ -616,7 +658,35 @@ export function upsertActivityRows(
   preservedCreatedAt?: Map<string, number>,
 ): void {
   const db = getAccountDb(networkId);
-  for (const row of rows) {
+  for (const incoming of rows) {
+    // Re-attach remembered destinations so SDK rematerialize keeps them in txs_json.
+    let row = incoming;
+    if (!row.txs.some((t) => (t.recipients?.length ?? 0) > 0)) {
+      const remembered = recallSendRecipients(
+        networkId,
+        walletId,
+        row.id,
+        ...row.txs.map((t) => t.arkTxid),
+        ...row.txs.map((t) => t.boardingTxid),
+        ...row.txs.map((t) => t.commitmentTxid),
+      );
+      if (remembered.length > 0 && row.txs[0]) {
+        row = {
+          ...row,
+          txs: [{ ...row.txs[0], recipients: remembered }, ...row.txs.slice(1)],
+        };
+      }
+    } else if (row.amount < 0) {
+      // Refresh kv index from txs_json (covers upgrades pending → real txid).
+      const list = normalizeSendRecipients(row.txs[0]?.recipients);
+      if (list.length > 0) {
+        rememberSendRecipients(networkId, walletId, row.id, list);
+        const ark = row.txs[0]?.arkTxid?.trim();
+        if (ark && ark !== row.id) {
+          rememberSendRecipients(networkId, walletId, ark, list);
+        }
+      }
+    }
     const kind = kindFromRow(row);
     const prev = db.getFirstSync<{
       fiat_amount: number | null;
@@ -650,7 +720,12 @@ export function upsertActivityRows(
         row.settled ? 1 : 0,
         kind,
         row.title,
-        row.subtitle,
+        // Keep list compact for multi-send; never put a raw txid in subtitle when we have destinations.
+        row.txs[0]?.recipients && row.txs[0].recipients.length > 1
+          ? `${row.txs[0].recipients.length} recipients`
+          : row.txs[0]?.recipients?.length === 1
+            ? row.txs[0].recipients[0]!.address
+            : row.subtitle,
         row.txs.find((t) => t.boardingTxid)?.boardingTxid ||
           row.txs[0]?.arkTxid ||
           row.txs[0]?.commitmentTxid ||
@@ -676,7 +751,12 @@ export async function materializeFromArkadeWallet(
   const rows = await loadActivityRows(wallet);
   replaceActivityRows(networkId, walletId, rows);
   applyPendingSendStamps(networkId, walletId, rows);
-  return rows;
+  // Re-attach destinations into txs_json after pending stamps wrote account_kv.
+  const withDest = withDestinations(networkId, walletId, rows);
+  if (withDest.some((r, i) => r !== rows[i])) {
+    upsertActivityRows(networkId, walletId, withDest.filter((r) => r.amount < 0));
+  }
+  return withDest;
 }
 
 /**

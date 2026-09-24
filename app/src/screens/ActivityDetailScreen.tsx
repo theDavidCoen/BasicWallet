@@ -19,6 +19,7 @@ import {
   resolveActivityRecipients,
   type StoredActivity,
 } from "../account/activityStore";
+import { findContactByIdentifierValue } from "../contacts/contactStore";
 import {
   getTxMeta,
   recordSentFromThisDevice,
@@ -30,6 +31,7 @@ import { ScreenChrome } from "../components/ScreenChrome";
 import { getNetworkConfig } from "../config/network";
 import { getCachedExitJobs } from "../exit/jobRunner";
 import { readRecoveryAddress } from "../exit/recoveryAddress";
+import { useSheets } from "../navigation/SheetHost";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { readBackupMeta } from "../nostr/backupPackage";
 import { useWallet } from "../wallet/WalletProvider";
@@ -185,6 +187,7 @@ export function ActivityDetailView({
 }: ActivityDetailViewProps) {
   const navigation = useNavigation<RootNav>();
   const insets = useSafeAreaInsets();
+  const { openSaveToContacts } = useSheets();
   const { selectedWallet, activityEpoch, bumpActivity } = useWallet();
   const network = getNetworkConfig();
   const walletId = walletIdProp ?? selectedWallet?.id ?? null;
@@ -502,25 +505,34 @@ export function ActivityDetailView({
       : selectedWallet.label
     : "";
   const toRecipients: SendRecipientSnapshot[] = useMemo(() => {
-    if (!row || !walletId || !isSend) return [];
-    return resolveActivityRecipients(network.id, walletId, row);
+    if (!row || !walletId) return [];
+    const list = resolveActivityRecipients(network.id, walletId, row);
+    if (isSend) return list;
+    // Inbound: only show when this device recorded a multi-send for the same txid.
+    return list.length > 1 ? list : [];
   }, [row, walletId, network.id, isSend]);
-  const toDisplay =
-    toRecipients.length === 1
-      ? midEllipsis(toRecipients[0]!.address, 10, 8)
-      : toRecipients.length === 0 && row?.subtitle && !/^\d+\s+recipients$/i.test(row.subtitle)
-        ? midEllipsis(row.subtitle, 8, 6)
-        : toRecipients.length === 0
-          ? "—"
-          : "";
-  const toCopy =
+  const singleToAddress =
     toRecipients.length === 1
       ? toRecipients[0]!.address
-      : toRecipients.length === 0
-        ? row?.subtitle && !/^\d+\s+recipients$/i.test(row.subtitle)
-          ? row.subtitle.trim()
-          : ""
-        : toRecipients.map((r) => r.address).join("\n");
+      : "";
+  const toDisplay =
+    toRecipients.length > 1
+      ? ""
+      : singleToAddress
+        ? midEllipsis(singleToAddress, 10, 8)
+        : "—";
+  const toCopy =
+    toRecipients.length > 1
+      ? toRecipients.map((r) => r.address).join("\n")
+      : singleToAddress;
+  /** Single outbound destination not already in contacts → › opens Save to contacts. */
+  const toSaveContactAddress =
+    isSend &&
+    toRecipients.length === 1 &&
+    singleToAddress &&
+    !findContactByIdentifierValue(singleToAddress)
+      ? singleToAddress
+      : null;
   const feeDisplay =
     primaryIds.feeSats != null
       ? `${primaryIds.feeSats.toLocaleString("en-US")} sats`
@@ -636,6 +648,12 @@ export function ActivityDetailView({
               value={toDisplay || "—"}
               copyValue={toCopy}
               onCopy={(l, t) => void copyText(l, t)}
+              onChevron={
+                toSaveContactAddress
+                  ? () => openSaveToContacts(toSaveContactAddress)
+                  : undefined
+              }
+              chevronLabel="Save to contacts"
             />
           )}
           {isExit ? (

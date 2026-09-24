@@ -1,5 +1,4 @@
-import { StyleSheet, Text, View } from "react-native";
-import { Pressable } from "react-native-gesture-handler";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { colors } from "../theme/colors";
 
 function midEllipsis(s: string, left = 12, right = 8): string {
@@ -33,6 +32,7 @@ export function FundsSentView({
     rail === "lightning" ? "Lightning payment sent." : "Arkade payment submitted.";
   const idLabel = rail === "lightning" ? "hash" : "tx";
   const n = recipientCount != null && recipientCount > 0 ? recipientCount : address ? 1 : 0;
+  const showSaveToContacts = Boolean(onSaveToContacts && address && n <= 1);
 
   return (
     <View style={styles.root} collapsable={false}>
@@ -59,7 +59,7 @@ export function FundsSentView({
       >
         <Text style={styles.primaryText}>View details</Text>
       </Pressable>
-      {onSaveToContacts && address ? (
+      {showSaveToContacts ? (
         <Pressable
           style={styles.secondary}
           onPress={onSaveToContacts}
