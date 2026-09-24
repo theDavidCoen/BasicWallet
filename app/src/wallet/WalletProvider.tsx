@@ -2141,23 +2141,34 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
               forcedArkAddressRef.current = null;
               console.warn("[basic] notifyIncomingFunds", { amount });
               if (!openSyncQuietRef.current && !quietImportSyncRef.current) {
-                // SDK push is a real receive — do not wait for post-send suppress
-                // (that delayed POS notices ~30s after a prior send).
-                const shown = emitFundsNotice(amount, "arkade", {
-                  bypassSendSuppress: true,
-                });
-                if (shown === "shown") {
-                  acknowledgeIncomingAmount(amount);
-                  applyLocalReceive(amount);
-                  const wid = selectedIdRef.current;
-                  if (wid) {
-                    try {
-                      recordOptimisticArkadeReceive(getNetworkConfig().id, wid, {
-                        amountSats: amount,
-                      });
-                      setActivityEpoch((n) => n + 1);
-                    } catch (e) {
-                      console.warn("[basic] optimistic receive activity failed", e);
+                // After our own send, ASP often pushes change as newVtxos. That must
+                // not look like a receive on the sending wallet. Bypass suppress only
+                // when Receive/POS is actively waiting for payment (prior POS lag fix).
+                const postSend =
+                  Date.now() < suppressIncomingUntilRef.current;
+                const expectingReceive =
+                  posUiHoldRef.current > 0 || incomingWatchBoostRef.current > 0;
+                if (postSend && !expectingReceive) {
+                  console.warn("[basic] notifyIncomingFunds skip post-send change", {
+                    amount,
+                  });
+                } else {
+                  const shown = emitFundsNotice(amount, "arkade", {
+                    bypassSendSuppress: expectingReceive,
+                  });
+                  if (shown === "shown") {
+                    acknowledgeIncomingAmount(amount);
+                    applyLocalReceive(amount);
+                    const wid = selectedIdRef.current;
+                    if (wid) {
+                      try {
+                        recordOptimisticArkadeReceive(getNetworkConfig().id, wid, {
+                          amountSats: amount,
+                        });
+                        setActivityEpoch((n) => n + 1);
+                      } catch (e) {
+                        console.warn("[basic] optimistic receive activity failed", e);
+                      }
                     }
                   }
                 }
