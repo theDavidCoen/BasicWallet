@@ -87,5 +87,6 @@
       },
       "passkeyRpId": "basic.davidcoen.it"
     }
-  }
+  },
+  "version": "0.5.0-alpha.1"
 }
