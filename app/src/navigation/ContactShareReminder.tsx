@@ -83,6 +83,12 @@ export function ContactShareReminder({
     };
   }, [hasWallet, refresh]);
 
+  // Re-read inbox when landing on Home (catch-up / live sub may have filled it).
+  useEffect(() => {
+    if (!hasWallet || routeName !== "Home") return;
+    refresh();
+  }, [hasWallet, routeName, refresh]);
+
   useEffect(() => {
     return () => {
       stopContactShareWatch();
