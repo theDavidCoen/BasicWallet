@@ -141,7 +141,7 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
       };
     }, [avoidKeyboard, open]);
 
-    const bottomPad = Math.max(insets.bottom, 12);
+    const bottomPad = Math.max(insets.bottom, Platform.OS === "android" ? 28 : 12);
     const kb = avoidKeyboard && open ? keyboardHeight : 0;
     const maxVisibleH = windowHeight * clampedVisible;
 

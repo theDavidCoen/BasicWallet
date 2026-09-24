@@ -1,6 +1,6 @@
 # Basic Wallet — UX / UI spec
 
-Product-wide screens, copy, and interaction rules. Penpot boards in `penpot_rebuild_clean.py` are the visual source; yellow notes in `penpot_apply_round3.py` must stay aligned. **Pay in Chat** boards live on the Penpot page of the same name (`penpot_pay_in_chat.py`).
+Product-wide screens, copy, and interaction rules. Penpot boards in `penpot_rebuild_clean.py` are the visual source; yellow notes in `penpot_apply_round3.py` must stay aligned. **Pay in Chat** boards live on the Penpot page of the same name (`penpot_pay_in_chat.py`). **Multisend** boards live on Penpot page **Multisend** (`penpot_multisend.py`) — design only until Expo ships.
 
 ## Doc map
 
@@ -190,11 +190,32 @@ Boards: `03` empty → ready → slide early/mid → success; `03f` scan; `08b` 
 | -------- | -------------------------------------------------------------------- |
 | Layout   | Balance shared-element to top; same size as Home                     |
 | Amount   | Sats entry + fiat rate line                                          |
-| To       | Label **To:**; actions Enter · Paste · My wallets (latter only if other Arkade wallets exist). Enter / My wallets open bottom sheets; Paste reads clipboard. Destination preview + Clear when set |
+| To       | Label **To:**; actions Enter · Paste · My wallets (if others) · Scan. Enter / My wallets open bottom sheets; Paste reads clipboard; Scan opens QR. Destination preview + Clear when set |
 | Slide    | Hidden until amount + recipient set; white fill grows while dragging |
-| QR       | Large bottom-center when empty; hidden while slide visible           |
+| QR       | Aligned in the To action row (not a bottom FAB) |
 | Fee      | Only when ready                                                      |
 | Hardware | When paired and required for the spend, slide hands off to device    |
+
+
+### Multisend (Penpot page Multisend · Expo on `david/multisend`)
+
+One `wallet.send` with N Ark recipients. Penpot boards (`prototype/penpot_multisend.py`); Expo:
+
+- **First recipient only:** classic Send (Amount · To · Enter/Paste/My wallets/Scan) — no card.
+- **Two or more:** all recipients as compact cards (Penpot `16b`); no To action icons; **+ Add recipient** opens half sheet (`16d`).
+- Total + Confirm multi-send when N>1. Soft cap 10. Lightning path hides Add.
+
+
+| Board | Purpose |
+| ----- | ------- |
+| `16` | Empty: Amount + To (Enter · Paste · My wallets) + ghost Add recipient + scan |
+| `16b` / `16c` | Two / three recipient cards + Total + Confirm |
+| `16d` | Half sheet to add another recipient (same pickers) |
+| `16e` | One slide / presence for the whole batch |
+| `16f` | Success: total + per-recipient rows + one txid |
+| `16g` | Dust bump on last (or largest) row when change would be subdust |
+
+Rules: each row ≥ ASP dust; Total ≤ spendable; soft cap ~10; Lightning path hides Add recipient; no N sequential sends.
 
 
 ### Direct on-chain (Bitcoin address → Bitcoin address)

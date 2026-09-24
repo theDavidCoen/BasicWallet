@@ -108,11 +108,18 @@ function readLocalPendingSendRows(
 export function recordOptimisticArkadeSend(
   networkId: ArkadeNetworkId,
   walletId: string,
-  opts: { amountSats: number; txid: string; address?: string },
+  opts: {
+    amountSats: number;
+    txid: string;
+    address?: string;
+    /** When length > 1, subtitle becomes "N recipients". */
+    recipients?: Array<{ address: string; amount: number }>;
+  },
 ): string {
   const amount = Math.abs(Math.floor(opts.amountSats));
   const raw = opts.txid.trim();
   const address = opts.address?.trim() ?? "";
+  const nRecipients = opts.recipients?.length ?? (address ? 1 : 0);
   const isPending = !raw || raw.startsWith("pending:");
   const id = isPending
     ? raw.startsWith("pending:")
@@ -121,10 +128,14 @@ export function recordOptimisticArkadeSend(
     : raw;
   const arkTxid = isPending ? "" : raw;
   const now = Date.now();
+  const subtitle =
+    nRecipients > 1
+      ? `${nRecipients} recipients`
+      : address || (arkTxid ? arkTxid.slice(0, 16) : "Outgoing");
   const row: ActivityRow = {
     id,
     title: "Send",
-    subtitle: address || (arkTxid ? arkTxid.slice(0, 16) : "Outgoing"),
+    subtitle,
     amount: amount > 0 ? -amount : 0,
     settled: !isPending,
     status: isPending ? "preconfirmed" : "preconfirmed",

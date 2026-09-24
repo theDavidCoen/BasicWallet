@@ -15,8 +15,8 @@ import {
 } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import Svg, { Path, Rect } from "react-native-svg";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { isBtcAddress, isValidArkAddress } from "@arkade-os/sdk";
-import type { NormalizedExtendedVirtualCoin } from "@arkade-os/sdk";
 import type { RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
 import { InteractiveBottomSheet } from "../components/sheet/InteractiveBottomSheet";
@@ -35,7 +35,18 @@ import { requireUserPresence } from "../security/userPresence";
 import { useSheets } from "../navigation/SheetHost";
 import { colors } from "../theme/colors";
 import { readCachedArkAddress, writeCachedArkAddress } from "../wallet/addressCache";
-import { peekArkAddress, type BasicWallet } from "../wallet/hdWallet";
+import { peekArkAddress } from "../wallet/hdWallet";
+import {
+  DEFAULT_MIN_VTXO_SATS,
+  MAX_SEND_RECIPIENTS,
+  formatSendError,
+  mergeRecipientsByAddress,
+  prepareDustSafeSend,
+  readMinVtxoSats,
+  waitForSendOrSpendDrop,
+  withTimeout,
+  type SendRecipient,
+} from "../wallet/arkMultiSend";
 import { useWallet } from "../wallet/WalletProvider";
 import { formatSatsLabel } from "../wallet/formatSats";
 import { ScanQrModal, extractLightningPayFromScan, extractArkAddressFromScan } from "./ScanQrModal";
@@ -46,11 +57,29 @@ import type { WalletRecord } from "../account/walletRegistry";
 const SEND_TIMEOUT_MS = 45_000;
 /** LNDHub can hang after payment already settled. */
 const LN_SEND_TIMEOUT_MS = 30_000;
-/** Give send() a brief moment to return the real txid after spend is visible. */
-const TXID_GRACE_MS = 1_500;
-const SPEND_POLL_MS = 350;
-/** Mainnet / mutinynet ASP dust (min vtxo). SDK still emits subdust change; ASP rejects it. */
-const DEFAULT_MIN_VTXO_SATS = 330;
+
+type SendLine = {
+  id: string;
+  address: string;
+  amountStr: string;
+  walletLabel: string | null;
+};
+
+function newSendLine(partial?: Partial<SendLine>): SendLine {
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    address: "",
+    amountStr: "",
+    walletLabel: null,
+    ...partial,
+  };
+}
+
+function parseAmountSats(raw: string): number | null {
+  const n = Number.parseInt(raw.replace(/[,\s]/g, ""), 10);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
 
 function truncateDest(value: string, head = 10, tail = 8): string {
   const t = value.trim();
@@ -138,298 +167,38 @@ function IconQr({ size = 28 }: { size?: number }) {
   );
 }
 
-/** Local alias — matches Wallet.getSpendableVtxos() / SendParams.selectedVtxos. */
-type SpendableVtxo = NormalizedExtendedVirtualCoin;
 
-type DustSafeSendPlan = {
-  amount: number;
-  /** When set, pass through to wallet.send so SDK does not re-select into dust change. */
-  selectedVtxos?: SpendableVtxo[];
-  /** True when amount was raised to consume an awkward coin set (change would be dust). */
-  amountBumped: boolean;
-  originalAmount: number;
-};
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
-    promise.then(
-      (v) => {
-        clearTimeout(t);
-        resolve(v);
-      },
-      (e) => {
-        clearTimeout(t);
-        reject(e);
-      },
-    );
-  });
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-function extractSendTxid(raw: unknown): string {
-  if (typeof raw === "string") return raw;
-  if (raw && typeof raw === "object" && "txid" in raw) {
-    const t = (raw as { txid?: unknown }).txid;
-    if (typeof t === "string" && t) return t;
-  }
-  return String(raw ?? "");
-}
-
-async function readSpendableAvailable(w: {
-  getSpendableVtxos?: () => Promise<Array<{ value?: number }>>;
-}): Promise<number | null> {
-  if (typeof w.getSpendableVtxos !== "function") return null;
-  try {
-    const list = await withTimeout(w.getSpendableVtxos(), 1_200, "getSpendableVtxos");
-    let available = 0;
-    for (const v of list) available += Number(v.value ?? 0);
-    return available;
-  } catch {
-    return null;
-  }
-}
-
-function vtxoBatchExpiry(v: SpendableVtxo): number {
-  const fromStatus = Number(v.virtualStatus?.batchExpiry);
-  if (Number.isFinite(fromStatus) && fromStatus > 0) return fromStatus;
-  const fromDate = v.expiresAt instanceof Date ? v.expiresAt.getTime() : Number.NaN;
-  if (Number.isFinite(fromDate) && fromDate > 0) return fromDate;
-  return Number.MAX_SAFE_INTEGER;
-}
-
-function vtxoKey(v: SpendableVtxo): string {
-  return `${v.txid ?? "?"}:${v.vout ?? "?"}`;
-}
-
-/** Mirror SDK selectVirtualCoins ordering (earlier expiry, then larger value). */
-function sortSpendableLikeSdk(coins: SpendableVtxo[]): SpendableVtxo[] {
-  return [...coins].sort((a, b) => {
-    const expiryA = vtxoBatchExpiry(a);
-    const expiryB = vtxoBatchExpiry(b);
-    if (expiryA !== expiryB) return expiryA - expiryB;
-    return b.value - a.value;
-  });
-}
-
-async function readMinVtxoSats(w: {
-  arkProvider?: { getInfo?: () => Promise<{ dust?: bigint | number | string }> };
-  dustAmount?: bigint | number;
-}): Promise<number> {
-  const fromWallet = w.dustAmount;
-  if (fromWallet != null) {
-    const n = Number(fromWallet);
-    if (Number.isFinite(n) && n > 0) return n;
-  }
-  try {
-    const info = await withTimeout(w.arkProvider?.getInfo?.() ?? Promise.reject(), 1_500, "getInfo");
-    const n = Number(info?.dust);
-    if (Number.isFinite(n) && n > 0) return n;
-  } catch {
-    /* bundled default */
-  }
-  return DEFAULT_MIN_VTXO_SATS;
-}
-
-/**
- * ASP rejects change below min vtxo even when the SDK encodes it as subdust.
- * Prefer pulling extra inputs so change is 0 or >= dust; otherwise bump amount
- * to consume the selected set exactly (caller confirms the bump).
- */
-async function prepareDustSafeSend(
-  w: Pick<BasicWallet, "getSpendableVtxos">,
-  amount: number,
+function confirmAmountBump(
+  originalTotal: number,
+  bumpedTotal: number,
   dust: number,
-): Promise<DustSafeSendPlan> {
-  if (typeof w.getSpendableVtxos !== "function") {
-    return { amount, amountBumped: false, originalAmount: amount };
-  }
-  let list: SpendableVtxo[];
-  try {
-    list = await withTimeout(w.getSpendableVtxos(), 2_500, "getSpendableVtxos");
-  } catch {
-    return { amount, amountBumped: false, originalAmount: amount };
-  }
-  const coins = list.filter((v) => Number(v.value) > 0);
-  if (coins.length === 0) {
-    return { amount, amountBumped: false, originalAmount: amount };
-  }
-
-  const sorted = sortSpendableLikeSdk(coins);
-  const selected: SpendableVtxo[] = [];
-  let selectedSum = 0;
-  for (const coin of sorted) {
-    if (selectedSum >= amount) break;
-    selected.push(coin);
-    selectedSum += coin.value;
-  }
-  if (selectedSum < amount) {
-    throw new Error("Insufficient funds");
-  }
-
-  const unused = sorted.filter((c) => !selected.some((s) => vtxoKey(s) === vtxoKey(c)));
-  let change = selectedSum - amount;
-  for (const coin of unused) {
-    if (!(change > 0 && change < dust)) break;
-    selected.push(coin);
-    selectedSum += coin.value;
-    change = selectedSum - amount;
-  }
-
-  if (change > 0 && change < dust) {
-    // No more inputs: send the whole selection (change = 0).
-    return {
-      amount: selectedSum,
-      selectedVtxos: selected,
-      amountBumped: true,
-      originalAmount: amount,
-    };
-  }
-
-  // Pin the selection so SDK cannot re-pick into dust change.
-  return {
-    amount,
-    selectedVtxos: selected,
-    amountBumped: false,
-    originalAmount: amount,
-  };
-}
-
-function formatSendError(e: unknown, dust = DEFAULT_MIN_VTXO_SATS): string {
-  const msg = e instanceof Error ? e.message : String(e ?? "Unknown error");
-  if (
-    /AMOUNT_TOO_LOW/i.test(msg) ||
-    /min vtxo amount/i.test(msg) ||
-    /DustChangeError/i.test(msg) ||
-    /below dust/i.test(msg)
-  ) {
-    return (
-      `This amount would leave change below the network minimum (${dust} sats). ` +
-      `Try a slightly different amount, or send enough to spend a whole coin.`
-    );
-  }
-  return msg;
-}
-
-function confirmAmountBump(original: number, bumped: number, dust: number): Promise<boolean> {
+  opts?: { lastOriginal: number; lastBumped: number },
+): Promise<boolean> {
   return new Promise((resolve) => {
+    const detail =
+      opts != null
+        ? `Bump last recipient ${opts.lastOriginal.toLocaleString("en-US")} → ${opts.lastBumped.toLocaleString("en-US")} sats?`
+        : `Send ${bumpedTotal.toLocaleString("en-US")} sats instead (no change)?`;
     Alert.alert(
       "Adjust amount?",
-      `Sending ${original} sats would leave change below the network minimum (${dust} sats). ` +
-        `Send ${bumped} sats instead (no change)?`,
+      `Sending ${originalTotal.toLocaleString("en-US")} sats would leave change below the network minimum (${dust} sats). ` +
+        detail,
       [
         { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-        { text: `Send ${bumped}`, onPress: () => resolve(true) },
+        {
+          text: `Send ${bumpedTotal.toLocaleString("en-US")}`,
+          onPress: () => resolve(true),
+        },
       ],
       { cancelable: true, onDismiss: () => resolve(false) },
     );
   });
 }
 
-/**
- * Resolve as soon as SDK send returns *or* local spendable drops by ~amount
- * (receiver often sees the payment before send()'s DB bookkeeping finishes).
- * Poll stops when `isDone` is true — no leaked timers after success/fail.
- */
-async function waitForSendOrSpendDrop(
-  w: BasicWallet,
-  opts: {
-    address: string;
-    amount: number;
-    selectedVtxos?: SpendableVtxo[];
-    prevAvailable: number | null;
-    timeoutMs: number;
-    onRealTxid?: (txid: string) => void;
-  },
-): Promise<{ txid: string; via: "send" | "spend" }> {
-  let settled = false;
-  let resolveEarly!: (v: { txid: string; via: "send" | "spend" }) => void;
-  let rejectEarly!: (e: unknown) => void;
-  const early = new Promise<{ txid: string; via: "send" | "spend" }>((resolve, reject) => {
-    resolveEarly = resolve;
-    rejectEarly = reject;
-  });
-
-  const finish = (v: { txid: string; via: "send" | "spend" }) => {
-    if (settled) return;
-    settled = true;
-    resolveEarly(v);
-  };
-
-  const sendP = (
-    opts.selectedVtxos && opts.selectedVtxos.length > 0
-      ? w.send({
-          recipients: [{ address: opts.address, amount: opts.amount }],
-          selectedVtxos: opts.selectedVtxos,
-        })
-      : w.send({
-          recipients: [{ address: opts.address, amount: opts.amount }],
-        })
-  ).then((raw) => {
-    const txid = extractSendTxid(raw);
-    finish({ txid, via: "send" });
-    return txid;
-  });
-
-  void sendP
-    .then((txid) => {
-      if (txid) opts.onRealTxid?.(txid);
-    })
-    .catch(() => {
-      /* rejection handled below */
-    });
-
-  void sendP.catch((e) => {
-    if (!settled) {
-      settled = true;
-      rejectEarly(e);
-    } else {
-      console.warn("[basic] send completed with error after UI success", e);
-    }
-  });
-
-  void (async () => {
-    try {
-      if (opts.prevAvailable == null || !(opts.prevAvailable > 0)) return;
-      const target = opts.prevAvailable - opts.amount;
-      const deadline = Date.now() + opts.timeoutMs;
-      let hits = 0;
-      while (!settled && Date.now() < deadline) {
-        await sleep(SPEND_POLL_MS);
-        if (settled) return;
-        const avail = await readSpendableAvailable(w);
-        if (avail == null) continue;
-        // Require two samples so a single flaky read cannot false-complete.
-        if (avail <= target + 1) hits += 1;
-        else hits = 0;
-        if (hits < 2) continue;
-        console.warn("[basic] send spend-drop detected", {
-          prev: opts.prevAvailable,
-          avail,
-          amount: opts.amount,
-        });
-        const txid = await Promise.race([
-          sendP.catch(() => null),
-          sleep(TXID_GRACE_MS).then(() => `pending:${Date.now()}`),
-        ]);
-        if (txid == null) return;
-        finish({ txid, via: "spend" });
-        return;
-      }
-    } catch (e) {
-      console.warn("[basic] spend-drop watcher error", e);
-    }
-  })();
-
-  return withTimeout(early, opts.timeoutMs, "send");
-}
-
 export function SendScreen() {
   const route = useRoute<RouteProp<RootStackParamList, "Send">>();
   const { openFundsSent } = useSheets();
+  const insets = useSafeAreaInsets();
   const {
     wallet,
     balance,
@@ -446,15 +215,23 @@ export function SendScreen() {
     bumpActivity,
   } = useWallet();
   const network = getNetworkConfig();
+  /** Lightning path still uses flat address/amount. */
   const [address, setAddress] = useState("");
   const [amountStr, setAmountStr] = useState("");
+  /** Arkade multi-send lines (always ≥1). */
+  const [lines, setLines] = useState<SendLine[]>(() => [newSendLine()]);
+  const [activeLineId, setActiveLineId] = useState("");
   const [busy, setBusy] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
   const [myWalletPeekId, setMyWalletPeekId] = useState<string | null>(null);
-  const [myWalletDestLabel, setMyWalletDestLabel] = useState<string | null>(null);
   const [enterSheetOpen, setEnterSheetOpen] = useState(false);
   const [myWalletsSheetOpen, setMyWalletsSheetOpen] = useState(false);
   const [enterDraft, setEnterDraft] = useState("");
+  const [addSheetOpen, setAddSheetOpen] = useState(false);
+  const [addDraftAddress, setAddDraftAddress] = useState("");
+  const [addDraftAmount, setAddDraftAmount] = useState("");
+  const [addDraftLabel, setAddDraftLabel] = useState<string | null>(null);
+  const [pickerTarget, setPickerTarget] = useState<"primary" | "add">("primary");
   const enterInputRef = useRef<TextInputType>(null);
   const isLightning = selectedWallet?.kind === "lightning";
   const sendBlocked = !walletInteractive || balanceStatus === "loading";
@@ -467,6 +244,26 @@ export function SendScreen() {
   }, [isLightning, selectedWallet, wallets]);
 
   const showMyWalletsAction = myArkadeWallets.length > 0;
+
+  useEffect(() => {
+    if (!activeLineId && lines[0]) setActiveLineId(lines[0].id);
+  }, [activeLineId, lines]);
+
+  const primaryLine = lines[0] ?? null;
+  const arkTotal = useMemo(() => {
+    let sum = 0;
+    for (const l of lines) {
+      const a = parseAmountSats(l.amountStr);
+      if (a != null) sum += a;
+    }
+    return sum;
+  }, [lines]);
+  const canAddRecipient =
+    !isLightning &&
+    lines.length < MAX_SEND_RECIPIENTS &&
+    !!primaryLine &&
+    isValidArkAddress(primaryLine.address.trim());
+  const primaryHasDest = !!primaryLine?.address.trim();
 
   // Focus Enter field only after the sheet is open — never on Send mount
   // (hidden TextInput + autoFocus was stealing the keyboard).
@@ -485,15 +282,34 @@ export function SendScreen() {
     if (to) {
       const prefer = isLightning ? "lightning" : "arkade";
       const intent = resolvePayIntent(to, prefer);
-      setAddress(intent?.destination ?? to);
-      setMyWalletDestLabel(null);
-      if (intent?.amountSats != null) {
-        setAmountStr(String(intent.amountSats));
-      } else if (amt != null && amt > 0) {
-        setAmountStr(String(Math.floor(amt)));
+      const dest = intent?.destination ?? to;
+      const amtStr =
+        intent?.amountSats != null
+          ? String(intent.amountSats)
+          : amt != null && amt > 0
+            ? String(Math.floor(amt))
+            : "";
+      if (isLightning) {
+        setAddress(dest);
+        if (amtStr) setAmountStr(amtStr);
+      } else {
+        const line = newSendLine({
+          address: dest,
+          amountStr: amtStr,
+          walletLabel: null,
+        });
+        setLines([line]);
+        setActiveLineId(line.id);
       }
     } else if (amt != null && amt > 0) {
-      setAmountStr(String(Math.floor(amt)));
+      if (isLightning) {
+        setAmountStr(String(Math.floor(amt)));
+      } else {
+        setLines((prev) => {
+          const first = prev[0] ?? newSendLine();
+          return [{ ...first, amountStr: String(Math.floor(amt)) }, ...prev.slice(1)];
+        });
+      }
     }
   }, [route.params?.to, route.params?.amountSats, isLightning]);
 
@@ -551,24 +367,66 @@ export function SendScreen() {
     };
   }, [isLightning, address]);
 
-  function applyDestinationInput(text: string) {
-    setMyWalletDestLabel(null);
+  function patchLine(id: string, patch: Partial<SendLine>) {
+    setLines((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  }
+
+  function applyDestinationToActive(text: string, walletLabel: string | null = null) {
     const prefer = isLightning ? "lightning" : "arkade";
     const intent = resolvePayIntent(text, prefer);
-    if (intent && (text.includes("?") || /^bitcoin:/i.test(text.trim()))) {
-      setAddress(intent.destination);
-      if (intent.amountSats != null) setAmountStr(String(intent.amountSats));
+    const dest =
+      intent && (text.includes("?") || /^bitcoin:/i.test(text.trim()))
+        ? intent.destination
+        : text;
+    const amt =
+      intent && (text.includes("?") || /^bitcoin:/i.test(text.trim())) && intent.amountSats != null
+        ? String(intent.amountSats)
+        : null;
+
+    if (isLightning) {
+      setAddress(dest);
+      if (amt) setAmountStr(amt);
       return;
     }
-    setAddress(text);
+
+    if (pickerTarget === "add") {
+      setAddDraftAddress(dest);
+      setAddDraftLabel(walletLabel);
+      if (amt) setAddDraftAmount(amt);
+      return;
+    }
+
+    const targetId = lines[0]?.id;
+    if (!targetId) return;
+    setLines((prev) =>
+      prev.map((l) =>
+        l.id === targetId
+          ? {
+              ...l,
+              address: dest,
+              walletLabel,
+              ...(amt ? { amountStr: amt } : {}),
+            }
+          : l,
+      ),
+    );
+    setActiveLineId(targetId);
+  }
+
+  function applyDestinationInput(text: string) {
+    applyDestinationToActive(text, null);
   }
 
   function applyScannedPay(value: string, raw?: string) {
-    setMyWalletDestLabel(null);
     const prefer = isLightning ? "lightning" : "arkade";
     const intent = resolvePayIntent(raw ?? value, prefer);
-    setAddress(intent?.destination ?? value);
-    if (intent?.amountSats != null) setAmountStr(String(intent.amountSats));
+    applyDestinationToActive(intent?.destination ?? value, null);
+    if (intent?.amountSats != null && isLightning) {
+      setAmountStr(String(intent.amountSats));
+    } else if (intent?.amountSats != null && !isLightning) {
+      if (pickerTarget === "add") setAddDraftAmount(String(intent.amountSats));
+      else if (lines[0]?.id) patchLine(lines[0].id, { amountStr: String(intent.amountSats) });
+    }
     setScanOpen(false);
   }
 
@@ -578,8 +436,7 @@ export function SendScreen() {
     try {
       const cached = await readCachedArkAddress(network.id, dest.id);
       if (cached?.arkAddress && isValidArkAddress(cached.arkAddress)) {
-        setAddress(cached.arkAddress);
-        setMyWalletDestLabel(dest.label);
+        applyDestinationToActive(cached.arkAddress, dest.label);
         setMyWalletsSheetOpen(false);
         return;
       }
@@ -588,8 +445,7 @@ export function SendScreen() {
         throw new Error("Invalid address from wallet");
       }
       await writeCachedArkAddress(network.id, dest.id, addr);
-      setAddress(addr);
-      setMyWalletDestLabel(dest.label);
+      applyDestinationToActive(addr, dest.label);
       setMyWalletsSheetOpen(false);
     } catch (e) {
       console.warn("[basic] my-wallet destination failed", e);
@@ -602,9 +458,17 @@ export function SendScreen() {
     }
   }
 
-  function openEnterSheet() {
+
+  function openEnterSheet(target: "primary" | "add" = "primary") {
     Keyboard.dismiss();
-    setEnterDraft(address);
+    setPickerTarget(target);
+    if (target === "add") {
+      setEnterDraft(addDraftAddress);
+    } else {
+      const id = lines[0]?.id;
+      if (id) setActiveLineId(id);
+      setEnterDraft(isLightning ? address : (lines[0]?.address ?? ""));
+    }
     setEnterSheetOpen(true);
   }
 
@@ -619,33 +483,106 @@ export function SendScreen() {
     closeEnterSheet();
   }
 
-  async function pasteDestination() {
+  async function pasteDestination(target: "primary" | "add" = "primary") {
+    setPickerTarget(target);
     try {
-      const text = (await Clipboard.getStringAsync()).trim();
-      if (!text) {
+      const clip = (await Clipboard.getStringAsync()).trim();
+      if (!clip) {
         Alert.alert("Clipboard empty", "Copy an ark address first.");
         return;
       }
-      applyDestinationInput(text);
+      applyDestinationToActive(clip, null);
     } catch (e) {
       console.warn("[basic] clipboard paste failed", e);
       Alert.alert("Paste failed", "Could not read the clipboard.");
     }
   }
 
-  function clearDestination() {
-    setAddress("");
-    setMyWalletDestLabel(null);
+  function clearPrimaryDestination() {
+    const id = lines[0]?.id;
+    if (!id) return;
+    patchLine(id, { address: "", walletLabel: null });
   }
 
-  function fillMaxSend() {
-    if (spendable == null || spendable <= 0) return;
-    let max = Math.floor(spendable);
-    if (isLightning && lnProbe?.maxSats != null && lnProbe.maxSats > 0) {
-      max = Math.min(max, Math.floor(lnProbe.maxSats));
+  function removeRecipientLine(lineId: string) {
+    setLines((prev) => {
+      if (prev.length <= 1) return prev;
+      return prev.filter((l) => l.id !== lineId);
+    });
+  }
+
+  function openAddRecipientSheet() {
+    if (!canAddRecipient) return;
+    Keyboard.dismiss();
+    setAddDraftAddress("");
+    setAddDraftAmount("");
+    setAddDraftLabel(null);
+    setPickerTarget("add");
+    setAddSheetOpen(true);
+  }
+
+  function closeAddRecipientSheet() {
+    setAddSheetOpen(false);
+    setPickerTarget("primary");
+  }
+
+  function confirmAddRecipient() {
+    const addr = addDraftAddress.trim();
+    const amt = parseAmountSats(addDraftAmount);
+    if (!isValidArkAddress(addr)) {
+      Alert.alert("Invalid address", "Paste a valid Arkade (ark…) address.");
+      return;
     }
+    if (amt == null) {
+      Alert.alert("Amount required", "Enter how many sats for this recipient.");
+      return;
+    }
+    if (lines.length >= MAX_SEND_RECIPIENTS) {
+      Alert.alert("Limit reached", `You can send to at most ${MAX_SEND_RECIPIENTS} recipients.`);
+      return;
+    }
+    const line = newSendLine({
+      address: addr,
+      amountStr: String(amt),
+      walletLabel: addDraftLabel,
+    });
+    setLines((prev) => [...prev, line]);
+    closeAddRecipientSheet();
+  }
+
+  function fillMaxSend(target: "primary" | "add" | string = "primary") {
+    if (spendable == null || spendable <= 0) return;
+    if (isLightning) {
+      let max = Math.floor(spendable);
+      if (lnProbe?.maxSats != null && lnProbe.maxSats > 0) {
+        max = Math.min(max, Math.floor(lnProbe.maxSats));
+      }
+      if (max <= 0) return;
+      setAmountStr(String(max));
+      return;
+    }
+    if (target === "add") {
+      let others = 0;
+      for (const l of lines) {
+        const a = parseAmountSats(l.amountStr);
+        if (a != null) others += a;
+      }
+      const max = Math.floor(spendable) - others;
+      if (max <= 0) return;
+      setAddDraftAmount(String(max));
+      return;
+    }
+    const targetId = target === "primary" ? lines[0]?.id : target;
+    if (!targetId) return;
+    let others = 0;
+    for (const l of lines) {
+      if (l.id === targetId) continue;
+      const a = parseAmountSats(l.amountStr);
+      if (a != null) others += a;
+    }
+    const max = Math.floor(spendable) - others;
     if (max <= 0) return;
-    setAmountStr(String(max));
+    patchLine(targetId, { amountStr: String(max) });
   }
 
   async function onSendLightning() {
@@ -765,30 +702,40 @@ export function SendScreen() {
       return;
     }
 
-    const trimmed = address.trim();
-    const amount = Number.parseInt(amountStr.replace(/[,\s]/g, ""), 10);
+    const built: SendRecipient[] = [];
+    for (const line of lines) {
+      const trimmed = line.address.trim();
+      const amount = parseAmountSats(line.amountStr);
+      if (!trimmed && amount == null) continue;
+      if (!trimmed || amount == null) {
+        Alert.alert(
+          "Incomplete recipient",
+          "Each recipient needs an ark… address and a positive amount.",
+        );
+        return;
+      }
+      if (isBtcAddress(trimmed)) {
+        Alert.alert(
+          "On-chain not on soft path",
+          "Direct bc1… sends are reserved for Lightning corridor, multisig, or hardware. Use an ark… address for L2.",
+        );
+        return;
+      }
+      if (!isValidArkAddress(trimmed)) {
+        Alert.alert("Invalid address", "Paste a valid Arkade (ark…) address.");
+        return;
+      }
+      built.push({ address: trimmed, amount });
+    }
 
+    if (built.length === 0) {
+      Alert.alert("Nothing to send", "Add at least one recipient with an amount.");
+      return;
+    }
+
+    const recipients = mergeRecipientsByAddress(built);
     if (!wallet) {
       Alert.alert("Wallet closed", "Re-open the wallet and try again.");
-      return;
-    }
-    if (!Number.isFinite(amount) || amount <= 0) {
-      Alert.alert("Invalid amount", "Enter a positive amount in sats.");
-      return;
-    }
-    if (spendable !== null && amount > spendable) {
-      Alert.alert("Insufficient balance", `Available: ${bal}`);
-      return;
-    }
-    if (isBtcAddress(trimmed)) {
-      Alert.alert(
-        "On-chain not on soft path",
-        "Direct bc1… sends are reserved for Lightning corridor, multisig, or hardware. Use an ark… address for L2.",
-      );
-      return;
-    }
-    if (!isValidArkAddress(trimmed)) {
-      Alert.alert("Invalid address", "Paste a valid Arkade (ark…) address.");
       return;
     }
 
@@ -796,24 +743,52 @@ export function SendScreen() {
     let dust = DEFAULT_MIN_VTXO_SATS;
     try {
       dust = await readMinVtxoSats(wallet);
-      if (amount < dust) {
-        Alert.alert(
-          "Amount too low",
-          `Minimum send on this network is ${dust} sats (ASP dust / min vtxo).`,
-        );
+      for (const r of recipients) {
+        if (r.amount < dust) {
+          Alert.alert(
+            "Amount too low",
+            `Minimum per recipient on this network is ${dust} sats (ASP dust / min vtxo).`,
+          );
+          return;
+        }
+      }
+
+      let working = recipients.map((r) => ({ ...r }));
+      let paymentSum = working.reduce((s, r) => s + r.amount, 0);
+      if (spendable !== null && paymentSum > spendable) {
+        Alert.alert("Insufficient balance", `Available: ${bal}`);
         return;
       }
 
-      const plan = await prepareDustSafeSend(wallet, amount, dust);
-      let sendAmount = plan.amount;
+      const plan = await prepareDustSafeSend(wallet, paymentSum, dust);
       if (plan.amountBumped) {
-        const ok = await confirmAmountBump(plan.originalAmount, plan.amount, dust);
+        const last = working[working.length - 1]!;
+        const lastOriginal = last.amount;
+        const delta = plan.amount - paymentSum;
+        const bumpedLast = lastOriginal + delta;
+        const ok = await confirmAmountBump(paymentSum, plan.amount, dust, {
+          lastOriginal,
+          lastBumped: bumpedLast,
+        });
         if (!ok) return;
-        setAmountStr(String(plan.amount));
-        sendAmount = plan.amount;
+        last.amount = bumpedLast;
+        paymentSum = plan.amount;
+        // Reflect bump on matching UI line (last complete / same address).
+        setLines((prev) => {
+          const copy = [...prev];
+          for (let i = copy.length - 1; i >= 0; i--) {
+            if (copy[i]!.address.trim() === last.address) {
+              copy[i] = { ...copy[i]!, amountStr: String(bumpedLast) };
+              break;
+            }
+          }
+          return copy;
+        });
       }
 
-      const auth = await requireUserPresence("Confirm send");
+      const auth = await requireUserPresence(
+        working.length > 1 ? "Confirm multi-send" : "Confirm send",
+      );
       if (!auth.ok) {
         Alert.alert("Authentication required", auth.reason);
         return;
@@ -821,12 +796,17 @@ export function SendScreen() {
 
       beginOutboundSend();
       try {
-        notePendingSendFromThisDevice(network.id, selectedWallet?.id ?? "", sendAmount, trimmed);
+        const primaryAddr = working[0]!.address;
+        notePendingSendFromThisDevice(
+          network.id,
+          selectedWallet?.id ?? "",
+          paymentSum,
+          primaryAddr,
+        );
         const prevAvailable = balance?.available ?? null;
         const walletId = selectedWallet?.id;
         const { txid, via } = await waitForSendOrSpendDrop(wallet, {
-          address: trimmed,
-          amount: sendAmount,
+          recipients: working,
           selectedVtxos: plan.selectedVtxos,
           prevAvailable,
           timeoutMs: SEND_TIMEOUT_MS,
@@ -835,24 +815,26 @@ export function SendScreen() {
             recordSentFromThisDevice(network.id, walletId, real);
           },
         });
-        console.warn("[basic] send settled", { via, txid: txid.slice(0, 16) });
+        console.warn("[basic] send settled", {
+          via,
+          txid: txid.slice(0, 16),
+          n: working.length,
+        });
         if (walletId && txid) {
-          // Stamp under raw txid; Activity detail also resolves via related tx keys.
           recordSentFromThisDevice(network.id, walletId, txid);
         }
 
-        // Optimistic Home balance — live getBalance often lags / times out after send.
-        applyLocalSpend(sendAmount);
+        applyLocalSpend(paymentSum);
 
-        // Row in activity_idx now so View details / Activity work before SDK history.
         let activityIdForNotice = txid;
         if (walletId) {
           try {
             const { recordOptimisticArkadeSend } = await import("../account/activityStore");
             activityIdForNotice = recordOptimisticArkadeSend(network.id, walletId, {
-              amountSats: sendAmount,
+              amountSats: paymentSum,
               txid,
-              address: trimmed,
+              address: primaryAddr,
+              recipients: working,
             });
             bumpActivity();
           } catch (e) {
@@ -860,12 +842,16 @@ export function SendScreen() {
           }
         }
 
-        // Overlay first (covers Send). Done/back navigates Home — no Home flash.
-        // Do not await refresh/materialize (getBalance often hangs after ASP settle).
-        setAddress("");
-        setAmountStr("");
+        const fresh = newSendLine();
+        setLines([fresh]);
+        setActiveLineId(fresh.id);
         setBusy(false);
-        openFundsSent({ amount: sendAmount, txid: activityIdForNotice, address: trimmed });
+        openFundsSent({
+          amount: paymentSum,
+          txid: activityIdForNotice,
+          address: primaryAddr,
+          recipientCount: working.length,
+        });
 
         void (async () => {
           try {
@@ -994,7 +980,7 @@ export function SendScreen() {
                         Amount (sats)
                       </Text>
                       <Pressable
-                        onPress={fillMaxSend}
+                        onPress={() => fillMaxSend()}
                         disabled={spendable == null || spendable <= 0}
                         hitSlop={8}
                         accessibilityLabel="Max send"
@@ -1073,130 +1059,210 @@ export function SendScreen() {
   return (
     <View style={styles.screenRoot}>
       <ScreenChrome logoScale={0.77}>
-        <Text style={styles.title}>SEND</Text>
-        <Pressable onPress={toggleBalanceHidden}>
-          <Text style={styles.balance}>{bal}</Text>
-        </Pressable>
-        <Text style={styles.caption}>Arkade → ark… · {network.label}</Text>
-
-        {sendBlocked ? (
-          <Text style={styles.warn}>
-            Wallet still syncing — sending unavailable until ready.
-          </Text>
-        ) : null}
-
-        <View style={styles.toRow}>
-          <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>Amount (sats)</Text>
-          <Pressable
-            onPress={fillMaxSend}
-            disabled={spendable == null || spendable <= 0}
-            hitSlop={8}
-            accessibilityLabel="Max send"
-          >
-            <Text
-              style={[
-                styles.maxLink,
-                (spendable == null || spendable <= 0) && styles.maxLinkDisabled,
-              ]}
-            >
-              Max send
-            </Text>
+        <ScrollView
+          style={styles.arkScroll}
+          contentContainerStyle={styles.arkScrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={styles.title}>SEND</Text>
+          <Pressable onPress={toggleBalanceHidden}>
+            <Text style={styles.balance}>{bal}</Text>
           </Pressable>
-        </View>
-        <TextInput
-          value={amountStr}
-          onChangeText={setAmountStr}
-          keyboardType="number-pad"
-          placeholder="0"
-          placeholderTextColor={colors.hint}
-          style={styles.input}
-        />
+          <Text style={styles.caption}>Arkade → ark… · {network.label}</Text>
 
-        <Text style={styles.fieldLabel}>To:</Text>
-        {address.trim() ? (
-          <View style={styles.destPreview}>
-            <View style={styles.destPreviewTextWrap}>
-              {myWalletDestLabel ? (
-                <Text style={styles.destPreviewLabel} numberOfLines={1}>
-                  My wallet · {myWalletDestLabel}
-                </Text>
+          {sendBlocked ? (
+            <Text style={styles.warn}>
+              Wallet still syncing — sending unavailable until ready.
+            </Text>
+          ) : null}
+
+          {lines.length > 1 ? (
+            <>
+              {/* Penpot 16b/16c — all recipients as compact cards, no To pickers */}
+              <Text style={styles.fieldLabel}>
+                Recipients · {lines.length}
+              </Text>
+              {lines.map((line) => (
+                <View key={line.id} style={styles.compactCard}>
+                  <View style={styles.compactCardText}>
+                    {line.walletLabel ? (
+                      <Text style={styles.destPreviewLabel} numberOfLines={1}>
+                        My wallet · {line.walletLabel}
+                      </Text>
+                    ) : null}
+                    <Text style={styles.compactAddr} numberOfLines={1}>
+                      {truncateDest(line.address.trim() || "—", 12, 8)}
+                    </Text>
+                    <Text style={styles.compactAmt}>
+                      {(parseAmountSats(line.amountStr) ?? 0).toLocaleString("en-US")} sats
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={() => removeRecipientLine(line.id)}
+                    hitSlop={10}
+                    accessibilityLabel="Remove recipient"
+                  >
+                    <Text style={styles.compactRemove}>×</Text>
+                  </Pressable>
+                </View>
+              ))}
+            </>
+          ) : (
+            <>
+              {/* Penpot 16 — single recipient: classic Send (no card) */}
+              <View style={styles.toRow}>
+                <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>Amount (sats)</Text>
+                <Pressable
+                  onPress={() => fillMaxSend("primary")}
+                  disabled={spendable == null || spendable <= 0}
+                  hitSlop={8}
+                  accessibilityLabel="Max send"
+                >
+                  <Text
+                    style={[
+                      styles.maxLink,
+                      (spendable == null || spendable <= 0) && styles.maxLinkDisabled,
+                    ]}
+                  >
+                    Max send
+                  </Text>
+                </Pressable>
+              </View>
+              <TextInput
+                value={primaryLine?.amountStr ?? ""}
+                onChangeText={(v) => {
+                  setPickerTarget("primary");
+                  if (primaryLine) patchLine(primaryLine.id, { amountStr: v });
+                }}
+                onFocus={() => {
+                  setPickerTarget("primary");
+                  if (primaryLine) setActiveLineId(primaryLine.id);
+                }}
+                keyboardType="number-pad"
+                placeholder="0"
+                placeholderTextColor={colors.hint}
+                style={styles.input}
+              />
+
+              <Text style={styles.fieldLabel}>To:</Text>
+              {primaryHasDest ? (
+                <View style={styles.destPreview}>
+                  <View style={styles.destPreviewTextWrap}>
+                    {primaryLine?.walletLabel ? (
+                      <Text style={styles.destPreviewLabel} numberOfLines={1}>
+                        My wallet · {primaryLine.walletLabel}
+                      </Text>
+                    ) : null}
+                    <Text style={styles.destPreviewAddr} numberOfLines={2}>
+                      {truncateDest(primaryLine!.address.trim(), 14, 10)}
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={clearPrimaryDestination}
+                    hitSlop={8}
+                    accessibilityLabel="Clear destination"
+                  >
+                    <Text style={styles.scanLink}>Clear</Text>
+                  </Pressable>
+                </View>
               ) : null}
-              <Text style={styles.destPreviewAddr} numberOfLines={2}>
-                {truncateDest(address.trim(), 14, 10)}
+
+              <View style={styles.toActions}>
+                <Pressable
+                  style={styles.toAction}
+                  onPress={() => openEnterSheet("primary")}
+                  accessibilityRole="button"
+                  accessibilityLabel="Enter destination"
+                >
+                  <View style={styles.toActionIcon}>
+                    <IconEnter />
+                  </View>
+                  <Text style={styles.toActionLabel}>Enter</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.toAction}
+                  onPress={() => void pasteDestination("primary")}
+                  accessibilityRole="button"
+                  accessibilityLabel="Paste destination"
+                >
+                  <View style={styles.toActionIcon}>
+                    <IconPaste />
+                  </View>
+                  <Text style={styles.toActionLabel}>Paste</Text>
+                </Pressable>
+                {showMyWalletsAction ? (
+                  <Pressable
+                    style={styles.toAction}
+                    onPress={() => {
+                      setPickerTarget("primary");
+                      setMyWalletsSheetOpen(true);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="My wallets"
+                  >
+                    <View style={styles.toActionIcon}>
+                      <IconMyWallets />
+                    </View>
+                    <Text style={styles.toActionLabel}>My wallets</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable
+                  style={styles.toAction}
+                  onPress={() => {
+                    setPickerTarget("primary");
+                    setScanOpen(true);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Scan QR"
+                >
+                  <View style={styles.toActionIcon}>
+                    <IconQr size={28} />
+                  </View>
+                  <Text style={styles.toActionLabel}>Scan</Text>
+                </Pressable>
+              </View>
+            </>
+          )}
+
+          <Pressable
+            style={[styles.addRecipient, !canAddRecipient && { opacity: 0.4 }]}
+            disabled={!canAddRecipient || busy}
+            onPress={openAddRecipientSheet}
+            accessibilityRole="button"
+            accessibilityLabel="Add recipient"
+          >
+            <Text style={styles.addRecipientText}>+ Add recipient</Text>
+          </Pressable>
+          {lines.length === 1 && !canAddRecipient && !primaryHasDest ? (
+            <Text style={styles.addHint}>
+              Set the first ark… destination to add more recipients.
+            </Text>
+          ) : null}
+
+          {lines.length > 1 ? (
+            <View style={styles.totalRow}>
+              <Text style={styles.totalLabel}>Total</Text>
+              <Text style={styles.totalValue}>
+                {arkTotal.toLocaleString("en-US")} sats
               </Text>
             </View>
-            <Pressable onPress={clearDestination} hitSlop={8} accessibilityLabel="Clear destination">
-              <Text style={styles.scanLink}>Clear</Text>
-            </Pressable>
-          </View>
-        ) : null}
-
-        <View style={styles.toActions}>
-          <Pressable
-            style={styles.toAction}
-            onPress={openEnterSheet}
-            accessibilityRole="button"
-            accessibilityLabel="Enter destination"
-          >
-            <View style={styles.toActionIcon}>
-              <IconEnter />
-            </View>
-            <Text style={styles.toActionLabel}>Enter</Text>
-          </Pressable>
-          <Pressable
-            style={styles.toAction}
-            onPress={() => void pasteDestination()}
-            accessibilityRole="button"
-            accessibilityLabel="Paste destination"
-          >
-            <View style={styles.toActionIcon}>
-              <IconPaste />
-            </View>
-            <Text style={styles.toActionLabel}>Paste</Text>
-          </Pressable>
-          {showMyWalletsAction ? (
-            <Pressable
-              style={styles.toAction}
-              onPress={() => setMyWalletsSheetOpen(true)}
-              accessibilityRole="button"
-              accessibilityLabel="My wallets"
-            >
-              <View style={styles.toActionIcon}>
-                <IconMyWallets />
-              </View>
-              <Text style={styles.toActionLabel}>My wallets</Text>
-            </Pressable>
           ) : null}
-        </View>
 
-        <Pressable
-          style={[styles.primary, (busy || sendBlocked || !!myWalletPeekId) && { opacity: 0.6 }]}
-          disabled={busy || sendBlocked || !!myWalletPeekId}
-          onPress={() => void onSend()}
-        >
-          {busy ? (
-            <ActivityIndicator color="#000" />
-          ) : (
-            <Text style={styles.primaryText}>Confirm send</Text>
-          )}
-        </Pressable>
-
-        {/* Penpot 03 / 03f: large bottom-center scan when recipient empty */}
-        {!address.trim() ? (
-          <View style={styles.scanWrap}>
-            <Pressable
-              style={styles.scanFab}
-              onPress={() => setScanOpen(true)}
-              accessibilityRole="button"
-              accessibilityLabel="Scan QR"
-            >
-              <View style={styles.scanRing}>
-                <IconQr size={30} />
-              </View>
-              <Text style={styles.scanLabel}>scan QR</Text>
-            </Pressable>
-          </View>
-        ) : null}
+          <Pressable
+            style={[styles.primary, (busy || sendBlocked || !!myWalletPeekId) && { opacity: 0.6 }]}
+            disabled={busy || sendBlocked || !!myWalletPeekId}
+            onPress={() => void onSend()}
+          >
+            {busy ? (
+              <ActivityIndicator color="#000" />
+            ) : (
+              <Text style={styles.primaryText}>
+                {lines.length > 1 ? "Confirm multi-send" : "Confirm send"}
+              </Text>
+            )}
+          </Pressable>
+        </ScrollView>
 
         <ScanQrModal
           visible={scanOpen}
@@ -1205,6 +1271,136 @@ export function SendScreen() {
           onScan={applyScannedPay}
         />
       </ScreenChrome>
+
+      {/* Penpot 16d — Add recipient first in tree so Enter/My wallets stack above */}
+      <InteractiveBottomSheet
+        open={addSheetOpen}
+        onDismiss={closeAddRecipientSheet}
+        visibleFraction={0.62}
+        avoidKeyboard
+      >
+        <ScrollView
+          style={styles.sheetScroll}
+          contentContainerStyle={[
+            styles.addSheetContent,
+            { paddingBottom: Math.max(insets.bottom, 16) + 20 },
+          ]}
+          keyboardShouldPersistTaps="handled"
+          nestedScrollEnabled
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={styles.sheetTitle}>ADD RECIPIENT</Text>
+          <Text style={styles.sheetCaption}>Same pickers as To:</Text>
+
+          {addDraftAddress.trim() ? (
+            <View style={[styles.destPreview, { marginBottom: 12 }]}>
+              <View style={styles.destPreviewTextWrap}>
+                {addDraftLabel ? (
+                  <Text style={styles.destPreviewLabel} numberOfLines={1}>
+                    My wallet · {addDraftLabel}
+                  </Text>
+                ) : null}
+                <Text style={styles.destPreviewAddr} numberOfLines={2}>
+                  {truncateDest(addDraftAddress.trim(), 14, 10)}
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => {
+                  setAddDraftAddress("");
+                  setAddDraftLabel(null);
+                }}
+                hitSlop={8}
+                accessibilityLabel="Clear destination"
+              >
+                <Text style={styles.scanLink}>Clear</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          <View style={styles.toActions}>
+            <Pressable
+              style={styles.toAction}
+              onPress={() => openEnterSheet("add")}
+              accessibilityRole="button"
+              accessibilityLabel="Enter destination"
+            >
+              <View style={styles.toActionIcon}>
+                <IconEnter />
+              </View>
+              <Text style={styles.toActionLabel}>Enter</Text>
+            </Pressable>
+            <Pressable
+              style={styles.toAction}
+              onPress={() => void pasteDestination("add")}
+              accessibilityRole="button"
+              accessibilityLabel="Paste destination"
+            >
+              <View style={styles.toActionIcon}>
+                <IconPaste />
+              </View>
+              <Text style={styles.toActionLabel}>Paste</Text>
+            </Pressable>
+            {showMyWalletsAction ? (
+              <Pressable
+                style={styles.toAction}
+                onPress={() => {
+                  setPickerTarget("add");
+                  setMyWalletsSheetOpen(true);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="My wallets"
+              >
+                <View style={styles.toActionIcon}>
+                  <IconMyWallets />
+                </View>
+                <Text style={styles.toActionLabel}>My wallets</Text>
+              </Pressable>
+            ) : null}
+          </View>
+
+          <View style={styles.toRow}>
+            <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>Amount (sats)</Text>
+            <Pressable
+              onPress={() => fillMaxSend("add")}
+              disabled={spendable == null || spendable <= 0}
+              hitSlop={8}
+              accessibilityLabel="Max send"
+            >
+              <Text
+                style={[
+                  styles.maxLink,
+                  (spendable == null || spendable <= 0) && styles.maxLinkDisabled,
+                ]}
+              >
+                Max
+              </Text>
+            </Pressable>
+          </View>
+          <TextInput
+            value={addDraftAmount}
+            onChangeText={setAddDraftAmount}
+            keyboardType="number-pad"
+            placeholder="0"
+            placeholderTextColor={colors.hint}
+            style={[styles.input, { marginBottom: 12 }]}
+          />
+
+          <Pressable
+            style={[
+              styles.primary,
+              { marginTop: 0 },
+              (!addDraftAddress.trim() || !addDraftAmount.trim()) && { opacity: 0.5 },
+            ]}
+            disabled={!addDraftAddress.trim() || !addDraftAmount.trim()}
+            onPress={confirmAddRecipient}
+          >
+            <Text style={styles.primaryText}>Add</Text>
+          </Pressable>
+          <Pressable onPress={closeAddRecipientSheet} hitSlop={8} style={{ marginTop: 14 }}>
+            <Text style={[styles.sheetCaption, { marginBottom: 0 }]}>Cancel</Text>
+          </Pressable>
+        </ScrollView>
+      </InteractiveBottomSheet>
 
       <InteractiveBottomSheet
         open={enterSheetOpen}
@@ -1235,7 +1431,6 @@ export function SendScreen() {
           >
             <Text style={styles.primaryText}>Use destination</Text>
           </Pressable>
-          {/* Future: contacts / search scroll here without growing the sheet. */}
           <ScrollView
             style={styles.sheetScroll}
             contentContainerStyle={styles.sheetScrollContent}
@@ -1263,7 +1458,10 @@ export function SendScreen() {
           >
             {myArkadeWallets.map((w) => {
               const peeking = myWalletPeekId === w.id;
-              const selected = myWalletDestLabel === w.label && !!address.trim();
+              const selected =
+                pickerTarget === "add"
+                  ? addDraftLabel === w.label && !!addDraftAddress.trim()
+                  : primaryLine?.walletLabel === w.label && primaryHasDest;
               return (
                 <Pressable
                   key={w.id}
@@ -1294,6 +1492,87 @@ export function SendScreen() {
 const styles = StyleSheet.create({
   screenRoot: {
     flex: 1,
+  },
+  arkScroll: {
+    flex: 1,
+  },
+  arkScrollContent: {
+    paddingBottom: 24,
+    flexGrow: 1,
+  },
+  compactCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 8,
+    backgroundColor: "#0D0D0D",
+    gap: 10,
+  },
+  compactCardText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  compactAddr: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.fg,
+  },
+  compactAmt: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 14,
+    color: colors.fg,
+    marginTop: 4,
+  },
+  compactRemove: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 22,
+    color: colors.hint,
+    paddingHorizontal: 6,
+  },
+  addRecipient: {
+    borderWidth: 1.5,
+    borderColor: colors.fg,
+    borderRadius: 10,
+    paddingVertical: 14,
+    alignItems: "center",
+    marginBottom: 8,
+    marginTop: 4,
+    backgroundColor: "#111111",
+  },
+  addRecipientText: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 14,
+    color: colors.fg,
+  },
+  addHint: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 11,
+    color: colors.hint,
+    textAlign: "center",
+    marginBottom: 12,
+    lineHeight: 16,
+  },
+  totalRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4,
+    marginTop: 4,
+    paddingHorizontal: 2,
+  },
+  totalLabel: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 13,
+    color: colors.caption,
+  },
+  totalValue: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 14,
+    color: colors.fg,
   },
   title: {
     fontFamily: "JetBrainsMono_700Bold",
@@ -1427,6 +1706,10 @@ const styles = StyleSheet.create({
     paddingTop: 4,
     paddingBottom: 8,
     minHeight: 0,
+  },
+  addSheetContent: {
+    paddingTop: 4,
+    flexGrow: 1,
   },
   sheetTitle: {
     fontFamily: "JetBrainsMono_700Bold",
