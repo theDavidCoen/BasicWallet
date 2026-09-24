@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { syncContactsDirectoryNow } from "../contacts/contactsNostrSync";
 import { importAndStoreNsec } from "../nostr/identityStore";
 import { requireUserPresence } from "../security/userPresence";
 import { colors } from "../theme/colors";
@@ -33,8 +34,14 @@ export function ImportNsecWarningScreen() {
         return;
       }
       await importAndStoreNsec(nsec);
+      const applied = await syncContactsDirectoryNow("nsec-import");
       setNsec("");
-      Alert.alert("Imported", "Nostr identity updated. Enable encrypted backup with a passphrase.");
+      Alert.alert(
+        "Imported",
+        applied?.length
+          ? `Nostr identity updated. Restored ${applied.length} contact(s) from relays.`
+          : "Nostr identity updated. Open Contacts when online to pull the directory.",
+      );
       navigation.navigate("NostrIdentity");
     } catch (e) {
       Alert.alert("Import failed", e instanceof Error ? e.message : "Unknown error");

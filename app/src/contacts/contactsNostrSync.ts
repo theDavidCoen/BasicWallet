@@ -204,16 +204,38 @@ export async function fetchAndApplyContactsDirectory(
   const urls = await resolveRelays(relays);
   const dTag = deriveContactsDTag(pair.sk);
   const pool = new SimplePool();
+  const filter = {
+    kinds: [CONTACTS_EVENT_KIND],
+    authors: [pair.pubkey],
+    "#d": [dTag],
+    limit: 5,
+  };
 
   try {
-    const events = await pool.querySync(urls, {
-      kinds: [CONTACTS_EVENT_KIND],
-      authors: [pair.pubkey],
-      "#d": [dTag],
-      limit: 1,
-    });
-    const event = events.sort((a, b) => b.created_at - a.created_at)[0];
-    if (!event) return null;
+    // Query relays one-by-one: some (e.g. damus) ignore or mishandle long #d filters
+    // when batched, and a dead phone network to one relay should not block others.
+    const found: { id: string; created_at: number; content: string }[] = [];
+    for (const url of urls) {
+      try {
+        const events = await pool.querySync([url], filter, { maxWait: 5_000 });
+        for (const ev of events) {
+          if (!found.some((e) => e.id === ev.id)) {
+            found.push({ id: ev.id, created_at: ev.created_at, content: ev.content });
+          }
+        }
+      } catch (e) {
+        console.warn("[basic] contacts directory relay failed", url, e);
+      }
+    }
+
+    const event = found.sort((a, b) => b.created_at - a.created_at)[0];
+    if (!event) {
+      console.warn("[basic] contacts directory: no remote event", {
+        relays: urls.length,
+        dTagPrefix: dTag.slice(0, 12),
+      });
+      return null;
+    }
 
     const payload = decryptPayload(pair.sk, pair.pubkey, event.content);
     const remote = payload.contacts
@@ -232,6 +254,10 @@ export async function fetchAndApplyContactsDirectory(
       return null;
     }
     replaceAllContacts(remote);
+    console.warn("[basic] contacts directory applied", {
+      count: remote.length,
+      eventId: event.id.slice(0, 12),
+    });
     return remote;
   } catch (e) {
     console.warn("[basic] contacts directory fetch failed", e);
@@ -241,32 +267,31 @@ export async function fetchAndApplyContactsDirectory(
   }
 }
 
+/** Pull (then publish if local non-empty). Safe to call after passkey / nsec / screen focus. */
+export async function syncContactsDirectoryNow(reason = "sync"): Promise<Contact[] | null> {
+  try {
+    if (!(await hasNostrIdentity())) return null;
+    const applied = await fetchAndApplyContactsDirectory();
+    if (listContacts().length) {
+      await publishContactsDirectory().catch((e) => {
+        console.warn("[basic] contacts directory publish after", reason, e);
+      });
+    }
+    return applied;
+  } catch (e) {
+    console.warn("[basic] contacts directory sync failed", reason, e);
+    return null;
+  }
+}
+
 /** Boot / foreground helper: pull then publish if we have local data and identity.
  * Never invents a random nsec — passkey rematerialize owns the deterministic identity.
  */
 export function queueContactsDirectoryBootSync(): void {
-  void (async () => {
-    try {
-      if (!(await hasNostrIdentity())) return;
-      await fetchAndApplyContactsDirectory();
-      if (listContacts().length) {
-        await publishContactsDirectory();
-      }
-    } catch (e) {
-      console.warn("[basic] contacts boot sync", e);
-    }
-  })();
+  void syncContactsDirectoryNow("boot");
 }
 
-/** After Continue with passkey stores the derived nsec — pull contacts for that npub. */
+/** @deprecated Prefer syncContactsDirectoryNow — kept for call sites. */
 export async function syncContactsDirectoryAfterPasskey(): Promise<void> {
-  try {
-    if (!(await hasNostrIdentity())) return;
-    await fetchAndApplyContactsDirectory();
-    if (listContacts().length) {
-      await publishContactsDirectory();
-    }
-  } catch (e) {
-    console.warn("[basic] contacts sync after passkey failed", e);
-  }
+  await syncContactsDirectoryNow("passkey");
 }

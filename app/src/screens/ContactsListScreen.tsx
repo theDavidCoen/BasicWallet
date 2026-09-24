@@ -9,6 +9,7 @@ import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
 import { ContactPickList } from "../components/contacts/ContactPickList";
 import { filterContacts } from "../contacts/contactSearch";
+import { syncContactsDirectoryNow } from "../contacts/contactsNostrSync";
 import { listContacts } from "../contacts/contactStore";
 import type { Contact } from "../contacts/types";
 import { colors } from "../theme/colors";
@@ -26,6 +27,8 @@ export function ContactsListScreen() {
   useFocusEffect(
     useCallback(() => {
       reload();
+      // Pull Nostr directory when opening the list (fresh install / late nsec import).
+      void syncContactsDirectoryNow("contacts-focus").then(() => reload());
     }, [reload]),
   );
 

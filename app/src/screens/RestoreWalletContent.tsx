@@ -34,6 +34,7 @@ import { fetchEncryptedBackupFromRelays } from "../nostr/backupBroadcast";
 import { downloadHomeBackupCipher } from "../nostr/homeServerWebdav";
 import { homeCredsHaveAuth } from "../nostr/homeServerCreds";
 import { importAndStoreNsec, loadNostrKeyPairForCrypto } from "../nostr/identityStore";
+import { syncContactsDirectoryNow } from "../contacts/contactsNostrSync";
 import { persistBackupPassphrase } from "../nostr/backupSync";
 import { hasMnemonic, storeMnemonic } from "../security/mnemonicStore";
 import { requireUserPresence } from "../security/userPresence";
@@ -165,6 +166,7 @@ export function RestoreWalletContent({
         if (blob) await storeCipherBlob(blob);
       }
       if (!blob) {
+        await syncContactsDirectoryNow("restore-nsec-only");
         Alert.alert(
           "Identity imported",
           "No encrypted package on this device or relays. Use Seed for one Arkade wallet, or enable backup after create.",
