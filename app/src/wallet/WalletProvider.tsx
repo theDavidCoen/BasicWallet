@@ -770,8 +770,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (quiet) {
-        // Open / import / rematerialize: adopt live balance as baseline, never FundsReceived.
-        // Skip empty while we already know funds exist (failed fetch / indexer blip).
+        // Open / import / rematerialize: adopt live balance as baseline, never FundsReceived
+        // — except when opening a wallet that received while it was not selected
+        // (cross-wallet send / background receive). Then fall through so catch-up notifies.
         if (bal.total === 0 && (ack?.total ?? 0) > 0) {
           console.warn("[basic] persistBalance quiet ignore empty live", {
             ackTotal: ack?.total,
@@ -779,28 +780,46 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           setBalanceStatus("ready");
           return;
         }
-        lastAckRef.current = bal;
-        void writeLastAckBalance(networkId, walletId, bal);
-        prevBoardingRef.current = bal.boarding;
-        prevBalanceRef.current = bal;
-        balanceBaselineReadyRef.current = true;
-        setBalance(bal);
-        setBalanceStatus("ready");
-        await writeCachedBalance(networkId, walletId, bal);
-        if (quietImportSyncRef.current && bal.total > 0) {
-          quietImportSyncRef.current = false;
-          console.warn("[basic] quietImportSync off (balance settled)", bal.total);
-        }
-        // End open quiet only after restore finished, or earlier if we already
-        // have a positive live balance (cache miss → full wallet).
-        if (openSyncQuietRef.current && (bal.total > 0 || openRestoreDoneRef.current)) {
+
+        const catchUpSats =
+          ack && bal.total > ack.total + 1 ? bal.total - ack.total : 0;
+        const catchUpWhileAway =
+          catchUpSats > 0 &&
+          openSyncQuietRef.current &&
+          !quietImportSyncRef.current;
+
+        if (catchUpWhileAway) {
           openSyncQuietRef.current = false;
-          console.warn("[basic] openSyncQuiet off (first live)", {
-            total: bal.total,
-            restoreDone: openRestoreDoneRef.current,
+          console.warn("[basic] openSyncQuiet off (catch-up while away)", {
+            catchUpSats,
+            live: bal.total,
+            ackTotal: ack?.total ?? null,
           });
+          // Keep lastAck at the stored baseline; fall through to emit FundsReceived.
+        } else {
+          lastAckRef.current = bal;
+          void writeLastAckBalance(networkId, walletId, bal);
+          prevBoardingRef.current = bal.boarding;
+          prevBalanceRef.current = bal;
+          balanceBaselineReadyRef.current = true;
+          setBalance(bal);
+          setBalanceStatus("ready");
+          await writeCachedBalance(networkId, walletId, bal);
+          if (quietImportSyncRef.current && bal.total > 0) {
+            quietImportSyncRef.current = false;
+            console.warn("[basic] quietImportSync off (balance settled)", bal.total);
+          }
+          // End open quiet only after restore finished, or earlier if we already
+          // have a positive live balance (cache miss → full wallet).
+          if (openSyncQuietRef.current && (bal.total > 0 || openRestoreDoneRef.current)) {
+            openSyncQuietRef.current = false;
+            console.warn("[basic] openSyncQuiet off (first live)", {
+              total: bal.total,
+              restoreDone: openRestoreDoneRef.current,
+            });
+          }
+          return;
         }
-        return;
       }
 
       // Failed/empty live must not zero a positive ack — next real pull would
