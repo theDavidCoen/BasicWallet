@@ -67,6 +67,7 @@ import { loadLndHubCredentials, clearLndHubIfWallet } from "../lightning/lndhubC
 import { lndhubGetBalance } from "../lightning/lndhub";
 import { syncLightningHistory } from "../account/lightningActivity";
 import { scheduleAutoPrepare } from "../exit/autoPrepare";
+import { writeCachedArkAddress } from "./addressCache";
 import {
   readCachedBalance,
   readLastAckBalance,
@@ -596,11 +597,18 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     try {
       const addr = await withTimeout(w.getAddress(), 8_000, "getAddress");
       const forced = forcedArkAddressRef.current;
+      let display: string;
       if (forced && forced !== addr) {
         setArkAddress(forced);
+        display = forced;
       } else {
         forcedArkAddressRef.current = null;
         setArkAddress(addr);
+        display = addr;
+      }
+      const wid = selectedIdRef.current;
+      if (wid && display) {
+        void writeCachedArkAddress(getNetworkConfig().id, wid, display);
       }
     } catch {
       /* keep previous */
@@ -1502,6 +1510,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     if (!next) throw new Error("No address returned");
     forcedArkAddressRef.current = next;
     setArkAddress(next);
+    void writeCachedArkAddress(getNetworkConfig().id, walletId, next);
     setWallet(w);
     return next;
   }, [wallet]);

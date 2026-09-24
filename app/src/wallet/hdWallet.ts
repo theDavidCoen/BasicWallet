@@ -147,18 +147,19 @@ export type OpenWalletOpts = {
   runRestore?: boolean;
 };
 
-export async function openHdWalletFromKeystore(
+type CreateEngineOpts = {
+  /** When true, skip gap restore (peek / address-only). Default false for open path. */
+  runRestore?: boolean;
+};
+
+/**
+ * Build an HD Wallet engine without touching walletSingleton.
+ * Caller must dispose — never start notifyIncomingFunds on peek instances.
+ */
+async function createHdWalletEngine(
   walletId: string,
-  opts: OpenWalletOpts = {},
+  opts: CreateEngineOpts = {},
 ): Promise<BasicWallet> {
-  if (walletSingleton && openWalletId === walletId) {
-    if (opts.runRestore) await runWalletRestore(walletId, walletSingleton);
-    return walletSingleton;
-  }
-
-  // Close previous engine reference (GC); SQLite files stay on disk.
-  clearOpenWallet();
-
   const mnemonic = await loadMnemonicForCrypto(walletId);
   if (!mnemonic) {
     throw new Error("No mnemonic in Keystore for wallet");
@@ -204,14 +205,82 @@ export async function openHdWalletFromKeystore(
     "Wallet.create",
   );
 
-  walletSingleton = wallet;
-  openWalletId = walletId;
-
   if (opts.runRestore) {
     await runWalletRestore(walletId, wallet);
   }
 
   return wallet;
+}
+
+async function disposeWalletEngine(wallet: BasicWallet): Promise<void> {
+  const anyW = wallet as BasicWallet & {
+    dispose?: () => Promise<void> | void;
+    clear?: () => Promise<void> | void;
+  };
+  try {
+    if (typeof anyW.dispose === "function") {
+      await anyW.dispose();
+      return;
+    }
+    if (typeof anyW.clear === "function") {
+      await anyW.clear();
+    }
+  } catch (e) {
+    console.warn("[basic] wallet dispose failed", e);
+  }
+}
+
+export async function openHdWalletFromKeystore(
+  walletId: string,
+  opts: OpenWalletOpts = {},
+): Promise<BasicWallet> {
+  if (walletSingleton && openWalletId === walletId) {
+    if (opts.runRestore) await runWalletRestore(walletId, walletSingleton);
+    return walletSingleton;
+  }
+
+  // Close previous engine reference (GC); SQLite files stay on disk.
+  clearOpenWallet();
+
+  const wallet = await createHdWalletEngine(walletId, {
+    runRestore: opts.runRestore,
+  });
+
+  walletSingleton = wallet;
+  openWalletId = walletId;
+
+  return wallet;
+}
+
+const peekInflight = new Map<string, Promise<string>>();
+
+/**
+ * Ephemeral open of another registry wallet for getAddress only.
+ * Does not assign walletSingleton / selected engine. Always dispose in finally.
+ * No notifyIncomingFunds / waitFor* — address read only.
+ */
+export async function peekArkAddress(walletId: string): Promise<string> {
+  if (openWalletId === walletId && walletSingleton) {
+    return withTimeout(walletSingleton.getAddress(), 8_000, "peek.getAddress");
+  }
+
+  const inflight = peekInflight.get(walletId);
+  if (inflight) return inflight;
+
+  const p = (async () => {
+    let ephemeral: BasicWallet | null = null;
+    try {
+      // No restore — HD receive index already on disk; getAddress is enough.
+      ephemeral = await createHdWalletEngine(walletId, { runRestore: false });
+      return await withTimeout(ephemeral.getAddress(), 8_000, "peek.getAddress");
+    } finally {
+      if (ephemeral) await disposeWalletEngine(ephemeral);
+      peekInflight.delete(walletId);
+    }
+  })();
+
+  peekInflight.set(walletId, p);
+  return p;
 }
 
 export function runWalletRestore(

@@ -1,6 +1,6 @@
 import { useRoute } from "@react-navigation/native";
 import type { RouteProp } from "@react-navigation/native";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -28,11 +28,13 @@ import { loadLndHubCredentials } from "../lightning/lndhubCredentials";
 import { requireUserPresence } from "../security/userPresence";
 import { useSheets } from "../navigation/SheetHost";
 import { colors } from "../theme/colors";
-import type { BasicWallet } from "../wallet/hdWallet";
+import { readCachedArkAddress, writeCachedArkAddress } from "../wallet/addressCache";
+import { peekArkAddress, type BasicWallet } from "../wallet/hdWallet";
 import { useWallet } from "../wallet/WalletProvider";
 import { formatSatsLabel } from "../wallet/formatSats";
 import { ScanQrModal, extractLightningPayFromScan, extractArkAddressFromScan } from "./ScanQrModal";
 import { resolvePayIntent } from "../wallet/bip21Pay";
+import type { WalletRecord } from "../account/walletRegistry";
 
 /** Hard cap — SDK send often hangs after ASP already settled the payment. */
 const SEND_TIMEOUT_MS = 45_000;
@@ -348,6 +350,7 @@ export function SendScreen() {
     endOutboundSend,
     applyLocalSpend,
     selectedWallet,
+    wallets,
     bumpActivity,
   } = useWallet();
   const network = getNetworkConfig();
@@ -355,8 +358,17 @@ export function SendScreen() {
   const [amountStr, setAmountStr] = useState("");
   const [busy, setBusy] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
+  const [myWalletPeekId, setMyWalletPeekId] = useState<string | null>(null);
+  const [myWalletDestLabel, setMyWalletDestLabel] = useState<string | null>(null);
   const isLightning = selectedWallet?.kind === "lightning";
   const sendBlocked = !walletInteractive || balanceStatus === "loading";
+
+  const myArkadeWallets = useMemo(() => {
+    if (isLightning || !selectedWallet) return [] as WalletRecord[];
+    return wallets.filter(
+      (w) => w.kind === "arkade" && w.id !== selectedWallet.id,
+    );
+  }, [isLightning, selectedWallet, wallets]);
 
   useEffect(() => {
     const to = route.params?.to?.trim();
@@ -365,6 +377,7 @@ export function SendScreen() {
       const prefer = isLightning ? "lightning" : "arkade";
       const intent = resolvePayIntent(to, prefer);
       setAddress(intent?.destination ?? to);
+      setMyWalletDestLabel(null);
       if (intent?.amountSats != null) {
         setAmountStr(String(intent.amountSats));
       } else if (amt != null && amt > 0) {
@@ -430,6 +443,7 @@ export function SendScreen() {
   }, [isLightning, address]);
 
   function applyDestinationInput(text: string) {
+    setMyWalletDestLabel(null);
     const prefer = isLightning ? "lightning" : "arkade";
     const intent = resolvePayIntent(text, prefer);
     if (intent && (text.includes("?") || /^bitcoin:/i.test(text.trim()))) {
@@ -441,11 +455,40 @@ export function SendScreen() {
   }
 
   function applyScannedPay(value: string, raw?: string) {
+    setMyWalletDestLabel(null);
     const prefer = isLightning ? "lightning" : "arkade";
     const intent = resolvePayIntent(raw ?? value, prefer);
     setAddress(intent?.destination ?? value);
     if (intent?.amountSats != null) setAmountStr(String(intent.amountSats));
     setScanOpen(false);
+  }
+
+  async function pickMyWallet(dest: WalletRecord) {
+    if (myWalletPeekId) return;
+    setMyWalletPeekId(dest.id);
+    try {
+      const cached = await readCachedArkAddress(network.id, dest.id);
+      if (cached?.arkAddress && isValidArkAddress(cached.arkAddress)) {
+        setAddress(cached.arkAddress);
+        setMyWalletDestLabel(dest.label);
+        return;
+      }
+      const addr = await peekArkAddress(dest.id);
+      if (!isValidArkAddress(addr)) {
+        throw new Error("Invalid address from wallet");
+      }
+      await writeCachedArkAddress(network.id, dest.id, addr);
+      setAddress(addr);
+      setMyWalletDestLabel(dest.label);
+    } catch (e) {
+      console.warn("[basic] my-wallet destination failed", e);
+      Alert.alert(
+        "Address unavailable",
+        `Open “${dest.label}” once from Wallets to enable transfers.`,
+      );
+    } finally {
+      setMyWalletPeekId(null);
+    }
   }
 
   function fillMaxSend() {
@@ -927,6 +970,9 @@ export function SendScreen() {
           </Pressable>
         ) : null}
       </View>
+      {myWalletDestLabel ? (
+        <Text style={styles.myWalletHint}>My wallet · {myWalletDestLabel}</Text>
+      ) : null}
       <TextInput
         value={address}
         onChangeText={applyDestinationInput}
@@ -938,9 +984,38 @@ export function SendScreen() {
         style={[styles.input, styles.inputMulti]}
       />
 
+      {myArkadeWallets.length > 0 ? (
+        <View style={styles.myWallets}>
+          <Text style={styles.fieldLabel}>My wallets</Text>
+          {myArkadeWallets.map((w) => {
+            const peeking = myWalletPeekId === w.id;
+            const selected = myWalletDestLabel === w.label && !!address.trim();
+            return (
+              <Pressable
+                key={w.id}
+                style={[styles.myWalletRow, selected && styles.myWalletRowSelected]}
+                disabled={!!myWalletPeekId}
+                onPress={() => void pickMyWallet(w)}
+                accessibilityRole="button"
+                accessibilityLabel={`Send to ${w.label}`}
+              >
+                <Text style={styles.myWalletLabel} numberOfLines={1}>
+                  {w.label}
+                </Text>
+                {peeking ? (
+                  <ActivityIndicator color={colors.fg} size="small" />
+                ) : (
+                  <Text style={styles.myWalletAction}>Use</Text>
+                )}
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
+
       <Pressable
-        style={[styles.primary, (busy || sendBlocked) && { opacity: 0.6 }]}
-        disabled={busy || sendBlocked}
+        style={[styles.primary, (busy || sendBlocked || !!myWalletPeekId) && { opacity: 0.6 }]}
+        disabled={busy || sendBlocked || !!myWalletPeekId}
         onPress={() => void onSend()}
       >
         {busy ? (
@@ -1048,6 +1123,42 @@ const styles = StyleSheet.create({
     fontSize: 13,
     minHeight: 88,
     textAlignVertical: "top",
+  },
+  myWalletHint: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.caption,
+    marginBottom: 6,
+  },
+  myWallets: {
+    marginBottom: 8,
+    marginTop: -4,
+  },
+  myWalletRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 8,
+  },
+  myWalletRowSelected: {
+    borderColor: colors.fg,
+  },
+  myWalletLabel: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 14,
+    color: colors.fg,
+    flex: 1,
+    marginRight: 12,
+  },
+  myWalletAction: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.caption,
   },
   preview: {
     borderWidth: 1,
