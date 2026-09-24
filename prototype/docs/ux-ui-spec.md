@@ -190,9 +190,9 @@ Boards: `03` empty → ready → slide early/mid → success; `03f` scan; `08b` 
 | -------- | -------------------------------------------------------------------- |
 | Layout   | Balance shared-element to top; same size as Home                     |
 | Amount   | Sats entry + fiat rate line                                          |
-| To       | Label **To:**; actions Enter · Paste · My wallets (latter only if other Arkade wallets exist). Enter / My wallets open bottom sheets; Paste reads clipboard. Destination preview + Clear when set |
+| To       | Label **To:**; actions Enter · Paste · My wallets (if others) · Scan. Enter / My wallets open bottom sheets; Paste reads clipboard; Scan opens QR. Destination preview + Clear when set |
 | Slide    | Hidden until amount + recipient set; white fill grows while dragging |
-| QR       | Large bottom-center when empty; hidden while slide visible           |
+| QR       | Aligned in the To action row (not a bottom FAB) |
 | Fee      | Only when ready                                                      |
 | Hardware | When paired and required for the spend, slide hands off to device    |
 

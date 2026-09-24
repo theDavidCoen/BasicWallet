@@ -1175,6 +1175,20 @@ export function SendScreen() {
                 <Text style={styles.toActionLabel}>My wallets</Text>
               </Pressable>
             ) : null}
+            <Pressable
+              style={styles.toAction}
+              onPress={() => {
+                setPickerTarget("primary");
+                setScanOpen(true);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Scan QR"
+            >
+              <View style={styles.toActionIcon}>
+                <IconQr size={28} />
+              </View>
+              <Text style={styles.toActionLabel}>Scan</Text>
+            </Pressable>
           </View>
 
           {/* Extra recipients: compressed cards — Penpot 16b/16c */}
@@ -1247,25 +1261,6 @@ export function SendScreen() {
               </Text>
             )}
           </Pressable>
-
-          {!primaryHasDest ? (
-            <View style={styles.scanWrap}>
-              <Pressable
-                style={styles.scanFab}
-                onPress={() => {
-                  setPickerTarget("primary");
-                  setScanOpen(true);
-                }}
-                accessibilityRole="button"
-                accessibilityLabel="Scan QR"
-              >
-                <View style={styles.scanRing}>
-                  <IconQr size={30} />
-                </View>
-                <Text style={styles.scanLabel}>scan QR</Text>
-              </Pressable>
-            </View>
-          ) : null}
         </ScrollView>
 
         <ScanQrModal
