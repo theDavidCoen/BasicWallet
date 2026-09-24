@@ -1,6 +1,6 @@
 import { useRoute } from "@react-navigation/native";
 import type { RouteProp } from "@react-navigation/native";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -9,6 +9,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  type TextInput as TextInputType,
   View,
 } from "react-native";
 import * as Clipboard from "expo-clipboard";
@@ -453,6 +454,7 @@ export function SendScreen() {
   const [enterSheetOpen, setEnterSheetOpen] = useState(false);
   const [myWalletsSheetOpen, setMyWalletsSheetOpen] = useState(false);
   const [enterDraft, setEnterDraft] = useState("");
+  const enterInputRef = useRef<TextInputType>(null);
   const isLightning = selectedWallet?.kind === "lightning";
   const sendBlocked = !walletInteractive || balanceStatus === "loading";
 
@@ -464,6 +466,17 @@ export function SendScreen() {
   }, [isLightning, selectedWallet, wallets]);
 
   const showMyWalletsAction = myArkadeWallets.length > 0;
+
+  // Focus Enter field only after the sheet is open — never on Send mount
+  // (hidden TextInput + autoFocus was stealing the keyboard).
+  useEffect(() => {
+    if (!enterSheetOpen) {
+      enterInputRef.current?.blur();
+      return;
+    }
+    const t = setTimeout(() => enterInputRef.current?.focus(), 280);
+    return () => clearTimeout(t);
+  }, [enterSheetOpen]);
 
   useEffect(() => {
     const to = route.params?.to?.trim();
@@ -1196,11 +1209,11 @@ export function SendScreen() {
             Ark address now. Handles (Lightning Address, BIP353, Nostr) later.
           </Text>
           <TextInput
+            ref={enterInputRef}
             value={enterDraft}
             onChangeText={setEnterDraft}
             autoCapitalize="none"
             autoCorrect={false}
-            autoFocus
             placeholder="ark1…"
             placeholderTextColor={colors.hint}
             multiline
