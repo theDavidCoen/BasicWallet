@@ -3,7 +3,7 @@
  * Bump with package.json / app.json on release.
  */
 
-export const APP_VERSION = "0.5.0-alpha.3";
+export const APP_VERSION = "0.5.0-alpha.4";
 
 /**
  * Short commit for Settings → About.
