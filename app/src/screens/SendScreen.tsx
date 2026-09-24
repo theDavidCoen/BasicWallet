@@ -15,6 +15,7 @@ import {
 } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import Svg, { Path, Rect } from "react-native-svg";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { isBtcAddress, isValidArkAddress } from "@arkade-os/sdk";
 import type { RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
@@ -197,6 +198,7 @@ function confirmAmountBump(
 export function SendScreen() {
   const route = useRoute<RouteProp<RootStackParamList, "Send">>();
   const { openFundsSent } = useSheets();
+  const insets = useSafeAreaInsets();
   const {
     wallet,
     balance,
@@ -1278,10 +1280,19 @@ export function SendScreen() {
       <InteractiveBottomSheet
         open={addSheetOpen}
         onDismiss={closeAddRecipientSheet}
-        visibleFraction={0.55}
+        visibleFraction={0.62}
         avoidKeyboard
       >
-        <View style={styles.sheetBody}>
+        <ScrollView
+          style={styles.sheetScroll}
+          contentContainerStyle={[
+            styles.addSheetContent,
+            { paddingBottom: Math.max(insets.bottom, 16) + 20 },
+          ]}
+          keyboardShouldPersistTaps="handled"
+          nestedScrollEnabled
+          showsVerticalScrollIndicator={false}
+        >
           <Text style={styles.sheetTitle}>ADD RECIPIENT</Text>
           <Text style={styles.sheetCaption}>Same pickers as To:</Text>
 
@@ -1392,7 +1403,7 @@ export function SendScreen() {
           <Pressable onPress={closeAddRecipientSheet} hitSlop={8} style={{ marginTop: 14 }}>
             <Text style={[styles.sheetCaption, { marginBottom: 0 }]}>Cancel</Text>
           </Pressable>
-        </View>
+        </ScrollView>
       </InteractiveBottomSheet>
 
       <InteractiveBottomSheet
@@ -1699,6 +1710,10 @@ const styles = StyleSheet.create({
     paddingTop: 4,
     paddingBottom: 8,
     minHeight: 0,
+  },
+  addSheetContent: {
+    paddingTop: 4,
+    flexGrow: 1,
   },
   sheetTitle: {
     fontFamily: "JetBrainsMono_700Bold",
