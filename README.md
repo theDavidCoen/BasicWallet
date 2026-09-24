@@ -44,33 +44,12 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 - Collaborative offboard and unilateral exit related settings (escape hatches)
 - Set app PIN / biometrics gates for sensitive actions
 - Export recovery phrase only after presence checks (screen capture blocked where wired)
-- **Continue with passkey** — platform WebAuthn / Credential Manager **PRF** derives Personal seed + Nostr identity (see below)
+- Continue with passkey (WebAuthn / Credential Manager PRF → Personal seed + Nostr identity)
 - Manage a Nostr identity; Advanced Backup (Nostr relays and/or home server)
 - Maintain contacts (npub, NIP-05, BIP-353, etc.) and share a contact over Nostr
 - Prefer mainnet or Mutinynet (and optional custom ASP) from Settings
 
 Expect bugs, incomplete screens, and breaking changes between `0.x` alphas.
-
-### Passkey PRF — what we have vs hardening
-
-**PRF** (Pseudo-Random Function) is a WebAuthn extension: the authenticator (phone OS / password manager) derives secret bytes from the passkey + an app salt, without exposing the passkey itself. Basic uses that 32-byte output as the wallet root.
-
-**What works today (Android focus):**
-
-- `react-native-passkeys` against Android Credential Manager (and iOS where PRF exists)
-- Fixed public salt `basic.wallet.passkey.prf.v1` → 256-bit root
-- Root → Personal BIP39 mnemonic; same root → deterministic Nostr nsec (`HKDF …nostr.sk.v1`)
-- Indexed child wallets from the same root; rematerialize on **Continue with passkey**
-- Relying party `basic.davidcoen.it` with Digital Asset Links (release + debug certs) — see [`docs/passkey-assetlinks.md`](./docs/passkey-assetlinks.md)
-- Discoverable get preferred after wipe so the OS picker avoids a silent wrong wallet
-- Needs a device/OS that actually returns PRF (practically Android 14+ / recent iOS); otherwise Basic falls back to other create/restore paths
-
-**What “PRF hardening” still means (wishlist):**
-
-- Treat PRF as the **only** default onboarding entropy on supported devices (less `__DEV__` / CSPRNG dual-path confusion)
-- Stronger handling when PRF is missing (clear UX, no accidental new passkey)
-- Broader device matrix, iOS parity, and fewer edge cases around credential id vs discoverable credentials
-- Ongoing review that PRF bytes never hit logs/UI and that rpId / assetlinks stay aligned with signing keys
 
 ## Repository layout
 
