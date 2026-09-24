@@ -13,7 +13,6 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { filterContacts } from "../../contacts/contactSearch";
 import { shareContactToRecipient } from "../../contacts/contactShare";
 import { listContacts } from "../../contacts/contactStore";
@@ -55,7 +54,6 @@ export function ShareContactSheet({
   onDismiss: () => void;
   contact: Contact;
 }) {
-  const insets = useSafeAreaInsets();
   const [query, setQuery] = useState("");
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -146,8 +144,6 @@ export function ShareContactSheet({
   }
 
   const canSend = !!recipientRaw.trim() && !busy;
-  // InteractiveBottomSheet already pads for the system nav; keep a small gap only.
-  const footerPad = Math.max(8, Math.min(insets.bottom, 12));
 
   return (
     <InteractiveBottomSheet
@@ -223,7 +219,7 @@ export function ShareContactSheet({
           />
         </ScrollView>
 
-        <View style={[styles.footer, { paddingBottom: footerPad }]}>
+        <View style={styles.footer}>
           <Pressable
             style={[sheetUi.primaryBtn, { marginTop: 0 }, !canSend && { opacity: 0.5 }]}
             disabled={!canSend}
@@ -270,6 +266,7 @@ const styles = StyleSheet.create({
   },
   footer: {
     paddingTop: 8,
+    paddingBottom: 4,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
   },

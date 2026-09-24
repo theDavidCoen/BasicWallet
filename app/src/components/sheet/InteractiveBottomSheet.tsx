@@ -152,7 +152,15 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
       };
     }, [avoidKeyboard, open]);
 
-    const bottomPad = Math.max(insets.bottom, Platform.OS === "android" ? 28 : 12);
+    // Edge-to-edge: system nav overlays the bottom of the window. Sheet height
+    // must end at the screen bottom; paddingBottom clears the overlay. (Previously
+    // we added bottomPad to height AND used the same value as padding, which left
+    // content flush with the screen edge — under the nav bar.)
+    const bottomPad = Math.max(
+      insets.bottom,
+      initialWindowMetrics?.insets.bottom ?? 0,
+      Platform.OS === "android" ? 48 : 12,
+    );
     const kb = avoidKeyboard && open ? keyboardHeight : 0;
     const maxVisibleH = windowHeight * clampedVisible;
 
@@ -171,7 +179,7 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
         translateForVisibleFraction(windowHeight, clampedVisible),
         insets.top + 12,
       );
-      sheetHeight = windowHeight - resolvedOpenY + bottomPad;
+      sheetHeight = windowHeight - resolvedOpenY;
       sheetPaddingBottom = bottomPad;
     }
 
