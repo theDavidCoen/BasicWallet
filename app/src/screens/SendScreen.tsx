@@ -946,6 +946,7 @@ export function SendScreen() {
           selectedWallet?.id ?? "",
           paymentSum,
           primaryAddr,
+          working,
         );
         const prevAvailable = balance?.available ?? null;
         const walletId = selectedWallet?.id;

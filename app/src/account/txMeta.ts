@@ -9,6 +9,11 @@
 import type { ArkadeNetworkId } from "../config/network";
 import { deviceSendLabel } from "../util/deviceSendLabel";
 import { getAccountDb } from "./accountDb";
+import {
+  rememberPendingSendDestinations,
+  rememberSendRecipients,
+  takePendingSendDestinations,
+} from "./sendDestinations";
 
 export type TxMeta = {
   walletId: string;
@@ -176,6 +181,7 @@ type PendingSendStamp = {
   walletId: string;
   amountSats: number;
   address?: string;
+  recipients?: Array<{ address: string; amount: number }>;
   label: string;
   at: number;
 };
@@ -192,29 +198,77 @@ function prunePendingSends(now = Date.now()): void {
 
 /**
  * Call right before wallet.send — survives hung send promises so rematerialize
- * can still attach “Sent with …” to the outbound activity row.
+ * can still attach “Sent with …” and destinations to the outbound activity row.
  */
 export function notePendingSendFromThisDevice(
   networkId: ArkadeNetworkId,
   walletId: string,
   amountSats: number,
   address?: string,
+  recipients?: Array<{ address: string; amount: number }>,
 ): void {
   const label = deviceSendLabel().trim();
   if (!label || !walletId || !(amountSats > 0)) return;
   prunePendingSends();
+  const abs = Math.abs(amountSats);
+  const dests =
+    recipients && recipients.length > 0
+      ? recipients
+      : address?.trim()
+        ? [{ address: address.trim(), amount: abs }]
+        : [];
   pendingSends.push({
     networkId,
     walletId,
-    amountSats: Math.abs(amountSats),
-    address: address?.trim() || undefined,
+    amountSats: abs,
+    address: address?.trim() || dests[0]?.address,
+    recipients: dests.length > 0 ? dests : undefined,
     label,
     at: Date.now(),
   });
+  if (dests.length > 0) {
+    rememberPendingSendDestinations(networkId, walletId, abs, dests);
+  }
   console.warn("[basic] pendingSend stamp", {
     walletId: walletId.slice(0, 8),
-    amountSats: Math.abs(amountSats),
+    amountSats: abs,
+    nDest: dests.length,
   });
+}
+
+function attachPendingDestinations(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+  row: {
+    id: string;
+    amount: number;
+    txs: Array<{
+      arkTxid?: string;
+      boardingTxid?: string;
+      commitmentTxid?: string;
+    }>;
+  },
+  pending?: PendingSendStamp,
+): void {
+  const abs = Math.abs(row.amount);
+  const list =
+    (pending?.recipients && pending.recipients.length > 0
+      ? pending.recipients
+      : null) ??
+    (pending?.address
+      ? [{ address: pending.address, amount: abs }]
+      : null) ??
+    takePendingSendDestinations(networkId, walletId, abs);
+  if (!list || list.length === 0) return;
+  const related = [
+    row.id,
+    ...row.txs.map((t) => t.arkTxid),
+    ...row.txs.map((t) => t.boardingTxid),
+    ...row.txs.map((t) => t.commitmentTxid),
+  ].filter((s): s is string => !!s && s.trim().length > 0);
+  for (const id of related) {
+    rememberSendRecipients(networkId, walletId, id, list);
+  }
 }
 
 /**
@@ -247,30 +301,25 @@ export function applyPendingSendStamps(
       ...row.txs.map((t) => t.commitmentTxid),
     ].filter((s): s is string => !!s && s.trim().length > 0);
 
-    // Already have meta under activity id or a related txid → migrate onto row.id.
-    const existing = resolveSentWithForActivity(networkId, walletId, row.id, related);
-    if (existing) {
-      for (let i = pendingSends.length - 1; i >= 0; i--) {
-        const p = pendingSends[i];
-        if (
-          p.networkId === networkId &&
-          p.walletId === walletId &&
-          p.amountSats === abs
-        ) {
-          pendingSends.splice(i, 1);
-        }
-      }
-      continue;
-    }
-
     const pendingIdx = pendingSends.findIndex(
       (p) =>
         p.networkId === networkId &&
         p.walletId === walletId &&
         p.amountSats === abs,
     );
-    if (pendingIdx < 0) continue;
-    const pending = pendingSends[pendingIdx];
+    const pending = pendingIdx >= 0 ? pendingSends[pendingIdx] : undefined;
+
+    // Destinations first — even when sent_with already exists.
+    attachPendingDestinations(networkId, walletId, row, pending);
+
+    // Already have meta under activity id or a related txid → migrate onto row.id.
+    const existing = resolveSentWithForActivity(networkId, walletId, row.id, related);
+    if (existing) {
+      if (pendingIdx >= 0) pendingSends.splice(pendingIdx, 1);
+      continue;
+    }
+
+    if (pendingIdx < 0 || !pending) continue;
     setTxMeta(networkId, walletId, row.id, { sentWith: pending.label });
     for (const id of related) {
       if (id !== row.id) setTxMeta(networkId, walletId, id, { sentWith: pending.label });

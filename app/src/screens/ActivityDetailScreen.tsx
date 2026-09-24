@@ -15,7 +15,6 @@ import { CommonActions, useNavigation, useRoute, type RouteProp } from "@react-n
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   getStoredActivity,
-  looksLikePaymentAddress,
   recordUnilateralExitActivity,
   resolveActivityRecipients,
   type StoredActivity,
@@ -504,23 +503,21 @@ export function ActivityDetailView({
     : "";
   const toRecipients: SendRecipientSnapshot[] = useMemo(() => {
     if (!row || !walletId) return [];
-    // Outbound always; inbound only when this device remembered the multi-send destinations
-    // (same txid — e.g. sent to own wallet as one of N recipients).
     const list = resolveActivityRecipients(network.id, walletId, row);
     if (isSend) return list;
+    // Inbound: only show when this device recorded a multi-send for the same txid.
     return list.length > 1 ? list : [];
   }, [row, walletId, network.id, isSend]);
   const singleToAddress =
     toRecipients.length === 1
       ? toRecipients[0]!.address
-      : row && isSend && looksLikePaymentAddress(row.subtitle ?? "")
-        ? row.subtitle.trim()
-        : "";
-  const toDisplay = singleToAddress
-    ? midEllipsis(singleToAddress, 10, 8)
-    : toRecipients.length > 1
+      : "";
+  const toDisplay =
+    toRecipients.length > 1
       ? ""
-      : "—";
+      : singleToAddress
+        ? midEllipsis(singleToAddress, 10, 8)
+        : "—";
   const toCopy =
     toRecipients.length > 1
       ? toRecipients.map((r) => r.address).join("\n")
