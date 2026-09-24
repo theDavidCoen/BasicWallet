@@ -28,6 +28,7 @@ import {
   publishLabelDirectory,
   queuePublishLabelDirectory,
 } from "../nostr/labelDirectory";
+import { queueContactsDirectoryBootSync } from "../contacts/contactsNostrSync";
 import { mnemonicFromEntropy } from "../onboarding/mnemonicFromEntropy";
 import { combineCsprngWithMotion } from "../onboarding/motionEntropy";
 import { isPresencePromptInFlight } from "../security/presencePrompt";
@@ -2236,6 +2237,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (ready && !hasWallet) setSessionLive(true);
   }, [ready, hasWallet]);
+
+  // Encrypted contacts directory (Nostr) — independent of Path C backup enable.
+  useEffect(() => {
+    if (sessionPhase !== "live") return;
+    queueContactsDirectoryBootSync();
+  }, [sessionPhase]);
 
   // Debounced background exit package when recovery address is set.
   useEffect(() => {

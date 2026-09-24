@@ -121,6 +121,44 @@ function migrate(database: SQLite.SQLiteDatabase): void {
       value TEXT NOT NULL
     );
   `);
+
+  // Private contacts directory (account-scoped; app uses mainnet DB as canonical).
+  database.execSync(`
+    CREATE TABLE IF NOT EXISTS contacts (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      note TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+  database.execSync(`
+    CREATE TABLE IF NOT EXISTS contact_identifiers (
+      id TEXT PRIMARY KEY NOT NULL,
+      contact_id TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      value TEXT NOT NULL,
+      label TEXT,
+      custom_kind_label TEXT,
+      last_resolved_json TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+  database.execSync(`
+    CREATE TABLE IF NOT EXISTS contact_fields (
+      id TEXT PRIMARY KEY NOT NULL,
+      contact_id TEXT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+      key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+  database.execSync(
+    `CREATE INDEX IF NOT EXISTS idx_contact_idents_value ON contact_identifiers (value);`,
+  );
+  database.execSync(
+    `CREATE INDEX IF NOT EXISTS idx_contact_idents_contact ON contact_identifiers (contact_id);`,
+  );
 }
 
 export function accountKvGet(networkId: ArkadeNetworkId, key: string): string | null {

@@ -16,6 +16,7 @@ export function FundsSentView({
   recipientCount,
   rail = "arkade",
   onViewActivity,
+  onSaveToContacts,
   onDone,
 }: {
   amount: number;
@@ -25,6 +26,7 @@ export function FundsSentView({
   recipientCount?: number;
   rail?: FundsSentRail;
   onViewActivity: () => void;
+  onSaveToContacts?: () => void;
   onDone: () => void;
 }) {
   const caption =
@@ -57,6 +59,17 @@ export function FundsSentView({
       >
         <Text style={styles.primaryText}>View details</Text>
       </Pressable>
+      {onSaveToContacts && address ? (
+        <Pressable
+          style={styles.secondary}
+          onPress={onSaveToContacts}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Save to contacts"
+        >
+          <Text style={styles.secondaryText}>Save to contacts</Text>
+        </Pressable>
+      ) : null}
       <Pressable
         style={styles.secondary}
         onPress={onDone}

@@ -11,6 +11,7 @@ import * as SecureStore from "expo-secure-store";
 import { listWallets } from "../account/walletRegistry";
 import { getAccountDb } from "../account/accountDb";
 import { getNetworkConfig, type ArkadeNetworkId } from "../config/network";
+import { wipeContactsTables } from "../contacts/contactStore";
 import { clearNostrIdentity } from "../nostr/identityStore";
 import { deleteMnemonic, hasLegacyMnemonic } from "../security/mnemonicStore";
 import { clearExitPackage, clearAllExitPackages } from "../exit/packageStore";
@@ -52,6 +53,16 @@ function wipeAccountTables(networkId: ArkadeNetworkId): void {
     db.execSync(`DELETE FROM activity_fts;`);
   } catch {
     /* fts may be missing */
+  }
+  try {
+    db.execSync(`DELETE FROM contact_identifiers;`);
+    db.execSync(`DELETE FROM contact_fields;`);
+    db.execSync(`DELETE FROM contacts;`);
+  } catch {
+    /* contacts tables may be missing on older DBs */
+  }
+  if (networkId === "mainnet") {
+    wipeContactsTables();
   }
 }
 

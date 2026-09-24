@@ -33,6 +33,8 @@ import { HomeServerBackupScreen } from "../screens/HomeServerBackupScreen";
 import { RestoreWalletScreen } from "../screens/RestoreWalletScreen";
 import { NostrIdentityScreen } from "../screens/NostrIdentityScreen";
 import { ArchivedWalletsScreen } from "../screens/ArchivedWalletsScreen";
+import { ContactsListScreen } from "../screens/ContactsListScreen";
+import { ContactEditScreen } from "../screens/ContactEditScreen";
 import { ExportNsecWarningScreen } from "../screens/ExportNsecWarningScreen";
 import { ExportNsecRevealScreen } from "../screens/ExportNsecRevealScreen";
 import { GenerateIdentityWarningScreen } from "../screens/GenerateIdentityWarningScreen";
@@ -131,6 +133,8 @@ export function RootNavigator() {
             <Stack.Screen name="ExportRecoveryPhrase" component={ExportRecoveryPhraseScreen} />
             <Stack.Screen name="NostrIdentity" component={NostrIdentityScreen} />
             <Stack.Screen name="ArchivedWallets" component={ArchivedWalletsScreen} />
+            <Stack.Screen name="Contacts" component={ContactsListScreen} />
+            <Stack.Screen name="ContactEdit" component={ContactEditScreen} />
             <Stack.Screen name="ExportNsecWarning" component={ExportNsecWarningScreen} />
             <Stack.Screen name="ExportNsecReveal" component={ExportNsecRevealScreen} />
             <Stack.Screen name="GenerateIdentityWarning" component={GenerateIdentityWarningScreen} />
