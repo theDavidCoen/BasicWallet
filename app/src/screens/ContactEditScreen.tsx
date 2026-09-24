@@ -1,5 +1,6 @@
 /**
- * Add / edit contact (Penpot 08c / 08e) — multi identifiers, custom fields, type dropdown.
+ * Add / edit contact — name/username required; surname, custom fields, note, identifiers optional.
+ * Type uses an inline scrollable dropdown (not a nested bottom sheet).
  */
 
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
@@ -7,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -16,7 +18,6 @@ import {
 } from "react-native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
-import { InteractiveBottomSheet } from "../components/sheet/InteractiveBottomSheet";
 import {
   createContactDraft,
   createEmptyField,
@@ -31,6 +32,7 @@ import type { Contact, ContactField, ContactIdentifier, IdentifierKind } from ".
 import {
   IDENTIFIER_KIND_LABELS,
   IDENTIFIER_KIND_ORDER,
+  contactInitials,
   kindPillLabel,
 } from "../contacts/types";
 import { colors } from "../theme/colors";
@@ -54,10 +56,7 @@ export function ContactEditScreen() {
   }, [contactId]);
 
   const title = isNew ? "ADD CONTACT" : "EDIT CONTACT";
-  const initial = useMemo(() => {
-    const t = draft.name.trim();
-    return t ? t[0]!.toUpperCase() : "?";
-  }, [draft.name]);
+  const initials = useMemo(() => contactInitials(draft), [draft.name, draft.surname]);
 
   function patchIdent(id: string, patch: Partial<ContactIdentifier>) {
     setDraft((d) => ({
@@ -140,7 +139,7 @@ export function ContactEditScreen() {
     <ScreenChrome logoScale={0.77}>
       <Text style={ui.title}>{title}</Text>
       <View style={styles.avatar}>
-        <Text style={styles.avatarText}>{initial}</Text>
+        <Text style={styles.avatarText}>{initials}</Text>
       </View>
 
       <ScrollView
@@ -148,7 +147,7 @@ export function ContactEditScreen() {
         contentContainerStyle={{ paddingBottom: 40 }}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.label}>name</Text>
+        <Text style={styles.label}>name or username</Text>
         <TextInput
           value={draft.name}
           onChangeText={(name) => setDraft((d) => ({ ...d, name }))}
@@ -156,6 +155,59 @@ export function ContactEditScreen() {
           placeholderTextColor={colors.hint}
           style={styles.input}
         />
+
+        <Text style={styles.label}>surname</Text>
+        <TextInput
+          value={draft.surname ?? ""}
+          onChangeText={(surname) => setDraft((d) => ({ ...d, surname }))}
+          placeholder="Optional"
+          placeholderTextColor={colors.hint}
+          style={styles.input}
+        />
+
+        <Text style={styles.section}>Custom fields</Text>
+        {draft.fields.map((field) => (
+          <View key={field.id} style={styles.card}>
+            <View style={styles.cardHead}>
+              <Text style={styles.cardTitle}>Field</Text>
+              <Pressable
+                onPress={() =>
+                  setDraft((d) => ({
+                    ...d,
+                    fields: d.fields.filter((f) => f.id !== field.id),
+                  }))
+                }
+              >
+                <Text style={styles.linkDanger}>Remove</Text>
+              </Pressable>
+            </View>
+            <TextInput
+              value={field.key}
+              onChangeText={(key) => patchField(field.id, { key })}
+              placeholder="Key"
+              placeholderTextColor={colors.hint}
+              style={styles.input}
+            />
+            <TextInput
+              value={field.value}
+              onChangeText={(value) => patchField(field.id, { value })}
+              placeholder="Value"
+              placeholderTextColor={colors.hint}
+              style={styles.input}
+            />
+          </View>
+        ))}
+        <Pressable
+          style={styles.secondary}
+          onPress={() =>
+            setDraft((d) => ({
+              ...d,
+              fields: [...d.fields, createEmptyField()],
+            }))
+          }
+        >
+          <Text style={styles.secondaryText}>+ Add field</Text>
+        </Pressable>
 
         <Text style={styles.label}>note</Text>
         <TextInput
@@ -172,22 +224,25 @@ export function ContactEditScreen() {
           <View key={ident.id} style={styles.card}>
             <View style={styles.cardHead}>
               <Text style={styles.cardTitle}>#{idx + 1}</Text>
-              {draft.identifiers.length > 1 ? (
-                <Pressable
-                  onPress={() =>
-                    setDraft((d) => ({
-                      ...d,
-                      identifiers: d.identifiers.filter((i) => i.id !== ident.id),
-                    }))
-                  }
-                >
-                  <Text style={styles.linkDanger}>Remove</Text>
-                </Pressable>
-              ) : null}
+              <Pressable
+                onPress={() =>
+                  setDraft((d) => ({
+                    ...d,
+                    identifiers: d.identifiers.filter((i) => i.id !== ident.id),
+                  }))
+                }
+              >
+                <Text style={styles.linkDanger}>Remove</Text>
+              </Pressable>
             </View>
 
             <Text style={styles.label}>type</Text>
-            <Pressable style={styles.dropdown} onPress={() => setKindPickerFor(ident.id)}>
+            <Pressable
+              style={styles.dropdown}
+              onPress={() => setKindPickerFor(ident.id)}
+              accessibilityRole="button"
+              accessibilityLabel="Choose identifier type"
+            >
               <Text style={styles.dropdownText}>{kindPillLabel(ident)}</Text>
               <Text style={styles.dropdownChevron}>▾</Text>
             </Pressable>
@@ -263,52 +318,11 @@ export function ContactEditScreen() {
           <Text style={styles.secondaryText}>+ Add identifier</Text>
         </Pressable>
 
-        <Text style={styles.section}>Custom fields</Text>
-        {draft.fields.map((field) => (
-          <View key={field.id} style={styles.card}>
-            <View style={styles.cardHead}>
-              <Text style={styles.cardTitle}>Field</Text>
-              <Pressable
-                onPress={() =>
-                  setDraft((d) => ({
-                    ...d,
-                    fields: d.fields.filter((f) => f.id !== field.id),
-                  }))
-                }
-              >
-                <Text style={styles.linkDanger}>Remove</Text>
-              </Pressable>
-            </View>
-            <TextInput
-              value={field.key}
-              onChangeText={(key) => patchField(field.id, { key })}
-              placeholder="Key"
-              placeholderTextColor={colors.hint}
-              style={styles.input}
-            />
-            <TextInput
-              value={field.value}
-              onChangeText={(value) => patchField(field.id, { value })}
-              placeholder="Value"
-              placeholderTextColor={colors.hint}
-              style={styles.input}
-            />
-          </View>
-        ))}
-
         <Pressable
-          style={styles.secondary}
-          onPress={() =>
-            setDraft((d) => ({
-              ...d,
-              fields: [...d.fields, createEmptyField()],
-            }))
-          }
+          style={[styles.primary, !draft.name.trim() && { opacity: 0.5 }]}
+          disabled={!draft.name.trim()}
+          onPress={onSave}
         >
-          <Text style={styles.secondaryText}>+ Add field</Text>
-        </Pressable>
-
-        <Pressable style={styles.primary} onPress={onSave}>
           <Text style={styles.primaryText}>Save</Text>
         </Pressable>
 
@@ -319,27 +333,39 @@ export function ContactEditScreen() {
         ) : null}
       </ScrollView>
 
-      <InteractiveBottomSheet
-        open={!!picking}
-        onDismiss={() => setKindPickerFor(null)}
-        visibleFraction={0.55}
+      {/* Root-level modal dropdown — scrollable, not nested in the card sheet */}
+      <Modal
+        visible={!!picking}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setKindPickerFor(null)}
       >
-        <View style={styles.sheetBody}>
-          <Text style={styles.sheetTitle}>TYPE</Text>
-          {IDENTIFIER_KIND_ORDER.map((k) => (
-            <Pressable
-              key={k}
-              style={[styles.kindRow, picking?.kind === k && styles.kindRowOn]}
-              onPress={() => {
-                if (picking) patchIdent(picking.id, { kind: k });
-                setKindPickerFor(null);
-              }}
+        <Pressable style={styles.modalBackdrop} onPress={() => setKindPickerFor(null)}>
+          <Pressable style={styles.dropdownPanel} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.sheetTitle}>TYPE</Text>
+            <ScrollView
+              style={styles.dropdownScroll}
+              contentContainerStyle={{ paddingBottom: 8 }}
+              nestedScrollEnabled
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
             >
-              <Text style={styles.kindRowText}>{IDENTIFIER_KIND_LABELS[k]}</Text>
-            </Pressable>
-          ))}
-        </View>
-      </InteractiveBottomSheet>
+              {IDENTIFIER_KIND_ORDER.map((k) => (
+                <Pressable
+                  key={k}
+                  style={[styles.kindRow, picking?.kind === k && styles.kindRowOn]}
+                  onPress={() => {
+                    if (picking) patchIdent(picking.id, { kind: k });
+                    setKindPickerFor(null);
+                  }}
+                >
+                  <Text style={styles.kindRowText}>{IDENTIFIER_KIND_LABELS[k]}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </ScreenChrome>
   );
 }
@@ -379,7 +405,7 @@ const styles = StyleSheet.create({
   },
   avatarText: {
     fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 22,
+    fontSize: 18,
     color: colors.fg,
   },
   scroll: { flex: 1 },
@@ -444,6 +470,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    backgroundColor: "#111",
   },
   dropdownText: {
     fontFamily: "JetBrainsMono_400Regular",
@@ -512,9 +539,23 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.caption,
   },
-  sheetBody: {
-    paddingHorizontal: 20,
-    paddingBottom: 16,
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "center",
+    paddingHorizontal: 28,
+  },
+  dropdownPanel: {
+    backgroundColor: colors.bg,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingTop: 16,
+    paddingHorizontal: 14,
+    maxHeight: "70%",
+  },
+  dropdownScroll: {
+    maxHeight: 360,
   },
   sheetTitle: {
     fontFamily: "JetBrainsMono_700Bold",
@@ -533,6 +574,7 @@ const styles = StyleSheet.create({
   },
   kindRowOn: {
     borderColor: colors.fg,
+    backgroundColor: "#1A1A1A",
   },
   kindRowText: {
     fontFamily: "JetBrainsMono_400Regular",

@@ -38,6 +38,7 @@ export type ContactField = {
 export type Contact = {
   id: string;
   name: string;
+  surname?: string;
   note?: string;
   identifiers: ContactIdentifier[];
   fields: ContactField[];
@@ -103,4 +104,21 @@ export function primaryIdentifier(contact: Contact): ContactIdentifier | null {
 export function midEllipsis(s: string, left = 10, right = 6): string {
   if (s.length <= left + right + 1) return s;
   return `${s.slice(0, left)}…${s.slice(-right)}`;
+}
+
+/** Display name: "Name Surname" or just name/username. */
+export function contactDisplayName(contact: Pick<Contact, "name" | "surname">): string {
+  const n = contact.name.trim();
+  const s = contact.surname?.trim() ?? "";
+  return s ? `${n} ${s}` : n;
+}
+
+/** Avatar initials from name + surname (1–2 letters). */
+export function contactInitials(contact: Pick<Contact, "name" | "surname">): string {
+  const n = contact.name.trim();
+  const s = contact.surname?.trim() ?? "";
+  const a = n ? n[0]!.toUpperCase() : "";
+  const b = s ? s[0]!.toUpperCase() : "";
+  const out = `${a}${b}`;
+  return out || "?";
 }

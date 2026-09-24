@@ -8,6 +8,7 @@ export function contactMatchesQuery(contact: Contact, query: string): boolean {
   const q = fold(query);
   if (!q) return true;
   if (fold(contact.name).includes(q)) return true;
+  if (contact.surname && fold(contact.surname).includes(q)) return true;
   if (contact.note && fold(contact.note).includes(q)) return true;
   for (const id of contact.identifiers) {
     if (fold(id.value).includes(q)) return true;

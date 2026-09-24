@@ -315,9 +315,9 @@ Passkey export / device status remains under Backup / Privacy flows (`05h`), not
 ### Contacts (`08`, search, add, edit)
 
 - Private directory only — **no** OS contacts permission.
-- Contact = **name** + optional note + **N identifiers** + optional **custom fields**.
-- Identifier **type** is a dropdown: Ark · On-chain · LN Address · BIP 353 · LNURL · npub · NIP-05 · Custom.
-- Encrypted in account SQLCipher; **always-on Nostr sync** (NIP-44 self-encrypt, kind 30078, opaque `d`) even when Path C / Nostr Backup is disabled (needs Nostr identity only).
+- Contact = **name or username** (required) + optional **surname** + optional note + **N identifiers** + optional **custom fields**.
+- Identifier **type** is a dropdown (scrollable modal): Ark · On-chain · LN Address · BIP 353 · LNURL · npub · NIP-05 · Custom.
+- Encrypted in account SQLCipher; **always-on Nostr sync** (NIP-44 self-encrypt, kind 30078, opaque `d`) even when Path C / Nostr Backup is disabled (needs Nostr identity only). Also embedded in Path C AEAD package when backup is enabled.
 - Resolve **NIP-05** and **BIP353** on verify / Send pick; incompatible or non-payable results show an explicit message.
 - Send → **Enter** sheet: paste + search + scrollable contacts (multi-id → pick identifier).
 - **Save to contacts** after successful Send and after paste / Enter confirm.

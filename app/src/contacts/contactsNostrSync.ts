@@ -64,32 +64,33 @@ function decryptPayload(sk: Uint8Array, pubkey: string, content: string): Contac
 function sanitizeContact(raw: unknown): Contact | null {
   if (!raw || typeof raw !== "object") return null;
   const c = raw as Partial<Contact>;
-  if (typeof c.id !== "string" || typeof c.name !== "string") return null;
-  if (!Array.isArray(c.identifiers) || c.identifiers.length < 1) return null;
+  if (typeof c.id !== "string" || typeof c.name !== "string" || !c.name.trim()) return null;
   const identifiers: ContactIdentifier[] = [];
-  for (const id of c.identifiers) {
-    if (!id || typeof id !== "object") continue;
-    const i = id as Partial<ContactIdentifier>;
-    if (typeof i.id !== "string" || typeof i.kind !== "string" || typeof i.value !== "string") {
-      continue;
+  if (Array.isArray(c.identifiers)) {
+    for (const id of c.identifiers) {
+      if (!id || typeof id !== "object") continue;
+      const i = id as Partial<ContactIdentifier>;
+      if (typeof i.id !== "string" || typeof i.kind !== "string" || typeof i.value !== "string") {
+        continue;
+      }
+      if (!i.value.trim()) continue;
+      identifiers.push({
+        id: i.id,
+        kind: i.kind as IdentifierKind,
+        value: i.value,
+        label: typeof i.label === "string" ? i.label : undefined,
+        customKindLabel: typeof i.customKindLabel === "string" ? i.customKindLabel : undefined,
+        lastResolved:
+          i.lastResolved &&
+          typeof i.lastResolved === "object" &&
+          typeof i.lastResolved.at === "number" &&
+          typeof i.lastResolved.kind === "string" &&
+          typeof i.lastResolved.value === "string"
+            ? i.lastResolved
+            : undefined,
+      });
     }
-    identifiers.push({
-      id: i.id,
-      kind: i.kind as IdentifierKind,
-      value: i.value,
-      label: typeof i.label === "string" ? i.label : undefined,
-      customKindLabel: typeof i.customKindLabel === "string" ? i.customKindLabel : undefined,
-      lastResolved:
-        i.lastResolved &&
-        typeof i.lastResolved === "object" &&
-        typeof i.lastResolved.at === "number" &&
-        typeof i.lastResolved.kind === "string" &&
-        typeof i.lastResolved.value === "string"
-          ? i.lastResolved
-          : undefined,
-    });
   }
-  if (!identifiers.length) return null;
   const fields: ContactField[] = [];
   if (Array.isArray(c.fields)) {
     for (const f of c.fields) {
@@ -104,6 +105,7 @@ function sanitizeContact(raw: unknown): Contact | null {
   return {
     id: c.id,
     name: c.name,
+    surname: typeof c.surname === "string" ? c.surname : undefined,
     note: typeof c.note === "string" ? c.note : undefined,
     identifiers,
     fields,

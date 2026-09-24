@@ -29,6 +29,7 @@ function db() {
 type ContactRow = {
   id: string;
   name: string;
+  surname: string | null;
   note: string | null;
   created_at: number;
   updated_at: number;
@@ -74,6 +75,7 @@ function rowToContact(
   return {
     id: row.id,
     name: row.name,
+    surname: row.surname?.trim() ? row.surname : undefined,
     note: row.note?.trim() ? row.note : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -100,7 +102,7 @@ function rowToContact(
 function loadContact(id: string): Contact | null {
   const database = db();
   const row = database.getFirstSync<ContactRow>(
-    `SELECT id, name, note, created_at, updated_at FROM contacts WHERE id = ?`,
+    `SELECT id, name, surname, note, created_at, updated_at FROM contacts WHERE id = ?`,
     [id],
   );
   if (!row) return null;
@@ -118,7 +120,7 @@ function loadContact(id: string): Contact | null {
 export function listContacts(): Contact[] {
   const database = db();
   const rows = database.getAllSync<ContactRow>(
-    `SELECT id, name, note, created_at, updated_at FROM contacts ORDER BY name COLLATE NOCASE ASC`,
+    `SELECT id, name, surname, note, created_at, updated_at FROM contacts ORDER BY name COLLATE NOCASE ASC`,
   );
   return rows
     .map((r) => loadContact(r.id))
@@ -171,8 +173,7 @@ function replaceChildren(contact: Contact): void {
 }
 
 function assertContact(contact: Contact): void {
-  if (!contact.name.trim()) throw new Error("Name is required");
-  if (!contact.identifiers.length) throw new Error("At least one identifier is required");
+  if (!contact.name.trim()) throw new Error("Name or username is required");
   for (const id of contact.identifiers) {
     if (!id.value.trim()) throw new Error("Identifier value cannot be empty");
     if (id.kind === "custom" && !id.customKindLabel?.trim()) {
@@ -181,27 +182,51 @@ function assertContact(contact: Contact): void {
   }
 }
 
-export function upsertContact(input: Contact, opts?: { sync?: boolean }): Contact {
-  assertContact(input);
-  const now = Date.now();
-  const existing = loadContact(input.id);
-  const contact: Contact = {
+function normalizeForSave(input: Contact, existing: Contact | null, now: number): Contact {
+  const identifiers = input.identifiers.filter((i) => i.value.trim());
+  const fields = input.fields.filter((f) => f.key.trim() || f.value.trim());
+  return {
     ...input,
     name: input.name.trim(),
+    surname: input.surname?.trim() || undefined,
     note: input.note?.trim() || undefined,
+    identifiers,
+    fields,
     createdAt: existing?.createdAt ?? input.createdAt ?? now,
     updatedAt: now,
   };
+}
+
+function queueBackupDirty(): void {
+  void import("../nostr/backupSync")
+    .then((m) => m.markBackupPackageDirty())
+    .catch(() => {});
+}
+
+export function upsertContact(input: Contact, opts?: { sync?: boolean }): Contact {
+  const now = Date.now();
+  const existing = loadContact(input.id);
+  const contact = normalizeForSave(input, existing, now);
+  assertContact(contact);
 
   const database = db();
   database.runSync(
-    `INSERT OR REPLACE INTO contacts (id, name, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-    [contact.id, contact.name, contact.note ?? null, contact.createdAt, contact.updatedAt],
+    `INSERT OR REPLACE INTO contacts (id, name, surname, note, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      contact.id,
+      contact.name,
+      contact.surname ?? null,
+      contact.note ?? null,
+      contact.createdAt,
+      contact.updatedAt,
+    ],
   );
   replaceChildren(contact);
 
   if (opts?.sync !== false) {
     queueSync("upsert");
+    queueBackupDirty();
   }
   return contact;
 }
@@ -213,6 +238,7 @@ export function deleteContact(id: string, opts?: { sync?: boolean }): void {
   database.runSync(`DELETE FROM contacts WHERE id = ?`, [id]);
   if (opts?.sync !== false) {
     queueSync("delete");
+    queueBackupDirty();
   }
 }
 
@@ -223,20 +249,26 @@ export function replaceAllContacts(contacts: Contact[]): void {
   database.execSync(`DELETE FROM contact_fields;`);
   database.execSync(`DELETE FROM contacts;`);
   for (const c of contacts) {
+    let contact: Contact;
     try {
-      assertContact(c);
+      contact = normalizeForSave(c, null, c.updatedAt || Date.now());
+      assertContact(contact);
     } catch {
       continue;
     }
     database.runSync(
-      `INSERT INTO contacts (id, name, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-      [c.id, c.name.trim(), c.note?.trim() || null, c.createdAt, c.updatedAt],
+      `INSERT INTO contacts (id, name, surname, note, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contact.id,
+        contact.name,
+        contact.surname ?? null,
+        contact.note ?? null,
+        contact.createdAt,
+        contact.updatedAt,
+      ],
     );
-    replaceChildren({
-      ...c,
-      name: c.name.trim(),
-      note: c.note?.trim() || undefined,
-    });
+    replaceChildren(contact);
   }
 }
 
@@ -272,16 +304,19 @@ export function createEmptyField(): ContactField {
 
 export function createContactDraft(partial?: {
   name?: string;
+  surname?: string;
   kind?: IdentifierKind;
   value?: string;
 }): Contact {
   const now = Date.now();
+  const hasIdent = !!(partial?.kind || partial?.value?.trim());
   return {
     id: newContactId("c"),
     name: partial?.name?.trim() || "",
-    identifiers: [
-      createEmptyIdentifier(partial?.kind ?? "ark", partial?.value?.trim() || ""),
-    ],
+    surname: partial?.surname?.trim() || undefined,
+    identifiers: hasIdent
+      ? [createEmptyIdentifier(partial?.kind ?? "ark", partial?.value?.trim() || "")]
+      : [],
     fields: [],
     createdAt: now,
     updatedAt: now,

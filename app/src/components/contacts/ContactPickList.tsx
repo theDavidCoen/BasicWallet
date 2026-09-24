@@ -4,13 +4,14 @@
 
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { Contact } from "../../contacts/types";
-import { kindPillLabel, midEllipsis, primaryIdentifier } from "../../contacts/types";
+import {
+  contactDisplayName,
+  contactInitials,
+  kindPillLabel,
+  midEllipsis,
+  primaryIdentifier,
+} from "../../contacts/types";
 import { colors } from "../../theme/colors";
-
-function initialLetter(name: string): string {
-  const t = name.trim();
-  return t ? t[0]!.toUpperCase() : "?";
-}
 
 export function ContactPickList({
   contacts,
@@ -30,20 +31,21 @@ export function ContactPickList({
       {contacts.map((c) => {
         const primary = primaryIdentifier(c);
         const extra = c.identifiers.length > 1 ? ` +${c.identifiers.length - 1}` : "";
+        const title = contactDisplayName(c);
         return (
           <Pressable
             key={c.id}
             style={styles.row}
             onPress={() => onPick(c)}
             accessibilityRole="button"
-            accessibilityLabel={`Contact ${c.name}`}
+            accessibilityLabel={`Contact ${title}`}
           >
             <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{initialLetter(c.name)}</Text>
+              <Text style={styles.avatarText}>{contactInitials(c)}</Text>
             </View>
             <View style={styles.meta}>
               <Text style={styles.name} numberOfLines={1}>
-                {c.name}
+                {title}
               </Text>
               <View style={styles.idRow}>
                 {primary ? (
@@ -102,7 +104,7 @@ const styles = StyleSheet.create({
   },
   avatarText: {
     fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 14,
+    fontSize: 12,
     color: colors.fg,
   },
   meta: {

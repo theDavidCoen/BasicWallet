@@ -127,11 +127,17 @@ function migrate(database: SQLite.SQLiteDatabase): void {
     CREATE TABLE IF NOT EXISTS contacts (
       id TEXT PRIMARY KEY NOT NULL,
       name TEXT NOT NULL,
+      surname TEXT,
       note TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
   `);
+  try {
+    database.execSync(`ALTER TABLE contacts ADD COLUMN surname TEXT`);
+  } catch {
+    /* already present */
+  }
   database.execSync(`
     CREATE TABLE IF NOT EXISTS contact_identifiers (
       id TEXT PRIMARY KEY NOT NULL,
