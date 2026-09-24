@@ -13,6 +13,7 @@ export function FundsSentView({
   amount,
   txid,
   address,
+  recipientCount,
   rail = "arkade",
   onViewActivity,
   onDone,
@@ -20,6 +21,8 @@ export function FundsSentView({
   amount: number;
   txid: string;
   address?: string;
+  /** When > 1, show "to N addresses" instead of a single address. */
+  recipientCount?: number;
   rail?: FundsSentRail;
   onViewActivity: () => void;
   onDone: () => void;
@@ -27,13 +30,16 @@ export function FundsSentView({
   const caption =
     rail === "lightning" ? "Lightning payment sent." : "Arkade payment submitted.";
   const idLabel = rail === "lightning" ? "hash" : "tx";
+  const n = recipientCount != null && recipientCount > 0 ? recipientCount : address ? 1 : 0;
 
   return (
     <View style={styles.root} collapsable={false}>
       <Text style={styles.title}>FUNDS SENT</Text>
       <Text style={styles.amount}>−{amount.toLocaleString("en-US")} sats</Text>
       <Text style={styles.caption}>{caption}</Text>
-      {address ? (
+      {n > 1 ? (
+        <Text style={styles.meta}>to {n} addresses · one tx</Text>
+      ) : address ? (
         <Text style={styles.meta}>to {midEllipsis(address, 14, 8)}</Text>
       ) : null}
       {txid ? (

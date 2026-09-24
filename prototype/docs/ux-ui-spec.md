@@ -197,9 +197,9 @@ Boards: `03` empty → ready → slide early/mid → success; `03f` scan; `08b` 
 | Hardware | When paired and required for the spend, slide hands off to device    |
 
 
-### Multisend (design — Penpot page Multisend)
+### Multisend (Penpot page Multisend · Expo on `david/multisend`)
 
-One `wallet.send` with N Ark recipients. Penpot boards (`prototype/penpot_multisend.py`):
+One `wallet.send` with N Ark recipients. Penpot boards (`prototype/penpot_multisend.py`); Expo Send lists recipient cards with per-row amount + Enter/Paste/My wallets.
 
 
 | Board | Purpose |

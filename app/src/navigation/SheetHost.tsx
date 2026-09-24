@@ -66,6 +66,8 @@ export type FundsSentPayload = {
   amount: number;
   txid: string;
   address?: string;
+  /** Ark multi-send: number of payment outputs (one tx). */
+  recipientCount?: number;
   rail?: "arkade" | "lightning";
 };
 
@@ -1055,6 +1057,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
               amount={fundsSentPayload.amount}
               txid={fundsSentPayload.txid}
               address={fundsSentPayload.address}
+              recipientCount={fundsSentPayload.recipientCount}
               rail={fundsSentPayload.rail ?? "arkade"}
               onViewActivity={() => {
                 const amount = fundsSentPayload.amount;

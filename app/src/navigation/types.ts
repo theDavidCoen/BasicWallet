@@ -99,7 +99,13 @@ export type RootStackParamList = {
   /** @deprecated Sheet host — do not navigate. */
   FundsReceived: { amount: number; kind: "boarding" | "arkade" | "lightning" };
   /** @deprecated Sheet host — do not navigate. */
-  FundsSent: { amount: number; txid: string; address?: string; rail?: "arkade" | "lightning" };
+  FundsSent: {
+    amount: number;
+    txid: string;
+    address?: string;
+    recipientCount?: number;
+    rail?: "arkade" | "lightning";
+  };
 };
 
 export type RootNav = NativeStackNavigationProp<RootStackParamList>;
