@@ -2138,34 +2138,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     if (!w || !walletId || selectedWallet?.kind !== "arkade") return;
     let stop: (() => void) | undefined;
     let cancelled = false;
-    let sawSubscribeReplay = false;
     setNotifySubscribed(false);
 
     void (async () => {
       try {
-        const subscribedAt = Date.now();
         const unsub = await w.notifyIncomingFunds((funds) => {
           if (cancelled) return;
           if (funds.type !== "utxo" && funds.spentVtxos.length === 0) {
             const amount = funds.newVtxos.reduce((s, c) => s + (c.value ?? 0), 0);
             if (amount > 0) {
-              // First callback often replays existing vtxos (= full balance).
-              // Skip only that immediate replay — a real receive can be first
-              // after a late subscribe / remount.
-              if (!sawSubscribeReplay) {
-                sawSubscribeReplay = true;
-                const ackAvail = lastAckRef.current?.available ?? 0;
-                const ackTotal = lastAckRef.current?.total ?? 0;
-                const looksLikeFullReplay =
-                  Date.now() - subscribedAt < 800 &&
-                  (Math.abs(amount - ackAvail) <= 2 ||
-                    (ackTotal > 0 && amount >= ackTotal * 0.9));
-                if (looksLikeFullReplay) {
-                  console.warn("[basic] notifyIncomingFunds skip replay", { amount, ackAvail });
-                  scheduleReload(w, walletId, { event: true });
-                  return;
-                }
-              }
               forcedArkAddressRef.current = null;
               console.warn("[basic] notifyIncomingFunds", { amount });
               if (!openSyncQuietRef.current && !quietImportSyncRef.current) {
@@ -2180,9 +2161,18 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   console.warn("[basic] notifyIncomingFunds skip post-send change", {
                     amount,
                   });
+                } else if (!expectingReceive) {
+                  // Subscribe / ASP reconnect often replays existing vtxos (partial
+                  // or full). Emitting FundsReceived here caused stale "+N sats"
+                  // sheets (e.g. old 500) when Home was idle. Defer to getBalance →
+                  // persistBalance, which only notifies on a real total increase.
+                  console.warn(
+                    "[basic] notifyIncomingFunds defer notice to balance poll",
+                    { amount },
+                  );
                 } else {
                   const shown = emitFundsNotice(amount, "arkade", {
-                    bypassSendSuppress: expectingReceive,
+                    bypassSendSuppress: true,
                   });
                   if (shown === "shown") {
                     acknowledgeIncomingAmount(amount);
