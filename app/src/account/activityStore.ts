@@ -19,6 +19,11 @@ function sendRecipientsKvKey(walletId: string, activityOrTxid: string): string {
   return `send-recipients:${walletId}:${activityOrTxid}`;
 }
 
+/** Network-scoped key so any wallet on this device can resolve destinations by txid. */
+function sendRecipientsByTxidKvKey(txid: string): string {
+  return `send-recipients:txid:${txid.trim().toLowerCase()}`;
+}
+
 function normalizeRecipients(
   list: Array<{ address: string; amount: number }> | undefined,
 ): SendRecipientSnapshot[] {
@@ -33,6 +38,25 @@ function normalizeRecipients(
   return out;
 }
 
+/** True for ark/onchain/LN payment addresses — never for hex txids or "N recipients". */
+export function looksLikePaymentAddress(raw: string): boolean {
+  const t = raw.trim();
+  if (!t || t.length < 14) return false;
+  if (t.includes("…") || t.includes("...")) return false;
+  if (/^\d+\s+recipients$/i.test(t)) return false;
+  if (/^[0-9a-fA-F]{32,}$/.test(t)) return false;
+  const lower = t.toLowerCase();
+  return (
+    lower.startsWith("ark") ||
+    lower.startsWith("bc1") ||
+    lower.startsWith("tb1") ||
+    lower.startsWith("bcrt") ||
+    lower.startsWith("lnbc") ||
+    lower.startsWith("lntb") ||
+    lower.startsWith("lightning:")
+  );
+}
+
 /** Persist destinations so Activity details can list addresses after rematerialize. */
 export function rememberSendRecipients(
   networkId: ArkadeNetworkId,
@@ -42,8 +66,15 @@ export function rememberSendRecipients(
 ): void {
   const id = activityOrTxid.trim();
   const list = normalizeRecipients(recipients);
-  if (!walletId || !id || list.length === 0) return;
-  accountKvSet(networkId, sendRecipientsKvKey(walletId, id), JSON.stringify(list));
+  if (!id || list.length === 0) return;
+  const blob = JSON.stringify(list);
+  if (walletId) {
+    accountKvSet(networkId, sendRecipientsKvKey(walletId, id), blob);
+  }
+  // Always index by bare txid when it looks like one (survives wallet-id changes).
+  if (/^[0-9a-fA-F]{64}$/.test(id)) {
+    accountKvSet(networkId, sendRecipientsByTxidKvKey(id), blob);
+  }
 }
 
 export function recallSendRecipients(
@@ -51,28 +82,32 @@ export function recallSendRecipients(
   walletId: string,
   ...activityOrTxids: Array<string | undefined | null>
 ): SendRecipientSnapshot[] {
-  if (!walletId) return [];
   const seen = new Set<string>();
   for (const raw of activityOrTxids) {
     const id = (raw ?? "").trim();
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    const blob = accountKvGet(networkId, sendRecipientsKvKey(walletId, id));
-    if (!blob) continue;
-    try {
-      const parsed = JSON.parse(blob) as Array<{ address?: string; amount?: number }>;
-      const list = normalizeRecipients(
-        parsed.map((p) => ({ address: p.address ?? "", amount: Number(p.amount) || 0 })),
-      );
-      if (list.length > 0) return list;
-    } catch {
-      /* ignore */
+    const keys: string[] = [];
+    if (walletId) keys.push(sendRecipientsKvKey(walletId, id));
+    if (/^[0-9a-fA-F]{64}$/.test(id)) keys.push(sendRecipientsByTxidKvKey(id));
+    for (const key of keys) {
+      const blob = accountKvGet(networkId, key);
+      if (!blob) continue;
+      try {
+        const parsed = JSON.parse(blob) as Array<{ address?: string; amount?: number }>;
+        const list = normalizeRecipients(
+          parsed.map((p) => ({ address: p.address ?? "", amount: Number(p.amount) || 0 })),
+        );
+        if (list.length > 0) return list;
+      } catch {
+        /* ignore */
+      }
     }
   }
   return [];
 }
 
-/** Recipients from txs_json, then account_kv, then a single non-count subtitle. */
+/** Recipients from txs_json, then account_kv, then a single destination address subtitle. */
 export function resolveActivityRecipients(
   networkId: ArkadeNetworkId,
   walletId: string,
@@ -92,7 +127,8 @@ export function resolveActivityRecipients(
   );
   if (fromKv.length > 0) return fromKv;
   const sub = row.subtitle?.trim() ?? "";
-  if (sub && !/^\d+\s+recipients$/i.test(sub) && !sub.includes("…") && !sub.includes("...")) {
+  // Never treat a txid (or "N recipients") as a destination.
+  if (looksLikePaymentAddress(sub)) {
     return [{ address: sub, amount: Math.abs(row.amount) }];
   }
   return [];
@@ -616,7 +652,35 @@ export function upsertActivityRows(
   preservedCreatedAt?: Map<string, number>,
 ): void {
   const db = getAccountDb(networkId);
-  for (const row of rows) {
+  for (const incoming of rows) {
+    // Re-attach remembered destinations so SDK rematerialize keeps them in txs_json.
+    let row = incoming;
+    if (!row.txs.some((t) => (t.recipients?.length ?? 0) > 0)) {
+      const remembered = recallSendRecipients(
+        networkId,
+        walletId,
+        row.id,
+        ...row.txs.map((t) => t.arkTxid),
+        ...row.txs.map((t) => t.boardingTxid),
+        ...row.txs.map((t) => t.commitmentTxid),
+      );
+      if (remembered.length > 0 && row.txs[0]) {
+        row = {
+          ...row,
+          txs: [{ ...row.txs[0], recipients: remembered }, ...row.txs.slice(1)],
+        };
+      }
+    } else if (row.amount < 0) {
+      // Refresh kv index from txs_json (covers upgrades pending → real txid).
+      const list = normalizeRecipients(row.txs[0]?.recipients);
+      if (list.length > 0) {
+        rememberSendRecipients(networkId, walletId, row.id, list);
+        const ark = row.txs[0]?.arkTxid?.trim();
+        if (ark && ark !== row.id) {
+          rememberSendRecipients(networkId, walletId, ark, list);
+        }
+      }
+    }
     const kind = kindFromRow(row);
     const prev = db.getFirstSync<{
       fiat_amount: number | null;
@@ -650,7 +714,12 @@ export function upsertActivityRows(
         row.settled ? 1 : 0,
         kind,
         row.title,
-        row.subtitle,
+        // Keep list compact for multi-send; never put a raw txid in subtitle when we have destinations.
+        row.txs[0]?.recipients && row.txs[0].recipients.length > 1
+          ? `${row.txs[0].recipients.length} recipients`
+          : row.txs[0]?.recipients?.length === 1
+            ? row.txs[0].recipients[0]!.address
+            : row.subtitle,
         row.txs.find((t) => t.boardingTxid)?.boardingTxid ||
           row.txs[0]?.arkTxid ||
           row.txs[0]?.commitmentTxid ||

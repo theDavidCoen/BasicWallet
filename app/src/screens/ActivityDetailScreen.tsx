@@ -15,6 +15,7 @@ import { CommonActions, useNavigation, useRoute, type RouteProp } from "@react-n
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   getStoredActivity,
+  looksLikePaymentAddress,
   recordUnilateralExitActivity,
   resolveActivityRecipients,
   type StoredActivity,
@@ -502,25 +503,28 @@ export function ActivityDetailView({
       : selectedWallet.label
     : "";
   const toRecipients: SendRecipientSnapshot[] = useMemo(() => {
-    if (!row || !walletId || !isSend) return [];
-    return resolveActivityRecipients(network.id, walletId, row);
+    if (!row || !walletId) return [];
+    // Outbound always; inbound only when this device remembered the multi-send destinations
+    // (same txid — e.g. sent to own wallet as one of N recipients).
+    const list = resolveActivityRecipients(network.id, walletId, row);
+    if (isSend) return list;
+    return list.length > 1 ? list : [];
   }, [row, walletId, network.id, isSend]);
-  const toDisplay =
-    toRecipients.length === 1
-      ? midEllipsis(toRecipients[0]!.address, 10, 8)
-      : toRecipients.length === 0 && row?.subtitle && !/^\d+\s+recipients$/i.test(row.subtitle)
-        ? midEllipsis(row.subtitle, 8, 6)
-        : toRecipients.length === 0
-          ? "—"
-          : "";
-  const toCopy =
+  const singleToAddress =
     toRecipients.length === 1
       ? toRecipients[0]!.address
-      : toRecipients.length === 0
-        ? row?.subtitle && !/^\d+\s+recipients$/i.test(row.subtitle)
-          ? row.subtitle.trim()
-          : ""
-        : toRecipients.map((r) => r.address).join("\n");
+      : row && isSend && looksLikePaymentAddress(row.subtitle ?? "")
+        ? row.subtitle.trim()
+        : "";
+  const toDisplay = singleToAddress
+    ? midEllipsis(singleToAddress, 10, 8)
+    : toRecipients.length > 1
+      ? ""
+      : "—";
+  const toCopy =
+    toRecipients.length > 1
+      ? toRecipients.map((r) => r.address).join("\n")
+      : singleToAddress;
   const feeDisplay =
     primaryIds.feeSats != null
       ? `${primaryIds.feeSats.toLocaleString("en-US")} sats`
