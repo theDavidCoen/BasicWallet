@@ -38,7 +38,7 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 
 - Create or restore an Arkade seed wallet (HD)
 - Receive Arkade funds and send to addresses / contacts
-- **Multisend** — one Arkade send to several `ark…` recipients (amounts per line; activity shows all destinations)
+- Multisend — one Arkade send to several `ark…` recipients (amounts per line; activity shows all destinations)
 - Browse activity and manage multiple wallets
 - Connect a Lightning node (BTCPay LND REST, LNDHub) for node balance / LN flows
 - Collaborative offboard and unilateral exit related settings (escape hatches)
