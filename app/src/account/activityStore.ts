@@ -4,12 +4,99 @@
  */
 
 import type { ArkadeNetworkId } from "../config/network";
-import type { ActivityRow, ActivityStatus } from "../wallet/activity";
+import type {
+  ActivityRow,
+  ActivityStatus,
+  SendRecipientSnapshot,
+} from "../wallet/activity";
 import { deriveActivityStatus, loadActivityRows } from "../wallet/activity";
 import type { BasicWallet } from "../wallet/hdWallet";
-import { getAccountDb } from "./accountDb";
+import { accountKvGet, accountKvSet, getAccountDb } from "./accountDb";
 import { enqueueFiatCoverage } from "./fiatRate";
-import { getTxMeta, recordSentFromThisDevice, syncActivityFts, applyPendingSendStamps } from "./txMeta";
+import { getTxMeta, recordSentFromThisDevice, setTxMeta, syncActivityFts, applyPendingSendStamps } from "./txMeta";
+
+function sendRecipientsKvKey(walletId: string, activityOrTxid: string): string {
+  return `send-recipients:${walletId}:${activityOrTxid}`;
+}
+
+function normalizeRecipients(
+  list: Array<{ address: string; amount: number }> | undefined,
+): SendRecipientSnapshot[] {
+  if (!list?.length) return [];
+  const out: SendRecipientSnapshot[] = [];
+  for (const r of list) {
+    const address = (r.address ?? "").trim();
+    if (!address) continue;
+    const amount = Math.abs(Math.floor(Number(r.amount) || 0));
+    out.push({ address, amount });
+  }
+  return out;
+}
+
+/** Persist destinations so Activity details can list addresses after rematerialize. */
+export function rememberSendRecipients(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+  activityOrTxid: string,
+  recipients: Array<{ address: string; amount: number }>,
+): void {
+  const id = activityOrTxid.trim();
+  const list = normalizeRecipients(recipients);
+  if (!walletId || !id || list.length === 0) return;
+  accountKvSet(networkId, sendRecipientsKvKey(walletId, id), JSON.stringify(list));
+}
+
+export function recallSendRecipients(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+  ...activityOrTxids: Array<string | undefined | null>
+): SendRecipientSnapshot[] {
+  if (!walletId) return [];
+  const seen = new Set<string>();
+  for (const raw of activityOrTxids) {
+    const id = (raw ?? "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const blob = accountKvGet(networkId, sendRecipientsKvKey(walletId, id));
+    if (!blob) continue;
+    try {
+      const parsed = JSON.parse(blob) as Array<{ address?: string; amount?: number }>;
+      const list = normalizeRecipients(
+        parsed.map((p) => ({ address: p.address ?? "", amount: Number(p.amount) || 0 })),
+      );
+      if (list.length > 0) return list;
+    } catch {
+      /* ignore */
+    }
+  }
+  return [];
+}
+
+/** Recipients from txs_json, then account_kv, then a single non-count subtitle. */
+export function resolveActivityRecipients(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+  row: ActivityRow,
+): SendRecipientSnapshot[] {
+  for (const t of row.txs) {
+    const fromTx = normalizeRecipients(t.recipients);
+    if (fromTx.length > 0) return fromTx;
+  }
+  const fromKv = recallSendRecipients(
+    networkId,
+    walletId,
+    row.id,
+    ...row.txs.map((t) => t.arkTxid),
+    ...row.txs.map((t) => t.boardingTxid),
+    ...row.txs.map((t) => t.commitmentTxid),
+  );
+  if (fromKv.length > 0) return fromKv;
+  const sub = row.subtitle?.trim() ?? "";
+  if (sub && !/^\d+\s+recipients$/i.test(sub) && !sub.includes("…") && !sub.includes("...")) {
+    return [{ address: sub, amount: Math.abs(row.amount) }];
+  }
+  return [];
+}
 
 export type ActivityKind = "arkade" | "boarding" | "lightning" | "other";
 
@@ -112,14 +199,17 @@ export function recordOptimisticArkadeSend(
     amountSats: number;
     txid: string;
     address?: string;
-    /** When length > 1, subtitle becomes "N recipients". */
+    /** When length > 1, list subtitle becomes "N recipients"; details show addresses. */
     recipients?: Array<{ address: string; amount: number }>;
   },
 ): string {
   const amount = Math.abs(Math.floor(opts.amountSats));
   const raw = opts.txid.trim();
   const address = opts.address?.trim() ?? "";
-  const nRecipients = opts.recipients?.length ?? (address ? 1 : 0);
+  const recipients = normalizeRecipients(
+    opts.recipients ?? (address ? [{ address, amount }] : undefined),
+  );
+  const nRecipients = recipients.length || (address ? 1 : 0);
   const isPending = !raw || raw.startsWith("pending:");
   const id = isPending
     ? raw.startsWith("pending:")
@@ -131,7 +221,7 @@ export function recordOptimisticArkadeSend(
   const subtitle =
     nRecipients > 1
       ? `${nRecipients} recipients`
-      : address || (arkTxid ? arkTxid.slice(0, 16) : "Outgoing");
+      : address || recipients[0]?.address || (arkTxid ? arkTxid.slice(0, 16) : "Outgoing");
   const row: ActivityRow = {
     id,
     title: "Send",
@@ -151,12 +241,113 @@ export function recordOptimisticArkadeSend(
         boardingTxid: "",
         commitmentTxid: "",
         arkTxid,
+        recipients: recipients.length > 0 ? recipients : undefined,
       },
     ],
   };
   upsertActivityRows(networkId, walletId, [row]);
   recordSentFromThisDevice(networkId, walletId, id);
+  if (recipients.length > 0) {
+    rememberSendRecipients(networkId, walletId, id, recipients);
+    if (arkTxid && arkTxid !== id) {
+      rememberSendRecipients(networkId, walletId, arkTxid, recipients);
+    }
+  }
   return id;
+}
+
+/**
+ * When spend-drop finished with `pending:…` and SDK later returns the real txid,
+ * rewrite the optimistic row so Activity details show Txid.
+ */
+export function upgradeOptimisticSendTxid(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+  pendingOrLocalId: string,
+  realTxid: string,
+): string | null {
+  const from = pendingOrLocalId.trim();
+  const to = realTxid.trim();
+  if (!walletId || !from || !to) return null;
+  if (!from.startsWith("pending:") && !from.startsWith("local-send:")) return null;
+  if (to.startsWith("pending:") || to.startsWith("local-send:")) return null;
+  if (!/^[0-9a-fA-F]{64}$/.test(to)) return null;
+
+  const existing = getStoredActivity(networkId, walletId, from);
+  if (!existing) return null;
+
+  const recipients =
+    resolveActivityRecipients(networkId, walletId, existing) ||
+    normalizeRecipients(existing.txs[0]?.recipients);
+  const now = Date.now();
+  const subtitle =
+    recipients.length > 1
+      ? `${recipients.length} recipients`
+      : recipients[0]?.address ||
+        existing.subtitle ||
+        to.slice(0, 16);
+  const row: ActivityRow = {
+    ...existing,
+    id: to,
+    subtitle,
+    settled: true,
+    status: "preconfirmed",
+    createdAt: existing.createdAt > 0 ? existing.createdAt : now,
+    txs: existing.txs.map((t, i) =>
+      i === 0
+        ? {
+            ...t,
+            settled: true,
+            arkTxid: to,
+            recipients: recipients.length > 0 ? recipients : t.recipients,
+          }
+        : t,
+    ),
+  };
+
+  const db = getAccountDb(networkId);
+  db.runSync(`DELETE FROM activity_idx WHERE wallet_id = ? AND activity_id = ?`, [
+    walletId,
+    from,
+  ]);
+  upsertActivityRows(networkId, walletId, [row]);
+  recordSentFromThisDevice(networkId, walletId, to);
+  if (recipients.length > 0) {
+    rememberSendRecipients(networkId, walletId, to, recipients);
+  }
+  // Move sent_with / notes under the real id when present.
+  try {
+    const meta = getTxMeta(networkId, walletId, from);
+    if (meta && (meta.sentWith || meta.notes || meta.name || meta.category)) {
+      setTxMeta(networkId, walletId, to, {
+        sentWith: meta.sentWith,
+        notes: meta.notes,
+        name: meta.name,
+        category: meta.category,
+      });
+    }
+  } catch {
+    /* best-effort */
+  }
+  return to;
+}
+
+/** Upgrade the newest pending/local-send row once the real ark txid is known. */
+export function upgradeLatestPendingSendTxid(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+  realTxid: string,
+): string | null {
+  const to = realTxid.trim();
+  if (!walletId || !to || !/^[0-9a-fA-F]{64}$/.test(to)) return null;
+  const rows = readActivityFromDb(networkId, { walletId, limit: 30 });
+  const pending = rows.find(
+    (r) =>
+      (r.id.startsWith("pending:") || r.id.startsWith("local-send:")) &&
+      r.amount < 0,
+  );
+  if (!pending) return null;
+  return upgradeOptimisticSendTxid(networkId, walletId, pending.id, to);
 }
 
 /**
@@ -595,6 +786,19 @@ function mapDbRow(
     txs = r.txs_json ? (JSON.parse(r.txs_json) as ActivityRow["txs"]) : [];
   } catch {
     txs = [];
+  }
+  // Re-attach destinations after SDK rematerialize wiped optimistic txs_json fields.
+  if (!txs.some((t) => (t.recipients?.length ?? 0) > 0)) {
+    const remembered = recallSendRecipients(
+      networkId,
+      r.wallet_id,
+      r.activity_id,
+      r.primary_txid,
+      ...txs.map((t) => t.arkTxid),
+    );
+    if (remembered.length > 0 && txs[0]) {
+      txs = [{ ...txs[0], recipients: remembered }, ...txs.slice(1)];
+    }
   }
   const meta = getTxMeta(networkId, r.wallet_id, r.activity_id);
   const title = meta?.name?.trim() || r.title;

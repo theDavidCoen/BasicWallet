@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   getStoredActivity,
   recordUnilateralExitActivity,
+  resolveActivityRecipients,
   type StoredActivity,
 } from "../account/activityStore";
 import {
@@ -37,6 +38,7 @@ import {
   formatSatsSigned,
   formatWhen,
   statusLabel,
+  type SendRecipientSnapshot,
 } from "../wallet/activity";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
@@ -51,15 +53,44 @@ function isExitRow(row: StoredActivity | null): boolean {
   return row.tags.includes("exit") || row.id.startsWith("exit:");
 }
 
-/** Bitcoin txids are 32-byte hex — never confuse with bech32 recovery addresses. */
+/** Bitcoin / Ark txids are 32-byte hex — never confuse with bech32 recovery addresses. */
 function looksLikeTxid(raw: string): boolean {
   return /^[0-9a-fA-F]{64}$/.test(raw.trim());
+}
+
+/** Reject bech32 / invoice-looking strings when falling back beyond strict hex. */
+function looksLikeAddressNotTxid(raw: string): boolean {
+  const t = raw.trim().toLowerCase();
+  return (
+    t.startsWith("ark") ||
+    t.startsWith("bc1") ||
+    t.startsWith("tb1") ||
+    t.startsWith("bcrt") ||
+    t.startsWith("lnbc") ||
+    t.startsWith("lntb") ||
+    t.includes("recipients")
+  );
 }
 
 function pickTxid(...candidates: Array<string | undefined | null>): string {
   for (const c of candidates) {
     const t = (c ?? "").trim();
     if (looksLikeTxid(t)) return t;
+  }
+  // Non-hex fallback only for explicit tx fields that are clearly not addresses.
+  for (const c of candidates) {
+    const t = (c ?? "").trim();
+    if (
+      t &&
+      t.length >= 16 &&
+      !t.startsWith("pending:") &&
+      !t.startsWith("local-") &&
+      !t.startsWith("exit:") &&
+      !t.startsWith("ln-") &&
+      !looksLikeAddressNotTxid(t)
+    ) {
+      return t;
+    }
   }
   return "";
 }
@@ -378,14 +409,16 @@ export function ActivityDetailView({
     const boarding = pickTxid(...row.txs.map((t) => t.boardingTxid));
     const commitment = pickTxid(...row.txs.map((t) => t.commitmentTxid));
     const ark = pickTxid(...row.txs.map((t) => t.arkTxid));
-    // Never use subtitle (often a recovery address) as txid.
-    const any = pickTxid(boarding, ark, commitment);
+    // Prefer on-tx fields; fall back to activity id when it is the txid itself.
+    const any = pickTxid(boarding, ark, commitment, row.id);
     const explorerKind: "boarding" | "commitment" | "ark" =
       any && any === ark
         ? "ark"
         : any && any === commitment
           ? "commitment"
-          : "boarding";
+          : any && looksLikeTxid(any) && !boarding && (ark || row.tags.includes("offchain"))
+            ? "ark"
+            : "boarding";
     const preimage = row.txs.map((t) => t.preimage).find(Boolean) || "";
     const feeHit = row.txs.find((t) => typeof t.feeSats === "number");
     const feeSats =
@@ -468,8 +501,26 @@ export function ActivityDetailView({
       ? `${selectedWallet.label} · Lightning`
       : selectedWallet.label
     : "";
-  const toDisplay = row?.subtitle ? midEllipsis(row.subtitle, 8, 6) : "—";
-  const toCopy = row?.subtitle?.trim() || "";
+  const toRecipients: SendRecipientSnapshot[] = useMemo(() => {
+    if (!row || !walletId || !isSend) return [];
+    return resolveActivityRecipients(network.id, walletId, row);
+  }, [row, walletId, network.id, isSend]);
+  const toDisplay =
+    toRecipients.length === 1
+      ? midEllipsis(toRecipients[0]!.address, 10, 8)
+      : toRecipients.length === 0 && row?.subtitle && !/^\d+\s+recipients$/i.test(row.subtitle)
+        ? midEllipsis(row.subtitle, 8, 6)
+        : toRecipients.length === 0
+          ? "—"
+          : "";
+  const toCopy =
+    toRecipients.length === 1
+      ? toRecipients[0]!.address
+      : toRecipients.length === 0
+        ? row?.subtitle && !/^\d+\s+recipients$/i.test(row.subtitle)
+          ? row.subtitle.trim()
+          : ""
+        : toRecipients.map((r) => r.address).join("\n");
   const feeDisplay =
     primaryIds.feeSats != null
       ? `${primaryIds.feeSats.toLocaleString("en-US")} sats`
@@ -567,12 +618,26 @@ export function ActivityDetailView({
             copyValue={walletLabel}
             onCopy={(l, t) => void copyText(l, t)}
           />
-          <DetailRow
-            label="To"
-            value={toDisplay}
-            copyValue={toCopy}
-            onCopy={(l, t) => void copyText(l, t)}
-          />
+          {toRecipients.length > 1 ? (
+            toRecipients.map((r, i) => (
+              <DetailRow
+                key={`to-${i}-${r.address}`}
+                label={i === 0 ? "To" : `To (${i + 1})`}
+                value={`${midEllipsis(r.address, 10, 8)}${
+                  r.amount > 0 ? ` · ${r.amount.toLocaleString("en-US")} sats` : ""
+                }`}
+                copyValue={r.address}
+                onCopy={(l, t) => void copyText(l, t)}
+              />
+            ))
+          ) : (
+            <DetailRow
+              label="To"
+              value={toDisplay || "—"}
+              copyValue={toCopy}
+              onCopy={(l, t) => void copyText(l, t)}
+            />
+          )}
           {isExit ? (
             <DetailRow
               label="On-chain delivered"
@@ -648,7 +713,13 @@ export function ActivityDetailView({
           ) : (
             <DetailRow
               label="Txid"
-              value={primaryIds.any ? midEllipsis(primaryIds.any, 10, 8) : "—"}
+              value={
+                primaryIds.any
+                  ? midEllipsis(primaryIds.any, 10, 8)
+                  : row.id.startsWith("pending:") || row.id.startsWith("local-send:")
+                    ? "Pending…"
+                    : "—"
+              }
               copyValue={primaryIds.any}
               onCopy={(l, t) => void copyText(l, t)}
               onChevron={
