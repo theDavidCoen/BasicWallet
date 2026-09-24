@@ -28,6 +28,11 @@ export type ActivityRow = {
   txs: ArkTxRow[];
 };
 
+export type SendRecipientSnapshot = {
+  address: string;
+  amount: number;
+};
+
 export type ArkTxRow = {
   type: string;
   amount: number;
@@ -46,6 +51,11 @@ export type ArkTxRow = {
    * May be lower than `amount` when delivery is partial / still catching up.
    */
   deliveredSats?: number;
+  /**
+   * Outbound destinations recorded at send time (multi-send).
+   * Survives in txs_json; also mirrored in account_kv for rematerialize.
+   */
+  recipients?: SendRecipientSnapshot[];
 };
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {

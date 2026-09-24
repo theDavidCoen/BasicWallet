@@ -957,6 +957,16 @@ export function SendScreen() {
           onRealTxid: (real) => {
             if (!walletId || !real || real.startsWith("pending:")) return;
             recordSentFromThisDevice(network.id, walletId, real);
+            void import("../account/activityStore")
+              .then(({ upgradeLatestPendingSendTxid }) => {
+                const upgraded = upgradeLatestPendingSendTxid(
+                  network.id,
+                  walletId,
+                  real,
+                );
+                if (upgraded) bumpActivity();
+              })
+              .catch(() => {});
           },
         });
         console.warn("[basic] send settled", {
@@ -973,13 +983,27 @@ export function SendScreen() {
         let activityIdForNotice = txid;
         if (walletId) {
           try {
-            const { recordOptimisticArkadeSend } = await import("../account/activityStore");
+            const { recordOptimisticArkadeSend, upgradeLatestPendingSendTxid } =
+              await import("../account/activityStore");
             activityIdForNotice = recordOptimisticArkadeSend(network.id, walletId, {
               amountSats: paymentSum,
               txid,
               address: primaryAddr,
               recipients: working,
             });
+            // Spend-drop may have returned pending:… while send already resolved.
+            if (
+              (activityIdForNotice.startsWith("pending:") ||
+                activityIdForNotice.startsWith("local-send:")) &&
+              /^[0-9a-fA-F]{64}$/.test(txid)
+            ) {
+              const upgraded = upgradeLatestPendingSendTxid(
+                network.id,
+                walletId,
+                txid,
+              );
+              if (upgraded) activityIdForNotice = upgraded;
+            }
             bumpActivity();
           } catch (e) {
             console.warn("[basic] optimistic send activity failed", e);
