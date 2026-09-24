@@ -8,9 +8,9 @@ import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { finalizeEvent, type EventTemplate } from "nostr-tools/pure";
 import { SimplePool } from "nostr-tools/pool";
 import { v2 as nip44 } from "nostr-tools/nip44";
-import { DEFAULT_NOSTR_RELAYS, readBackupMeta } from "../nostr/backupPackage";
+import { mergeNostrRelays, readBackupMeta } from "../nostr/backupPackage";
 import {
-  ensureNostrIdentity,
+  hasNostrIdentity,
   loadNostrKeyPairForCrypto,
 } from "../nostr/identityStore";
 import type { Contact, ContactIdentifier, ContactField, IdentifierKind } from "./types";
@@ -40,10 +40,9 @@ export function deriveContactsDTag(sk: Uint8Array): string {
 }
 
 async function resolveRelays(relays?: string[]): Promise<string[]> {
-  if (relays?.length) return relays;
+  if (relays?.length) return mergeNostrRelays(relays);
   const meta = await readBackupMeta();
-  if (meta?.relays?.length) return meta.relays;
-  return DEFAULT_NOSTR_RELAYS;
+  return mergeNostrRelays(meta?.relays);
 }
 
 function encryptPayload(sk: Uint8Array, pubkey: string, payload: ContactsDirectoryPayload): string {
@@ -125,7 +124,9 @@ function maxUpdatedAt(contacts: Contact[]): number {
 export async function publishContactsDirectory(
   relays?: string[],
 ): Promise<PublishContactsResult> {
-  await ensureNostrIdentity();
+  if (!(await hasNostrIdentity())) {
+    throw new Error("No Nostr identity — create via passkey or import nsec first");
+  }
   const pair = await loadNostrKeyPairForCrypto();
   if (!pair) throw new Error("No Nostr identity");
 
@@ -240,11 +241,13 @@ export async function fetchAndApplyContactsDirectory(
   }
 }
 
-/** Boot helper: pull then publish if we have local data and identity. */
+/** Boot / foreground helper: pull then publish if we have local data and identity.
+ * Never invents a random nsec — passkey rematerialize owns the deterministic identity.
+ */
 export function queueContactsDirectoryBootSync(): void {
   void (async () => {
     try {
-      await ensureNostrIdentity();
+      if (!(await hasNostrIdentity())) return;
       await fetchAndApplyContactsDirectory();
       if (listContacts().length) {
         await publishContactsDirectory();
@@ -253,4 +256,17 @@ export function queueContactsDirectoryBootSync(): void {
       console.warn("[basic] contacts boot sync", e);
     }
   })();
+}
+
+/** After Continue with passkey stores the derived nsec — pull contacts for that npub. */
+export async function syncContactsDirectoryAfterPasskey(): Promise<void> {
+  try {
+    if (!(await hasNostrIdentity())) return;
+    await fetchAndApplyContactsDirectory();
+    if (listContacts().length) {
+      await publishContactsDirectory();
+    }
+  } catch (e) {
+    console.warn("[basic] contacts sync after passkey failed", e);
+  }
 }

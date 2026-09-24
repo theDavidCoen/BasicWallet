@@ -28,7 +28,7 @@ import {
   publishLabelDirectory,
   queuePublishLabelDirectory,
 } from "../nostr/labelDirectory";
-import { queueContactsDirectoryBootSync } from "../contacts/contactsNostrSync";
+import { queueContactsDirectoryBootSync, syncContactsDirectoryAfterPasskey } from "../contacts/contactsNostrSync";
 import { mnemonicFromEntropy } from "../onboarding/mnemonicFromEntropy";
 import { combineCsprngWithMotion } from "../onboarding/motionEntropy";
 import { isPresencePromptInFlight } from "../security/presencePrompt";
@@ -1747,7 +1747,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const personal = ensurePersonalWallet(networkId);
       beginQuietImportSync();
 
-      // Deterministic Nostr identity from the same PRF root (before label directory fetch).
+      // Deterministic Nostr identity from the same PRF root (before label / contacts fetch).
       await storeNostrKeyPair(nostrPairFromPasskeyRoot(rootEntropy32));
 
       // Seed Keystore only — Wallet.create / restore / balance stay off the Terms spinner.
@@ -1759,6 +1759,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         directoryOk = fetched !== null;
       } catch (e) {
         console.warn("[basic] label directory fetch failed", e);
+      }
+
+      // Contacts use the same derived nsec (kind 30078). Must run after storeNostrKeyPair;
+      // boot sync alone is not enough (it may have skipped before identity existed).
+      try {
+        await syncContactsDirectoryAfterPasskey();
+      } catch (e) {
+        console.warn("[basic] contacts directory after passkey", e);
       }
 
       let actives = await listActivePasskeyChildren();
