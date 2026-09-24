@@ -201,9 +201,9 @@ Boards: `03` empty → ready → slide early/mid → success; `03f` scan; `08b` 
 
 One `wallet.send` with N Ark recipients. Penpot boards (`prototype/penpot_multisend.py`); Expo:
 
-- **First recipient:** classic Send (Amount · To · Enter/Paste/My wallets · scan) — no card.
-- **Extra recipients:** compressed cards; **+ Add recipient** opens a half sheet (Penpot `16d`) to pick address + amount.
-- Total + Confirm multi-send when extras exist. Soft cap 10. Lightning path hides Add.
+- **First recipient only:** classic Send (Amount · To · Enter/Paste/My wallets/Scan) — no card.
+- **Two or more:** all recipients as compact cards (Penpot `16b`); no To action icons; **+ Add recipient** opens half sheet (`16d`).
+- Total + Confirm multi-send when N>1. Soft cap 10. Lightning path hides Add.
 
 
 | Board | Purpose |

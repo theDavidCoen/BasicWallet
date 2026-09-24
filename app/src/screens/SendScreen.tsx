@@ -250,7 +250,6 @@ export function SendScreen() {
   }, [activeLineId, lines]);
 
   const primaryLine = lines[0] ?? null;
-  const extraLines = lines.slice(1);
   const arkTotal = useMemo(() => {
     let sum = 0;
     for (const l of lines) {
@@ -505,7 +504,7 @@ export function SendScreen() {
     patchLine(id, { address: "", walletLabel: null });
   }
 
-  function removeExtraLine(lineId: string) {
+  function removeRecipientLine(lineId: string) {
     setLines((prev) => {
       if (prev.length <= 1) return prev;
       return prev.filter((l) => l.id !== lineId);
@@ -1078,126 +1077,13 @@ export function SendScreen() {
             </Text>
           ) : null}
 
-          {/* First recipient: classic Send (no card) — Penpot 16 */}
-          <View style={styles.toRow}>
-            <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>Amount (sats)</Text>
-            <Pressable
-              onPress={() => fillMaxSend("primary")}
-              disabled={spendable == null || spendable <= 0}
-              hitSlop={8}
-              accessibilityLabel="Max send"
-            >
-              <Text
-                style={[
-                  styles.maxLink,
-                  (spendable == null || spendable <= 0) && styles.maxLinkDisabled,
-                ]}
-              >
-                Max send
-              </Text>
-            </Pressable>
-          </View>
-          <TextInput
-            value={primaryLine?.amountStr ?? ""}
-            onChangeText={(v) => {
-              setPickerTarget("primary");
-              if (primaryLine) patchLine(primaryLine.id, { amountStr: v });
-            }}
-            onFocus={() => {
-              setPickerTarget("primary");
-              if (primaryLine) setActiveLineId(primaryLine.id);
-            }}
-            keyboardType="number-pad"
-            placeholder="0"
-            placeholderTextColor={colors.hint}
-            style={styles.input}
-          />
-
-          <Text style={styles.fieldLabel}>To:</Text>
-          {primaryHasDest ? (
-            <View style={styles.destPreview}>
-              <View style={styles.destPreviewTextWrap}>
-                {primaryLine?.walletLabel ? (
-                  <Text style={styles.destPreviewLabel} numberOfLines={1}>
-                    My wallet · {primaryLine.walletLabel}
-                  </Text>
-                ) : null}
-                <Text style={styles.destPreviewAddr} numberOfLines={2}>
-                  {truncateDest(primaryLine!.address.trim(), 14, 10)}
-                </Text>
-              </View>
-              <Pressable
-                onPress={clearPrimaryDestination}
-                hitSlop={8}
-                accessibilityLabel="Clear destination"
-              >
-                <Text style={styles.scanLink}>Clear</Text>
-              </Pressable>
-            </View>
-          ) : null}
-
-          <View style={styles.toActions}>
-            <Pressable
-              style={styles.toAction}
-              onPress={() => openEnterSheet("primary")}
-              accessibilityRole="button"
-              accessibilityLabel="Enter destination"
-            >
-              <View style={styles.toActionIcon}>
-                <IconEnter />
-              </View>
-              <Text style={styles.toActionLabel}>Enter</Text>
-            </Pressable>
-            <Pressable
-              style={styles.toAction}
-              onPress={() => void pasteDestination("primary")}
-              accessibilityRole="button"
-              accessibilityLabel="Paste destination"
-            >
-              <View style={styles.toActionIcon}>
-                <IconPaste />
-              </View>
-              <Text style={styles.toActionLabel}>Paste</Text>
-            </Pressable>
-            {showMyWalletsAction ? (
-              <Pressable
-                style={styles.toAction}
-                onPress={() => {
-                  setPickerTarget("primary");
-                  setMyWalletsSheetOpen(true);
-                }}
-                accessibilityRole="button"
-                accessibilityLabel="My wallets"
-              >
-                <View style={styles.toActionIcon}>
-                  <IconMyWallets />
-                </View>
-                <Text style={styles.toActionLabel}>My wallets</Text>
-              </Pressable>
-            ) : null}
-            <Pressable
-              style={styles.toAction}
-              onPress={() => {
-                setPickerTarget("primary");
-                setScanOpen(true);
-              }}
-              accessibilityRole="button"
-              accessibilityLabel="Scan QR"
-            >
-              <View style={styles.toActionIcon}>
-                <IconQr size={28} />
-              </View>
-              <Text style={styles.toActionLabel}>Scan</Text>
-            </Pressable>
-          </View>
-
-          {/* Extra recipients: compressed cards — Penpot 16b/16c */}
-          {extraLines.length > 0 ? (
+          {lines.length > 1 ? (
             <>
-              <Text style={[styles.fieldLabel, { marginTop: 4 }]}>
-                More recipients · {extraLines.length}
+              {/* Penpot 16b/16c — all recipients as compact cards, no To pickers */}
+              <Text style={styles.fieldLabel}>
+                Recipients · {lines.length}
               </Text>
-              {extraLines.map((line) => (
+              {lines.map((line) => (
                 <View key={line.id} style={styles.compactCard}>
                   <View style={styles.compactCardText}>
                     {line.walletLabel ? (
@@ -1213,7 +1099,7 @@ export function SendScreen() {
                     </Text>
                   </View>
                   <Pressable
-                    onPress={() => removeExtraLine(line.id)}
+                    onPress={() => removeRecipientLine(line.id)}
                     hitSlop={10}
                     accessibilityLabel="Remove recipient"
                   >
@@ -1222,7 +1108,122 @@ export function SendScreen() {
                 </View>
               ))}
             </>
-          ) : null}
+          ) : (
+            <>
+              {/* Penpot 16 — single recipient: classic Send (no card) */}
+              <View style={styles.toRow}>
+                <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>Amount (sats)</Text>
+                <Pressable
+                  onPress={() => fillMaxSend("primary")}
+                  disabled={spendable == null || spendable <= 0}
+                  hitSlop={8}
+                  accessibilityLabel="Max send"
+                >
+                  <Text
+                    style={[
+                      styles.maxLink,
+                      (spendable == null || spendable <= 0) && styles.maxLinkDisabled,
+                    ]}
+                  >
+                    Max send
+                  </Text>
+                </Pressable>
+              </View>
+              <TextInput
+                value={primaryLine?.amountStr ?? ""}
+                onChangeText={(v) => {
+                  setPickerTarget("primary");
+                  if (primaryLine) patchLine(primaryLine.id, { amountStr: v });
+                }}
+                onFocus={() => {
+                  setPickerTarget("primary");
+                  if (primaryLine) setActiveLineId(primaryLine.id);
+                }}
+                keyboardType="number-pad"
+                placeholder="0"
+                placeholderTextColor={colors.hint}
+                style={styles.input}
+              />
+
+              <Text style={styles.fieldLabel}>To:</Text>
+              {primaryHasDest ? (
+                <View style={styles.destPreview}>
+                  <View style={styles.destPreviewTextWrap}>
+                    {primaryLine?.walletLabel ? (
+                      <Text style={styles.destPreviewLabel} numberOfLines={1}>
+                        My wallet · {primaryLine.walletLabel}
+                      </Text>
+                    ) : null}
+                    <Text style={styles.destPreviewAddr} numberOfLines={2}>
+                      {truncateDest(primaryLine!.address.trim(), 14, 10)}
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={clearPrimaryDestination}
+                    hitSlop={8}
+                    accessibilityLabel="Clear destination"
+                  >
+                    <Text style={styles.scanLink}>Clear</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+
+              <View style={styles.toActions}>
+                <Pressable
+                  style={styles.toAction}
+                  onPress={() => openEnterSheet("primary")}
+                  accessibilityRole="button"
+                  accessibilityLabel="Enter destination"
+                >
+                  <View style={styles.toActionIcon}>
+                    <IconEnter />
+                  </View>
+                  <Text style={styles.toActionLabel}>Enter</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.toAction}
+                  onPress={() => void pasteDestination("primary")}
+                  accessibilityRole="button"
+                  accessibilityLabel="Paste destination"
+                >
+                  <View style={styles.toActionIcon}>
+                    <IconPaste />
+                  </View>
+                  <Text style={styles.toActionLabel}>Paste</Text>
+                </Pressable>
+                {showMyWalletsAction ? (
+                  <Pressable
+                    style={styles.toAction}
+                    onPress={() => {
+                      setPickerTarget("primary");
+                      setMyWalletsSheetOpen(true);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="My wallets"
+                  >
+                    <View style={styles.toActionIcon}>
+                      <IconMyWallets />
+                    </View>
+                    <Text style={styles.toActionLabel}>My wallets</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable
+                  style={styles.toAction}
+                  onPress={() => {
+                    setPickerTarget("primary");
+                    setScanOpen(true);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Scan QR"
+                >
+                  <View style={styles.toActionIcon}>
+                    <IconQr size={28} />
+                  </View>
+                  <Text style={styles.toActionLabel}>Scan</Text>
+                </Pressable>
+              </View>
+            </>
+          )}
 
           <Pressable
             style={[styles.addRecipient, !canAddRecipient && { opacity: 0.4 }]}
@@ -1233,13 +1234,13 @@ export function SendScreen() {
           >
             <Text style={styles.addRecipientText}>+ Add recipient</Text>
           </Pressable>
-          {!canAddRecipient && !primaryHasDest ? (
+          {lines.length === 1 && !canAddRecipient && !primaryHasDest ? (
             <Text style={styles.addHint}>
               Set the first ark… destination to add more recipients.
             </Text>
           ) : null}
 
-          {extraLines.length > 0 ? (
+          {lines.length > 1 ? (
             <View style={styles.totalRow}>
               <Text style={styles.totalLabel}>Total</Text>
               <Text style={styles.totalValue}>
@@ -1257,7 +1258,7 @@ export function SendScreen() {
               <ActivityIndicator color="#000" />
             ) : (
               <Text style={styles.primaryText}>
-                {extraLines.length > 0 ? "Confirm multi-send" : "Confirm send"}
+                {lines.length > 1 ? "Confirm multi-send" : "Confirm send"}
               </Text>
             )}
           </Pressable>
