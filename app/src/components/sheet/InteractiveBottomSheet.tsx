@@ -27,7 +27,8 @@ import { colors } from "../../theme/colors";
 import {
   pickSnapOrDismiss,
   SHEET_SPRING,
-  snapTranslate,
+  SNAP_OPEN,
+  translateForVisibleFraction,
   type SheetSnapIndex,
 } from "./sheetMotion";
 
@@ -59,6 +60,11 @@ type Props = {
   children: ReactNode;
   skipEnterSnap?: boolean;
   anchorY?: number | null;
+  /**
+   * Visible height as a fraction of the window (0–1).
+   * Default ~0.92 (Activity / Wallets). Pass 0.5 for compact Send sheets.
+   */
+  visibleFraction?: number;
   /** Host-owned shared values (Activity driven from Home). */
   motion?: SheetMotionShared;
 };
@@ -96,6 +102,7 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
       children,
       skipEnterSnap = false,
       anchorY = null,
+      visibleFraction = SNAP_OPEN,
       motion: motionProp,
     },
     ref,
@@ -103,7 +110,11 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
     const insets = useSafeAreaInsets();
     const windowHeight = Dimensions.get("window").height;
     const offscreenY = windowHeight;
-    const computedOpenY = Math.max(snapTranslate(windowHeight, 0), insets.top + 12);
+    const clampedVisible = Math.max(0.2, Math.min(1, visibleFraction));
+    const computedOpenY = Math.max(
+      translateForVisibleFraction(windowHeight, clampedVisible),
+      insets.top + 12,
+    );
     const revealFallback =
       anchorY != null && anchorY > 0 && anchorY < windowHeight ? anchorY : offscreenY;
 
@@ -201,6 +212,7 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
             revealY.value,
             translateY.value,
             velocityY,
+            openY.value,
           );
           if (decision === -1) {
             dismissAnimated();
@@ -247,6 +259,7 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
               revealY.value,
               translateY.value,
               e.velocityY,
+              openY.value,
             );
             if (decision === -1) {
               translateY.value = withSpring(offY.value, SHEET_SPRING, (finished) => {

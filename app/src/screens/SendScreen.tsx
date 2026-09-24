@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Alert,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -1172,6 +1173,7 @@ export function SendScreen() {
       <InteractiveBottomSheet
         open={enterSheetOpen}
         onDismiss={() => setEnterSheetOpen(false)}
+        visibleFraction={0.5}
       >
         <View style={styles.sheetBody}>
           <Text style={styles.sheetTitle}>ENTER</Text>
@@ -1190,45 +1192,62 @@ export function SendScreen() {
             style={[styles.input, styles.inputMulti, { marginBottom: 12 }]}
           />
           <Pressable
-            style={[styles.primary, !enterDraft.trim() && { opacity: 0.5 }]}
+            style={[styles.primary, { marginTop: 0 }, !enterDraft.trim() && { opacity: 0.5 }]}
             disabled={!enterDraft.trim()}
             onPress={confirmEnterDestination}
           >
             <Text style={styles.primaryText}>Use destination</Text>
           </Pressable>
+          {/* Future: contacts / search scroll here without growing the sheet. */}
+          <ScrollView
+            style={styles.sheetScroll}
+            contentContainerStyle={styles.sheetScrollContent}
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled
+            showsVerticalScrollIndicator={false}
+          />
         </View>
       </InteractiveBottomSheet>
 
       <InteractiveBottomSheet
         open={myWalletsSheetOpen}
         onDismiss={() => setMyWalletsSheetOpen(false)}
+        visibleFraction={0.5}
       >
         <View style={styles.sheetBody}>
           <Text style={styles.sheetTitle}>MY WALLETS</Text>
           <Text style={styles.sheetCaption}>Send to another wallet on this device</Text>
-          {myArkadeWallets.map((w) => {
-            const peeking = myWalletPeekId === w.id;
-            const selected = myWalletDestLabel === w.label && !!address.trim();
-            return (
-              <Pressable
-                key={w.id}
-                style={[styles.myWalletRow, selected && styles.myWalletRowSelected]}
-                disabled={!!myWalletPeekId}
-                onPress={() => void pickMyWallet(w)}
-                accessibilityRole="button"
-                accessibilityLabel={`Send to ${w.label}`}
-              >
-                <Text style={styles.myWalletLabel} numberOfLines={1}>
-                  {w.label}
-                </Text>
-                {peeking ? (
-                  <ActivityIndicator color={colors.fg} size="small" />
-                ) : (
-                  <Text style={styles.myWalletAction}>Use</Text>
-                )}
-              </Pressable>
-            );
-          })}
+          <ScrollView
+            style={styles.sheetScroll}
+            contentContainerStyle={styles.sheetScrollContent}
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled
+            showsVerticalScrollIndicator
+          >
+            {myArkadeWallets.map((w) => {
+              const peeking = myWalletPeekId === w.id;
+              const selected = myWalletDestLabel === w.label && !!address.trim();
+              return (
+                <Pressable
+                  key={w.id}
+                  style={[styles.myWalletRow, selected && styles.myWalletRowSelected]}
+                  disabled={!!myWalletPeekId}
+                  onPress={() => void pickMyWallet(w)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Send to ${w.label}`}
+                >
+                  <Text style={styles.myWalletLabel} numberOfLines={1}>
+                    {w.label}
+                  </Text>
+                  {peeking ? (
+                    <ActivityIndicator color={colors.fg} size="small" />
+                  ) : (
+                    <Text style={styles.myWalletAction}>Use</Text>
+                  )}
+                </Pressable>
+              );
+            })}
+          </ScrollView>
         </View>
       </InteractiveBottomSheet>
     </View>
@@ -1367,8 +1386,10 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   sheetBody: {
+    flex: 1,
     paddingTop: 4,
-    paddingBottom: 24,
+    paddingBottom: 8,
+    minHeight: 0,
   },
   sheetTitle: {
     fontFamily: "JetBrainsMono_700Bold",
@@ -1383,8 +1404,17 @@ const styles = StyleSheet.create({
     color: colors.caption,
     textAlign: "center",
     lineHeight: 18,
-    marginBottom: 20,
+    marginBottom: 16,
     paddingHorizontal: 8,
+  },
+  sheetScroll: {
+    flex: 1,
+    minHeight: 0,
+    marginTop: 8,
+  },
+  sheetScrollContent: {
+    paddingBottom: 12,
+    flexGrow: 1,
   },
   myWalletRow: {
     flexDirection: "row",

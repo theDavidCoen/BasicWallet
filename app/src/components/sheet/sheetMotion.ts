@@ -47,15 +47,16 @@ export function snapTranslate(windowHeight: number, _index: SheetSnapIndex = 0):
 /**
  * Pick open (0) or dismiss (-1) from release position + velocity.
  * `closedY` = dismiss threshold (Home handle Y).
+ * `openY` = sheet open detent (pass the live shared value; do not recompute).
  */
 export function pickSnapOrDismiss(
   windowHeight: number,
   closedY: number,
   translateY: number,
   velocityY: number,
+  openY: number = snapTranslate(windowHeight, 0),
 ): SheetSnapIndex | -1 {
   "worklet";
-  const openY = snapTranslate(windowHeight, 0);
   const midDismiss = (openY + closedY) / 2;
 
   if (velocityY <= SHEET_FLING_UP_VY) return 0;

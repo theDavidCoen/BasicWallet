@@ -416,6 +416,7 @@ export function HomeScreen() {
           revealY.value,
           translateY.value,
           e.velocityY,
+          openY.value,
         );
         if (decision === -1) {
           sidesLocked.value = 0;
