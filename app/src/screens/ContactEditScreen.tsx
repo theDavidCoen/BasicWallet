@@ -26,6 +26,7 @@ import {
   getContact,
   upsertContact,
 } from "../contacts/contactStore";
+import { ShareContactSheet } from "../components/contacts/ShareContactSheet";
 import { resolveBip353ForContacts } from "../contacts/resolveBip353";
 import { resolveNip05 } from "../contacts/resolveNip05";
 import type { Contact, ContactField, ContactIdentifier, IdentifierKind } from "../contacts/types";
@@ -48,6 +49,7 @@ export function ContactEditScreen() {
   const [kindPickerFor, setKindPickerFor] = useState<string | null>(null);
   const [verifyBusy, setVerifyBusy] = useState<string | null>(null);
   const [verifyMsg, setVerifyMsg] = useState<Record<string, string>>({});
+  const [shareOpen, setShareOpen] = useState(false);
 
   useEffect(() => {
     if (!contactId) return;
@@ -347,11 +349,34 @@ export function ContactEditScreen() {
         </Pressable>
 
         {!isNew ? (
-          <Pressable style={styles.deleteBtn} onPress={onDelete}>
-            <Text style={styles.deleteText}>Delete contact</Text>
-          </Pressable>
+          <>
+            <Pressable
+              style={styles.shareBtn}
+              onPress={() => setShareOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Share contact"
+            >
+              <Text style={styles.shareText}>Share contact</Text>
+            </Pressable>
+            <Pressable
+              style={styles.deleteHit}
+              onPress={onDelete}
+              accessibilityRole="button"
+              accessibilityLabel="Delete contact"
+            >
+              <Text style={styles.deleteText}>Delete contact</Text>
+            </Pressable>
+          </>
         ) : null}
       </ScrollView>
+
+      {!isNew ? (
+        <ShareContactSheet
+          open={shareOpen}
+          onDismiss={() => setShareOpen(false)}
+          contact={draft}
+        />
+      ) : null}
 
       {/* Root-level modal dropdown — scrollable, not nested in the card sheet */}
       <Modal
@@ -546,7 +571,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.fg,
   },
-  deleteBtn: {
+  shareBtn: {
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 10,
@@ -554,10 +579,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 12,
   },
+  shareText: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 14,
+    color: colors.fg,
+  },
+  deleteHit: {
+    alignItems: "center",
+    paddingVertical: 16,
+    marginTop: 4,
+  },
   deleteText: {
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 14,
-    color: colors.caption,
+    color: "#E07070",
   },
   modalBackdrop: {
     flex: 1,

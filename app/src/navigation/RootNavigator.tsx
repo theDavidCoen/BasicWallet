@@ -35,6 +35,7 @@ import { NostrIdentityScreen } from "../screens/NostrIdentityScreen";
 import { ArchivedWalletsScreen } from "../screens/ArchivedWalletsScreen";
 import { ContactsListScreen } from "../screens/ContactsListScreen";
 import { ContactEditScreen } from "../screens/ContactEditScreen";
+import { ContactShareOfferScreen } from "../screens/ContactShareOfferScreen";
 import { ExportNsecWarningScreen } from "../screens/ExportNsecWarningScreen";
 import { ExportNsecRevealScreen } from "../screens/ExportNsecRevealScreen";
 import { GenerateIdentityWarningScreen } from "../screens/GenerateIdentityWarningScreen";
@@ -54,6 +55,7 @@ import { ExitRecoveryAddressScreen } from "../screens/ExitRecoveryAddressScreen"
 import { AboutScreen } from "../screens/AboutScreen";
 import { WalletWarmupScreen } from "../screens/WalletWarmupScreen";
 import { BackupReminderBanner } from "./BackupReminderBanner";
+import { ContactShareReminder } from "./ContactShareReminder";
 import { RecoveryAddressReminder } from "./RecoveryAddressReminder";
 import { SheetHost } from "./SheetHost";
 import { AppLockGate } from "../security/AppLockGate";
@@ -99,6 +101,7 @@ export function RootNavigator() {
           <SheetHost>
             <BackupReminderBanner navigationRef={navigationRef} />
             <RecoveryAddressReminder navigationRef={navigationRef} />
+            <ContactShareReminder navigationRef={navigationRef} />
             <Stack.Navigator
               initialRouteName={hasWallet ? "Home" : "OnboardingCreate"}
               screenOptions={{ headerShown: false, animation: "fade" }}
@@ -135,6 +138,7 @@ export function RootNavigator() {
             <Stack.Screen name="ArchivedWallets" component={ArchivedWalletsScreen} />
             <Stack.Screen name="Contacts" component={ContactsListScreen} />
             <Stack.Screen name="ContactEdit" component={ContactEditScreen} />
+            <Stack.Screen name="ContactShareOffer" component={ContactShareOfferScreen} />
             <Stack.Screen name="ExportNsecWarning" component={ExportNsecWarningScreen} />
             <Stack.Screen name="ExportNsecReveal" component={ExportNsecRevealScreen} />
             <Stack.Screen name="GenerateIdentityWarning" component={GenerateIdentityWarningScreen} />

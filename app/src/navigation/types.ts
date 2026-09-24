@@ -63,6 +63,8 @@ export type RootStackParamList = {
   /** Private contacts directory */
   Contacts: undefined;
   ContactEdit: { contactId?: string } | undefined;
+  /** Incoming Nostr contact share offer */
+  ContactShareOffer: { offerId: string };
   ExportNsecWarning:
     | {
         /** After Path C enable — Done continues here instead of Nostr identity. */
