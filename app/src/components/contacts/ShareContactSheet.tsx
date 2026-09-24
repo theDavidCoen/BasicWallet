@@ -13,6 +13,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { filterContacts } from "../../contacts/contactSearch";
 import { shareContactToRecipient } from "../../contacts/contactShare";
 import { listContacts } from "../../contacts/contactStore";
@@ -54,26 +55,27 @@ export function ShareContactSheet({
   onDismiss: () => void;
   contact: Contact;
 }) {
+  const insets = useSafeAreaInsets();
   const [query, setQuery] = useState("");
   const [pickedId, setPickedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const allContacts = useMemo(() => (open ? listContacts() : []), [open]);
 
-  const nostrContacts = useMemo(() => {
-    return allContacts.filter(
-      (c) => c.id !== contact.id && !!nostrShareTarget(c),
-    );
-  }, [allContacts, contact.id]);
+  /** Everyone except the contact being shared (show muted rows without Nostr id). */
+  const candidates = useMemo(
+    () => allContacts.filter((c) => c.id !== contact.id),
+    [allContacts, contact.id],
+  );
 
   const filtered = useMemo(
-    () => filterContacts(nostrContacts, query),
-    [nostrContacts, query],
+    () => filterContacts(candidates, query),
+    [candidates, query],
   );
 
   const picked = useMemo(
-    () => (pickedId ? nostrContacts.find((c) => c.id === pickedId) ?? null : null),
-    [pickedId, nostrContacts],
+    () => (pickedId ? candidates.find((c) => c.id === pickedId) ?? null : null),
+    [pickedId, candidates],
   );
 
   const recipientRaw = useMemo(() => {
@@ -95,7 +97,7 @@ export function ShareContactSheet({
     if (!raw) {
       Alert.alert(
         "Recipient required",
-        "Pick a contact with npub or NIP-05, or paste one below.",
+        "Pick a contact with npub or NIP-05, or paste one in the search field.",
       );
       return;
     }
@@ -114,9 +116,13 @@ export function ShareContactSheet({
       const toLabel = picked
         ? contactDisplayName(picked)
         : midEllipsis(result.recipientNpub);
+      const relayNote =
+        result.failedRelays.length > 0
+          ? `\nPublished to ${result.okRelays.length} relay(s); ${result.failedRelays.length} failed.`
+          : "";
       Alert.alert(
         "Shared",
-        `Sent “${contactDisplayName(contact)}” to ${toLabel} via Nostr.`,
+        `Sent “${contactDisplayName(contact)}” to ${toLabel} via Nostr.${relayNote}`,
       );
       onDismiss();
     } catch (e) {
@@ -128,27 +134,36 @@ export function ShareContactSheet({
   }
 
   function onPick(c: Contact) {
+    if (!nostrShareTarget(c)) {
+      Alert.alert(
+        "No Nostr address",
+        "Add an npub or NIP-05 to this contact before sharing with them.",
+      );
+      return;
+    }
     setPickedId(c.id);
     setQuery("");
   }
 
   const canSend = !!recipientRaw.trim() && !busy;
+  // InteractiveBottomSheet already pads for the system nav; keep a small gap only.
+  const footerPad = Math.max(8, Math.min(insets.bottom, 12));
 
   return (
     <InteractiveBottomSheet
       open={open}
       onDismiss={onDismiss}
-      visibleFraction={0.78}
+      visibleFraction={0.92}
       avoidKeyboard
       portal
     >
       <View style={styles.body}>
         <Text style={sheetUi.title}>SHARE CONTACT</Text>
-        <Text style={sheetUi.caption} numberOfLines={2}>
+        <Text style={[sheetUi.caption, { marginBottom: 8 }]} numberOfLines={2}>
           {contactDisplayName(contact)}
         </Text>
-        <Text style={sheetUi.hint}>
-          Pick a contact with npub or NIP-05, or paste one.
+        <Text style={[sheetUi.hint, { marginBottom: 12 }]}>
+          Pick a contact (needs npub or NIP-05) or paste one.
         </Text>
 
         <TextInput
@@ -157,23 +172,26 @@ export function ShareContactSheet({
             setQuery(t);
             if (pickedId) setPickedId(null);
           }}
-          placeholder="Search contacts or paste npub / NIP-05"
+          placeholder="Search or paste npub"
           placeholderTextColor={colors.hint}
           autoCapitalize="none"
           autoCorrect={false}
           editable={!busy}
-          style={sheetUi.input}
+          numberOfLines={1}
+          style={styles.search}
         />
 
         {picked ? (
           <View style={styles.pickedBanner}>
-            <Text style={styles.pickedLabel}>To</Text>
-            <Text style={styles.pickedName} numberOfLines={1}>
-              {contactDisplayName(picked)}
-            </Text>
-            <Text style={styles.pickedTarget} numberOfLines={1}>
-              {midEllipsis(recipientRaw, 14, 8)}
-            </Text>
+            <View style={styles.pickedTextCol}>
+              <Text style={styles.pickedLabel}>To</Text>
+              <Text style={styles.pickedName} numberOfLines={1}>
+                {contactDisplayName(picked)}
+              </Text>
+              <Text style={styles.pickedTarget} numberOfLines={1}>
+                {midEllipsis(recipientRaw, 14, 8)}
+              </Text>
+            </View>
             <Pressable
               onPress={() => setPickedId(null)}
               hitSlop={8}
@@ -186,16 +204,18 @@ export function ShareContactSheet({
 
         <ScrollView
           style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
           nestedScrollEnabled
-          showsVerticalScrollIndicator={false}
+          showsVerticalScrollIndicator
         >
           <ContactPickList
             contacts={filtered}
             onPick={onPick}
+            isMuted={(c) => !nostrShareTarget(c)}
             emptyLabel={
-              nostrContacts.length === 0
-                ? "No contacts with npub or NIP-05 yet"
+              candidates.length === 0
+                ? "No other contacts yet"
                 : query.trim()
                   ? "No matches"
                   : "No contacts"
@@ -203,19 +223,21 @@ export function ShareContactSheet({
           />
         </ScrollView>
 
-        <Pressable
-          style={[sheetUi.primaryBtn, !canSend && { opacity: 0.5 }]}
-          disabled={!canSend}
-          onPress={() => void onSend()}
-          accessibilityRole="button"
-          accessibilityLabel="Send contact"
-        >
-          {busy ? (
-            <ActivityIndicator color="#000" />
-          ) : (
-            <Text style={sheetUi.primaryBtnText}>Send</Text>
-          )}
-        </Pressable>
+        <View style={[styles.footer, { paddingBottom: footerPad }]}>
+          <Pressable
+            style={[sheetUi.primaryBtn, { marginTop: 0 }, !canSend && { opacity: 0.5 }]}
+            disabled={!canSend}
+            onPress={() => void onSend()}
+            accessibilityRole="button"
+            accessibilityLabel="Send contact"
+          >
+            {busy ? (
+              <ActivityIndicator color="#000" />
+            ) : (
+              <Text style={sheetUi.primaryBtnText}>Send</Text>
+            )}
+          </Pressable>
+        </View>
       </View>
     </InteractiveBottomSheet>
   );
@@ -224,12 +246,32 @@ export function ShareContactSheet({
 const styles = StyleSheet.create({
   body: {
     flex: 1,
-    paddingBottom: 12,
+  },
+  search: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    minHeight: 52,
+    color: colors.fg,
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 15,
+    marginBottom: 12,
+    textAlignVertical: "center",
+    includeFontPadding: false,
   },
   scroll: {
-    flexGrow: 0,
-    maxHeight: 280,
-    marginBottom: 8,
+    flex: 1,
+    minHeight: 120,
+  },
+  scrollContent: {
+    paddingBottom: 8,
+  },
+  footer: {
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
   },
   pickedBanner: {
     borderWidth: 1,
@@ -238,6 +280,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     marginBottom: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  pickedTextCol: {
+    flex: 1,
+    minWidth: 0,
     gap: 2,
   },
   pickedLabel: {
@@ -257,8 +306,7 @@ const styles = StyleSheet.create({
   },
   pickedClear: {
     fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 12,
+    fontSize: 13,
     color: colors.hint,
-    marginTop: 6,
   },
 });

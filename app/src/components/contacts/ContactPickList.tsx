@@ -17,10 +17,13 @@ export function ContactPickList({
   contacts,
   onPick,
   emptyLabel = "No contacts yet",
+  isMuted,
 }: {
   contacts: Contact[];
   onPick: (contact: Contact) => void;
   emptyLabel?: string;
+  /** Muted / non-selectable styling (e.g. no npub for share). */
+  isMuted?: (contact: Contact) => boolean;
 }) {
   if (!contacts.length) {
     return <Text style={styles.empty}>{emptyLabel}</Text>;
@@ -32,23 +35,29 @@ export function ContactPickList({
         const primary = primaryIdentifier(c);
         const extra = c.identifiers.length > 1 ? ` +${c.identifiers.length - 1}` : "";
         const title = contactDisplayName(c);
+        const muted = isMuted?.(c) ?? false;
         return (
           <Pressable
             key={c.id}
-            style={styles.row}
+            style={[styles.row, muted && styles.rowMuted]}
             onPress={() => onPick(c)}
             accessibilityRole="button"
             accessibilityLabel={`Contact ${title}`}
+            accessibilityState={{ disabled: muted }}
           >
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{contactInitials(c)}</Text>
+            <View style={[styles.avatar, muted && styles.avatarMuted]}>
+              <Text style={[styles.avatarText, muted && styles.mutedText]}>
+                {contactInitials(c)}
+              </Text>
             </View>
             <View style={styles.meta}>
-              <Text style={styles.name} numberOfLines={1}>
+              <Text style={[styles.name, muted && styles.mutedText]} numberOfLines={1}>
                 {title}
               </Text>
               <View style={styles.idRow}>
-                {primary ? (
+                {muted ? (
+                  <Text style={styles.mutedHint}>No npub / NIP-05</Text>
+                ) : primary ? (
                   <>
                     <View style={styles.pill}>
                       <Text style={styles.pillText}>{kindPillLabel(primary)}</Text>
@@ -63,7 +72,7 @@ export function ContactPickList({
                 )}
               </View>
             </View>
-            <Text style={styles.chevron}>›</Text>
+            <Text style={[styles.chevron, muted && styles.mutedText]}>›</Text>
           </Pressable>
         );
       })}
@@ -93,6 +102,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     gap: 10,
   },
+  rowMuted: {
+    opacity: 0.55,
+  },
   avatar: {
     width: 36,
     height: 36,
@@ -102,10 +114,21 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  avatarMuted: {
+    borderColor: colors.hint,
+  },
   avatarText: {
     fontFamily: "JetBrainsMono_700Bold",
     fontSize: 12,
     color: colors.fg,
+  },
+  mutedText: {
+    color: colors.hint,
+  },
+  mutedHint: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 11,
+    color: colors.hint,
   },
   meta: {
     flex: 1,

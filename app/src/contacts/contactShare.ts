@@ -6,7 +6,7 @@
 import { SimplePool } from "nostr-tools/pool";
 import { wrapEvent } from "nostr-tools/nip17";
 import { decode, npubEncode } from "nostr-tools/nip19";
-import { DEFAULT_NOSTR_RELAYS, readBackupMeta } from "../nostr/backupPackage";
+import { mergeNostrRelays, readBackupMeta } from "../nostr/backupPackage";
 import {
   hasNostrIdentity,
   loadNostrKeyPairForCrypto,
@@ -53,10 +53,9 @@ export type ShareContactResult = {
 };
 
 async function resolveRelays(extra?: string[]): Promise<string[]> {
-  if (extra?.length) return extra;
+  if (extra?.length) return mergeNostrRelays(extra);
   const meta = await readBackupMeta();
-  if (meta?.relays?.length) return meta.relays;
-  return DEFAULT_NOSTR_RELAYS;
+  return mergeNostrRelays(meta?.relays);
 }
 
 export function contactToSharePayload(contact: Contact): SharedContactPayload {

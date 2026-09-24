@@ -23,7 +23,11 @@ import Animated, {
   withSpring,
   type SharedValue,
 } from "react-native-reanimated";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaProvider,
+  initialWindowMetrics,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { colors } from "../../theme/colors";
 import {
   pickSnapOrDismiss,
@@ -388,6 +392,8 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
     );
 
     if (portal) {
+      // Modal is a new RN root — without SafeAreaProvider, insets are 0 and
+      // the primary button sits under the Android nav bar.
       return (
         <Modal
           visible={open}
@@ -396,7 +402,11 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
           statusBarTranslucent
           onRequestClose={dismissAnimated}
         >
-          <GestureHandlerRootView style={styles.portalRoot}>{sheetTree}</GestureHandlerRootView>
+          <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+            <GestureHandlerRootView style={styles.portalRoot}>
+              {sheetTree}
+            </GestureHandlerRootView>
+          </SafeAreaProvider>
         </Modal>
       );
     }

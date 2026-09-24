@@ -8,7 +8,7 @@ import { AppState, type AppStateStatus } from "react-native";
 import { SimplePool, type SubCloser } from "nostr-tools/pool";
 import { unwrapEvent } from "nostr-tools/nip17";
 import type { Event } from "nostr-tools/core";
-import { DEFAULT_NOSTR_RELAYS, readBackupMeta } from "../nostr/backupPackage";
+import { mergeNostrRelays, readBackupMeta } from "../nostr/backupPackage";
 import { hasNostrIdentity, loadNostrKeyPairForCrypto } from "../nostr/identityStore";
 import {
   CONTACT_SHARE_KIND,
@@ -25,8 +25,7 @@ const CATCH_UP_MAX_WAIT_MS = 4_000;
 
 async function resolveRelays(): Promise<string[]> {
   const meta = await readBackupMeta();
-  if (meta?.relays?.length) return meta.relays;
-  return DEFAULT_NOSTR_RELAYS;
+  return mergeNostrRelays(meta?.relays);
 }
 
 type WatchState = {

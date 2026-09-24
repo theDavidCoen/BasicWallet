@@ -55,7 +55,26 @@ export function clearSessionWrapKey(): void {
   sessionWrapKey = null;
 }
 
-export const DEFAULT_NOSTR_RELAYS = ["wss://relay.damus.io", "wss://nos.lol"];
+export const DEFAULT_NOSTR_RELAYS = [
+  "wss://relay.damus.io",
+  "wss://nos.lol",
+  "wss://relay.primal.net",
+];
+
+/** User relays first, then defaults — deduped, order preserved. */
+export function mergeNostrRelays(extra?: string[] | null): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of [...(extra ?? []), ...DEFAULT_NOSTR_RELAYS]) {
+    const url = raw.trim();
+    if (!url) continue;
+    const key = url.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(url);
+  }
+  return out.length ? out : [...DEFAULT_NOSTR_RELAYS];
+}
 
 export const PASSPHRASE_LOSS_CAPTION =
   "Lose this passphrase = lose wallet access.\nSave it offline. Basic cannot recover it.";
