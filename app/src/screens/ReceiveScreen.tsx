@@ -81,8 +81,10 @@ export function ReceiveScreen() {
   }, [posOpen, setPosUiHold]);
 
   const windowW = Dimensions.get("window").width;
-  const posX = useSharedValue(windowW);
-  const posDragStart = useSharedValue(windowW);
+  /** Off-screen left — same side as Home POS (`InteractiveSideSheet` side="left"). */
+  const posOffX = -windowW;
+  const posX = useSharedValue(posOffX);
+  const posDragStart = useSharedValue(posOffX);
   const posDir = useSharedValue(0);
   const posOpenSV = useSharedValue(0);
 
@@ -102,13 +104,13 @@ export function ReceiveScreen() {
 
   const closePos = useCallback(() => {
     cancelAnimation(posX);
-    posX.value = withSpring(windowW, SHEET_SPRING, (finished) => {
+    posX.value = withSpring(posOffX, SHEET_SPRING, (finished) => {
       if (finished) {
         posOpenSV.value = 0;
         runOnJS(setPosOpen)(false);
       }
     });
-  }, [posOpenSV, posX, windowW]);
+  }, [posOffX, posOpenSV, posX]);
 
   /** Visual drag started — keep React hits off until commitPosOpen. */
   const beginPosDrag = useCallback(() => {
@@ -264,9 +266,9 @@ export function ReceiveScreen() {
   );
 
   /**
-   * Receive POS: sheet slides in from the right (R→L open).
+   * Receive POS: sheet slides in from the left (L→R open), same as Home.
    * Never wrap the keypad in a Pan — that steals Pressable taps.
-   * Open pan lives on main content (+ edge); close pan on sheet left edge only.
+   * Open pan lives on main content (+ edge); close pan on sheet right edge only.
    */
   const posOpenPan = useMemo(() => {
     if (isLightning) return Gesture.Pan().enabled(false);
@@ -287,34 +289,34 @@ export function ReceiveScreen() {
         if (posOpenSV.value === 1 && posDir.value === 0) return;
         const dx = e.translationX;
         if (posDir.value === 0) {
-          // Open only: finger moves left (R→L).
-          if (dx < -10) {
-            posDir.value = -1;
+          // Open only: finger moves right (L→R), matching Home POS.
+          if (dx > 10) {
+            posDir.value = 1;
             cancelAnimation(posX);
-            posX.value = windowW;
-            posDragStart.value = windowW;
+            posX.value = posOffX;
+            posDragStart.value = posOffX;
             runOnJS(beginPosDrag)();
           } else {
             return;
           }
         }
-        if (posDir.value === -1) {
-          const next = windowW + dx;
-          posX.value = Math.min(windowW, Math.max(0, next));
+        if (posDir.value === 1) {
+          const next = posOffX + dx;
+          posX.value = Math.max(posOffX, Math.min(0, next));
         }
       })
       .onEnd((e) => {
         "worklet";
         const dir = posDir.value;
         posDir.value = 0;
-        if (dir !== -1) return;
-        const open = posX.value < windowW * 0.55 || e.velocityX < -600;
+        if (dir !== 1) return;
+        const open = posX.value > posOffX * 0.55 || e.velocityX > 600;
         if (open) {
           posX.value = withSpring(0, SHEET_SPRING, (finished) => {
             if (finished) runOnJS(commitPosOpen)();
           });
         } else {
-          posX.value = withSpring(windowW, SHEET_SPRING, (finished) => {
+          posX.value = withSpring(posOffX, SHEET_SPRING, (finished) => {
             if (finished) runOnJS(finishPosDismiss)();
           });
         }
@@ -326,12 +328,12 @@ export function ReceiveScreen() {
     isLightning,
     posDir,
     posDragStart,
+    posOffX,
     posOpenSV,
     posX,
-    windowW,
   ]);
 
-  /** Dismiss POS: left-edge grabber, swipe right (same as InteractiveSideSheet). */
+  /** Dismiss POS: right-edge grabber, swipe left (same as Home left side sheet). */
   const posClosePan = useMemo(() => {
     return Gesture.Pan()
       .activeOffsetX([-16, 16])
@@ -344,20 +346,20 @@ export function ReceiveScreen() {
       .onUpdate((e) => {
         "worklet";
         const next = posDragStart.value + e.translationX;
-        posX.value = Math.min(windowW, Math.max(0, next));
+        posX.value = Math.max(posOffX, Math.min(0, next));
       })
       .onEnd((e) => {
         "worklet";
-        const close = posX.value > windowW * 0.35 || e.velocityX > 600;
+        const close = posX.value < posOffX * 0.5 || e.velocityX < -600;
         if (close) {
-          posX.value = withSpring(windowW, SHEET_SPRING, (finished) => {
+          posX.value = withSpring(posOffX, SHEET_SPRING, (finished) => {
             if (finished) runOnJS(finishPosDismiss)();
           });
         } else {
           posX.value = withSpring(0, SHEET_SPRING);
         }
       });
-  }, [finishPosDismiss, posDragStart, posX, windowW]);
+  }, [finishPosDismiss, posDragStart, posOffX, posX]);
 
   const posStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: posX.value }],
@@ -700,7 +702,7 @@ export function ReceiveScreen() {
             </ScrollView>
           </ScreenChrome>
 
-          {/* POS swipe affordance — vertical handle on right edge. */}
+          {/* POS swipe affordance — vertical handle on left edge (Home-aligned). */}
           <Pressable
             style={styles.posEdgeHit}
             onPress={openPos}
@@ -741,7 +743,7 @@ const styles = StyleSheet.create({
   scrollContent: { paddingBottom: 48 },
   posEdgeHit: {
     position: "absolute",
-    right: 0,
+    left: 0,
     top: 0,
     bottom: 0,
     width: 36,
@@ -763,7 +765,7 @@ const styles = StyleSheet.create({
   },
   posCloseEdge: {
     position: "absolute",
-    left: 0,
+    right: 0,
     top: 0,
     bottom: 0,
     width: 28,

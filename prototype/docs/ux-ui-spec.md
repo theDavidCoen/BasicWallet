@@ -176,7 +176,7 @@ Boards: `02 Receive BIP21`, `02b` sheet, `02c` share, `02d` POS.
 | Copy / options modal | BIP21 URL · Native segwit · Taproot · Arkade address · Lightning invoice (if node linked **or** LN-into-wallet corridor is live) |
 | Freshness            | New receive address when HD rotation applies (see Arkade tech spec). Do not teach a permanent single QR.                         |
 | Boarding vs instant  | If boarding on-chain is shown, label confirm wait vs instant off-chain                                                           |
-| POS                  | Charge / request variant (`02d`)                                                                                                 |
+| POS                  | Charge / request variant (`02d`); open with **left→right** swipe (same as Home POS)                              |
 
 
 ---
