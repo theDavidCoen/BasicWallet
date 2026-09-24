@@ -101,7 +101,18 @@ export function ContactEditScreen() {
     setVerifyMsg((m) => ({ ...m, [ident.id]: "" }));
     try {
       if (ident.kind === "nip05") {
-        const r = await resolveNip05(ident.value);
+        if (!ident.value.trim()) {
+          setVerifyMsg((m) => ({ ...m, [ident.id]: "Enter a NIP-05 name@domain first." }));
+          return;
+        }
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 8_000);
+        let r: Awaited<ReturnType<typeof resolveNip05>>;
+        try {
+          r = await resolveNip05(ident.value, ctrl.signal);
+        } finally {
+          clearTimeout(timer);
+        }
         if (!r.ok) {
           setVerifyMsg((m) => ({ ...m, [ident.id]: r.message }));
           return;
@@ -115,6 +126,10 @@ export function ContactEditScreen() {
         return;
       }
       if (ident.kind === "bip353") {
+        if (!ident.value.trim()) {
+          setVerifyMsg((m) => ({ ...m, [ident.id]: "Enter a BIP353 user@domain first." }));
+          return;
+        }
         const r = await resolveBip353ForContacts(ident.value, "lightning");
         if (!r.ok) {
           setVerifyMsg((m) => ({ ...m, [ident.id]: r.message }));
@@ -128,6 +143,11 @@ export function ContactEditScreen() {
         return;
       }
       setVerifyMsg((m) => ({ ...m, [ident.id]: "Verify is for NIP-05 and BIP 353." }));
+    } catch (e) {
+      setVerifyMsg((m) => ({
+        ...m,
+        [ident.id]: e instanceof Error ? e.message : "Verify failed.",
+      }));
     } finally {
       setVerifyBusy(null);
     }
