@@ -125,6 +125,17 @@ function IconMyWallets({ size = 28 }: { size?: number }) {
   );
 }
 
+function IconQr({ size = 28 }: { size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" accessibilityElementsHidden>
+      <Path
+        d="M4 4h6v6H4V4Zm2 2v2h2V6H6Zm8-2h6v6h-6V4Zm2 2v2h2V6h-2ZM4 14h6v6H4v-6Zm2 2v2h2v-2H6Zm10 0h2v2h-2v-2Zm-2-2h2v2h-2v-2Zm4 0h2v2h-2v-2Zm-2 4h2v2h-2v-2Zm4 0h2v2h-2v-2Zm-4 4h2v2h-2v-2Zm4 0h2v2h-2v-2Z"
+        fill={colors.fg}
+      />
+    </Svg>
+  );
+}
+
 /** Local alias — matches Wallet.getSpendableVtxos() / SendParams.selectedVtxos. */
 type SpendableVtxo = NormalizedExtendedVirtualCoin;
 
@@ -1017,7 +1028,9 @@ export function SendScreen() {
               accessibilityRole="button"
               accessibilityLabel="Scan QR"
             >
-              <View style={styles.scanRing} />
+              <View style={styles.scanRing}>
+                <IconQr size={30} />
+              </View>
               <Text style={styles.scanLabel}>scan QR</Text>
             </Pressable>
           </View>
@@ -1156,7 +1169,9 @@ export function SendScreen() {
               accessibilityRole="button"
               accessibilityLabel="Scan QR"
             >
-              <View style={styles.scanRing} />
+              <View style={styles.scanRing}>
+                <IconQr size={30} />
+              </View>
               <Text style={styles.scanLabel}>scan QR</Text>
             </Pressable>
           </View>
@@ -1490,6 +1505,8 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: colors.fg,
     backgroundColor: "#111111",
+    alignItems: "center",
+    justifyContent: "center",
   },
   scanLabel: {
     fontFamily: "JetBrainsMono_400Regular",
