@@ -158,6 +158,7 @@ export function ContactEditScreen() {
   const picking = draft.identifiers.find((i) => i.id === kindPickerFor) ?? null;
 
   return (
+    <View style={styles.screenRoot}>
     <ScreenChrome logoScale={0.77}>
       <Text style={ui.title}>{title}</Text>
       <View style={styles.avatar}>
@@ -370,14 +371,6 @@ export function ContactEditScreen() {
         ) : null}
       </ScrollView>
 
-      {!isNew ? (
-        <ShareContactSheet
-          open={shareOpen}
-          onDismiss={() => setShareOpen(false)}
-          contact={draft}
-        />
-      ) : null}
-
       {/* Root-level modal dropdown — scrollable, not nested in the card sheet */}
       <Modal
         visible={!!picking}
@@ -412,6 +405,16 @@ export function ContactEditScreen() {
         </Pressable>
       </Modal>
     </ScreenChrome>
+
+    {/* Outside ScreenChrome so the sheet is full-bleed (chrome has paddingHorizontal 28). */}
+    {!isNew ? (
+      <ShareContactSheet
+        open={shareOpen}
+        onDismiss={() => setShareOpen(false)}
+        contact={draft}
+      />
+    ) : null}
+    </View>
   );
 }
 
@@ -437,6 +440,7 @@ function placeholderForKind(kind: IdentifierKind): string {
 }
 
 const styles = StyleSheet.create({
+  screenRoot: { flex: 1, backgroundColor: colors.bg },
   avatar: {
     alignSelf: "center",
     width: 56,
