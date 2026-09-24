@@ -89,6 +89,8 @@ type SheetsApi = {
   openNodeStatus: (payload: NodeStatusPayload) => void;
   openFundsSent: (payload: FundsSentPayload) => void;
   openFundsReceived: (payload: FundsReceivedPayload) => void;
+  /** Open Save to contacts sheet over current UI (Activity detail / Funds sent). */
+  openSaveToContacts: (destination: string) => void;
   openPosSheet: () => void;
   openScanSheet: () => void;
   dismissActivity: () => void;
@@ -436,6 +438,13 @@ export function SheetHost({ children }: { children: ReactNode }) {
     [clearFundsNotice, resetWalletFlow],
   );
 
+  const openSaveToContacts = useCallback((destination: string) => {
+    const dest = destination.trim();
+    if (!dest) return;
+    setSaveContactDest(dest);
+    setSaveContactOpen(true);
+  }, []);
+
   const beginActivityDrag = useCallback(() => {
     setWalletOpen(false);
     resetWalletFlow();
@@ -778,6 +787,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
       openNodeStatus,
       openFundsSent,
       openFundsReceived,
+      openSaveToContacts,
       openPosSheet,
       openScanSheet,
       dismissActivity,
@@ -841,6 +851,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
       openConnectNode,
       openFundsSent,
       openFundsReceived,
+      openSaveToContacts,
       openImportWallet,
       openNodeStatus,
       openPosSheet,
@@ -1085,11 +1096,12 @@ export function SheetHost({ children }: { children: ReactNode }) {
                 }
               }}
               onSaveToContacts={
+                (fundsSentPayload.recipientCount == null ||
+                  fundsSentPayload.recipientCount <= 1) &&
                 fundsSentPayload.address &&
                 !findContactByIdentifierValue(fundsSentPayload.address)
                   ? () => {
-                      setSaveContactDest(fundsSentPayload.address!);
-                      setSaveContactOpen(true);
+                      openSaveToContacts(fundsSentPayload.address!);
                     }
                   : undefined
               }

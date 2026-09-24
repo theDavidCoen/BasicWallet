@@ -19,6 +19,7 @@ import {
   resolveActivityRecipients,
   type StoredActivity,
 } from "../account/activityStore";
+import { findContactByIdentifierValue } from "../contacts/contactStore";
 import {
   getTxMeta,
   recordSentFromThisDevice,
@@ -30,6 +31,7 @@ import { ScreenChrome } from "../components/ScreenChrome";
 import { getNetworkConfig } from "../config/network";
 import { getCachedExitJobs } from "../exit/jobRunner";
 import { readRecoveryAddress } from "../exit/recoveryAddress";
+import { useSheets } from "../navigation/SheetHost";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { readBackupMeta } from "../nostr/backupPackage";
 import { useWallet } from "../wallet/WalletProvider";
@@ -185,6 +187,7 @@ export function ActivityDetailView({
 }: ActivityDetailViewProps) {
   const navigation = useNavigation<RootNav>();
   const insets = useSafeAreaInsets();
+  const { openSaveToContacts } = useSheets();
   const { selectedWallet, activityEpoch, bumpActivity } = useWallet();
   const network = getNetworkConfig();
   const walletId = walletIdProp ?? selectedWallet?.id ?? null;
@@ -522,6 +525,14 @@ export function ActivityDetailView({
     toRecipients.length > 1
       ? toRecipients.map((r) => r.address).join("\n")
       : singleToAddress;
+  /** Single outbound destination not already in contacts → › opens Save to contacts. */
+  const toSaveContactAddress =
+    isSend &&
+    toRecipients.length === 1 &&
+    singleToAddress &&
+    !findContactByIdentifierValue(singleToAddress)
+      ? singleToAddress
+      : null;
   const feeDisplay =
     primaryIds.feeSats != null
       ? `${primaryIds.feeSats.toLocaleString("en-US")} sats`
@@ -637,6 +648,12 @@ export function ActivityDetailView({
               value={toDisplay || "—"}
               copyValue={toCopy}
               onCopy={(l, t) => void copyText(l, t)}
+              onChevron={
+                toSaveContactAddress
+                  ? () => openSaveToContacts(toSaveContactAddress)
+                  : undefined
+              }
+              chevronLabel="Save to contacts"
             />
           )}
           {isExit ? (
