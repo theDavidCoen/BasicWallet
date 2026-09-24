@@ -60,6 +60,9 @@ export type RootStackParamList = {
   ExportRecoveryPhrase: { walletId?: string } | undefined;
   NostrIdentity: undefined;
   ArchivedWallets: undefined;
+  /** Private contacts directory */
+  Contacts: undefined;
+  ContactEdit: { contactId?: string } | undefined;
   ExportNsecWarning:
     | {
         /** After Path C enable — Done continues here instead of Nostr identity. */

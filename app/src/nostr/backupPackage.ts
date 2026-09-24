@@ -15,6 +15,8 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes, utf8ToBytes } from "@noble/hashes/utils.js";
 import * as Crypto from "expo-crypto";
 import { applyTxMetaEntries, listAllTxMeta, type TxMeta } from "../account/txMeta";
+import { listContacts, replaceAllContacts } from "../contacts/contactStore";
+import type { Contact } from "../contacts/types";
 import { loadMnemonicForCrypto } from "../security/mnemonicStore";
 import { listWallets, type WalletRecord } from "../account/walletRegistry";
 import { getNetworkConfig } from "../config/network";
@@ -73,6 +75,7 @@ export type BackupPackageMeta = {
   updatedAt: number;
   walletCount: number;
   txMetaCount?: number;
+  contactsCount?: number;
   lastPublishedAt?: number;
   lastPublishOk?: number;
   lastPublishFail?: number;
@@ -104,6 +107,8 @@ export type DecryptedBackupPackage = {
   wallets: WalletPackageEntry[];
   /** Optional — older packages omit this. */
   txMeta?: TxMetaPackageEntry[];
+  /** Optional — older packages omit this. Private contacts directory. */
+  contacts?: Contact[];
 };
 
 export async function deriveWrapKey(
@@ -246,6 +251,13 @@ export function restoreTxMetaFromPackage(pkg: DecryptedBackupPackage): number {
   return applyTxMetaEntries(networkId, entries);
 }
 
+/** Apply contacts from a decrypted Path C package (replace local directory). */
+export function restoreContactsFromPackage(pkg: DecryptedBackupPackage): number {
+  if (!pkg.contacts?.length) return 0;
+  replaceAllContacts(pkg.contacts);
+  return pkg.contacts.length;
+}
+
 export type EnableBackupInput = {
   channel: BackupChannel;
   passphrase: string;
@@ -281,6 +293,7 @@ export async function enableEncryptedBackup(input: EnableBackupInput): Promise<B
   );
 
   const txMeta = collectTxMetaEntries();
+  const contacts = listContacts();
 
   const plaintext: DecryptedBackupPackage = {
     version: 1,
@@ -288,6 +301,7 @@ export async function enableEncryptedBackup(input: EnableBackupInput): Promise<B
     npub: pair.npub,
     wallets: entries,
     txMeta,
+    contacts,
   };
 
   const blob = await encryptPackage(plaintext, pair.nsec, check.passphrase, {
@@ -306,6 +320,7 @@ export async function enableEncryptedBackup(input: EnableBackupInput): Promise<B
     updatedAt: Date.now(),
     walletCount: entries.length,
     txMetaCount: txMeta.length,
+    contactsCount: contacts.length,
   };
   await AsyncStorage.setItem(PACKAGE_META_KEY, JSON.stringify(meta));
 

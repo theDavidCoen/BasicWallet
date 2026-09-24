@@ -52,6 +52,8 @@ import { FundsReceivedView } from "../screens/FundsReceivedView";
 import { findRecentReceiveActivityId, findActivityIdByTxid, findRecentSendActivityId } from "../account/activityStore";
 import { getNetworkConfig } from "../config/network";
 import { FundsSentView } from "../screens/FundsSentView";
+import { SaveToContactsSheet } from "../components/contacts/SaveToContactsSheet";
+import { findContactByIdentifierValue } from "../contacts/contactStore";
 import { HomePosSheetContent } from "../screens/HomePosSheetContent";
 import {
   ScanQrView,
@@ -213,6 +215,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
   const [fundsSentPayload, setFundsSentPayload] = useState<FundsSentPayload | null>(
     null,
   );
+  const [saveContactOpen, setSaveContactOpen] = useState(false);
+  const [saveContactDest, setSaveContactDest] = useState("");
   const [activitySkipEnter, setActivitySkipEnter] = useState(false);
   const [activityAnchorY, setActivityAnchorYState] = useState<number | null>(null);
   const [, setHomeDragging] = useState(false);
@@ -1080,10 +1084,28 @@ export function SheetHost({ children }: { children: ReactNode }) {
                   goHomeThen(() => openActivity());
                 }
               }}
+              onSaveToContacts={
+                fundsSentPayload.address &&
+                !findContactByIdentifierValue(fundsSentPayload.address)
+                  ? () => {
+                      setSaveContactDest(fundsSentPayload.address!);
+                      setSaveContactOpen(true);
+                    }
+                  : undefined
+              }
               onDone={onFundsSentDone}
             />
           ) : null}
         </FundsNoticeOverlay>
+
+        <SaveToContactsSheet
+          open={saveContactOpen}
+          destination={saveContactDest}
+          onDismiss={() => {
+            setSaveContactOpen(false);
+            setSaveContactDest("");
+          }}
+        />
 
         <FundsNoticeOverlay open={fundsReceivedOpen}>
           {fundsReceivedPayload ? (

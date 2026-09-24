@@ -1,6 +1,6 @@
 import { useRoute } from "@react-navigation/native";
 import type { RouteProp } from "@react-navigation/native";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -20,6 +20,14 @@ import { isBtcAddress, isValidArkAddress } from "@arkade-os/sdk";
 import type { RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
 import { InteractiveBottomSheet } from "../components/sheet/InteractiveBottomSheet";
+import { ContactPickList } from "../components/contacts/ContactPickList";
+import { SaveToContactsSheet } from "../components/contacts/SaveToContactsSheet";
+import { filterContacts } from "../contacts/contactSearch";
+import { listContacts } from "../contacts/contactStore";
+import { resolveBip353ForContacts } from "../contacts/resolveBip353";
+import { nip05PayableMessage, resolveNip05 } from "../contacts/resolveNip05";
+import type { Contact, ContactIdentifier } from "../contacts/types";
+import { kindPillLabel, midEllipsis as contactMidEllipsis } from "../contacts/types";
 import { getNetworkConfig } from "../config/network";
 import { upsertLightningPayments } from "../account/lightningActivity";
 import { recordSentFromThisDevice, notePendingSendFromThisDevice } from "../account/txMeta";
@@ -232,9 +240,25 @@ export function SendScreen() {
   const [addDraftAmount, setAddDraftAmount] = useState("");
   const [addDraftLabel, setAddDraftLabel] = useState<string | null>(null);
   const [pickerTarget, setPickerTarget] = useState<"primary" | "add">("primary");
+  const [contactQuery, setContactQuery] = useState("");
+  const [contactList, setContactList] = useState<Contact[]>([]);
+  const [idPickerContact, setIdPickerContact] = useState<Contact | null>(null);
+  const [saveAfterEnterOpen, setSaveAfterEnterOpen] = useState(false);
+  const [saveAfterEnterDest, setSaveAfterEnterDest] = useState("");
+  const [contactResolveBusy, setContactResolveBusy] = useState(false);
   const enterInputRef = useRef<TextInputType>(null);
   const isLightning = selectedWallet?.kind === "lightning";
+  const sendMode: "arkade" | "lightning" = isLightning ? "lightning" : "arkade";
   const sendBlocked = !walletInteractive || balanceStatus === "loading";
+
+  const reloadContacts = useCallback(() => {
+    setContactList(listContacts());
+  }, []);
+
+  const filteredContacts = useMemo(
+    () => filterContacts(contactList, contactQuery),
+    [contactList, contactQuery],
+  );
 
   const myArkadeWallets = useMemo(() => {
     if (isLightning || !selectedWallet) return [] as WalletRecord[];
@@ -462,6 +486,8 @@ export function SendScreen() {
   function openEnterSheet(target: "primary" | "add" = "primary") {
     Keyboard.dismiss();
     setPickerTarget(target);
+    setContactQuery("");
+    reloadContacts();
     if (target === "add") {
       setEnterDraft(addDraftAddress);
     } else {
@@ -476,11 +502,119 @@ export function SendScreen() {
     enterInputRef.current?.blur();
     Keyboard.dismiss();
     setEnterSheetOpen(false);
+    setIdPickerContact(null);
   }
 
   function confirmEnterDestination() {
+    const raw = enterDraft.trim();
     applyDestinationInput(enterDraft);
     closeEnterSheet();
+    if (raw) {
+      Alert.alert("Save to contacts?", contactMidEllipsis(raw, 16, 10), [
+        { text: "Skip", style: "cancel" },
+        {
+          text: "Save",
+          onPress: () => {
+            setSaveAfterEnterDest(raw);
+            setSaveAfterEnterOpen(true);
+          },
+        },
+      ]);
+    }
+  }
+
+  function identifierEligible(ident: ContactIdentifier): boolean {
+    if (sendMode === "arkade") return ident.kind === "ark";
+    return (
+      ident.kind === "lightning_address" ||
+      ident.kind === "bip353" ||
+      ident.kind === "lnurl" ||
+      ident.kind === "nip05"
+    );
+  }
+
+  async function applyContactIdentifier(contact: Contact, ident: ContactIdentifier) {
+    setContactResolveBusy(true);
+    try {
+      if (ident.kind === "nip05") {
+        const r = await resolveNip05(ident.value);
+        if (!r.ok) {
+          Alert.alert("NIP-05", r.message);
+          return;
+        }
+        if (r.lud16 && sendMode === "lightning") {
+          applyDestinationToActive(r.lud16, contact.name);
+          closeEnterSheet();
+          return;
+        }
+        Alert.alert("NIP-05", nip05PayableMessage(sendMode));
+        return;
+      }
+      if (ident.kind === "bip353") {
+        const r = await resolveBip353ForContacts(ident.value, sendMode);
+        if (!r.ok) {
+          Alert.alert("BIP 353", r.message);
+          return;
+        }
+        applyDestinationToActive(r.payDestination, contact.name);
+        closeEnterSheet();
+        return;
+      }
+      if (ident.kind === "npub" || ident.kind === "custom") {
+        Alert.alert(
+          "Not payable here",
+          `${kindPillLabel(ident)} can’t be used as a Send destination on this wallet yet.`,
+        );
+        return;
+      }
+      if (ident.kind === "onchain" && sendMode === "arkade") {
+        Alert.alert(
+          "On-chain not on soft path",
+          "This soft Arkade wallet can’t send on-chain. Use an ark… address.",
+        );
+        return;
+      }
+      if (sendMode === "arkade" && ident.kind !== "ark") {
+        Alert.alert(
+          "Wrong rail",
+          `“${kindPillLabel(ident)}” isn’t an Ark destination. Switch wallet or pick another identifier.`,
+        );
+        return;
+      }
+      if (sendMode === "lightning") {
+        const lnOk =
+          ident.kind === "lightning_address" ||
+          ident.kind === "lnurl" ||
+          ident.kind === "ark"; // rare: allow paste-through if stored
+        if (!lnOk) {
+          Alert.alert(
+            "Wrong rail",
+            `“${kindPillLabel(ident)}” isn’t a Lightning destination for this wallet.`,
+          );
+          return;
+        }
+      }
+      applyDestinationToActive(ident.value.trim(), contact.name);
+      closeEnterSheet();
+    } finally {
+      setContactResolveBusy(false);
+      setIdPickerContact(null);
+    }
+  }
+
+  function onPickContact(contact: Contact) {
+    const eligible = contact.identifiers.filter(identifierEligible);
+    const all = contact.identifiers;
+    if (all.length === 0) return;
+    if (eligible.length === 1) {
+      void applyContactIdentifier(contact, eligible[0]!);
+      return;
+    }
+    if (eligible.length === 0 && all.length === 1) {
+      void applyContactIdentifier(contact, all[0]!);
+      return;
+    }
+    setIdPickerContact(contact);
   }
 
   async function pasteDestination(target: "primary" | "add" = "primary") {
@@ -488,10 +622,20 @@ export function SendScreen() {
     try {
       const clip = (await Clipboard.getStringAsync()).trim();
       if (!clip) {
-        Alert.alert("Clipboard empty", "Copy an ark address first.");
+        Alert.alert("Clipboard empty", "Copy an address first.");
         return;
       }
       applyDestinationToActive(clip, null);
+      Alert.alert("Save to contacts?", contactMidEllipsis(clip, 16, 10), [
+        { text: "Skip", style: "cancel" },
+        {
+          text: "Save",
+          onPress: () => {
+            setSaveAfterEnterDest(clip);
+            setSaveAfterEnterOpen(true);
+          },
+        },
+      ]);
     } catch (e) {
       console.warn("[basic] clipboard paste failed", e);
       Alert.alert("Paste failed", "Could not read the clipboard.");
@@ -1405,13 +1549,13 @@ export function SendScreen() {
       <InteractiveBottomSheet
         open={enterSheetOpen}
         onDismiss={closeEnterSheet}
-        visibleFraction={0.5}
+        visibleFraction={0.72}
         avoidKeyboard
       >
         <View style={styles.sheetBody}>
           <Text style={styles.sheetTitle}>ENTER</Text>
           <Text style={styles.sheetCaption}>
-            Ark address now. Handles (Lightning Address, BIP353, Nostr) later.
+            Paste a destination or pick a contact
           </Text>
           <TextInput
             ref={enterInputRef}
@@ -1419,27 +1563,96 @@ export function SendScreen() {
             onChangeText={setEnterDraft}
             autoCapitalize="none"
             autoCorrect={false}
-            placeholder="ark1…"
+            placeholder={isLightning ? "lnbc… · user@domain · lnurl…" : "ark1…"}
             placeholderTextColor={colors.hint}
             multiline
             style={[styles.input, styles.inputMulti, { marginBottom: 12 }]}
           />
           <Pressable
             style={[styles.primary, { marginTop: 0 }, !enterDraft.trim() && { opacity: 0.5 }]}
-            disabled={!enterDraft.trim()}
+            disabled={!enterDraft.trim() || contactResolveBusy}
             onPress={confirmEnterDestination}
           >
             <Text style={styles.primaryText}>Use destination</Text>
           </Pressable>
+
+          <TextInput
+            value={contactQuery}
+            onChangeText={setContactQuery}
+            placeholder="Search contacts…"
+            placeholderTextColor={colors.hint}
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={[styles.input, { marginTop: 14, marginBottom: 8 }]}
+          />
+          {contactResolveBusy ? (
+            <ActivityIndicator color={colors.fg} style={{ marginVertical: 8 }} />
+          ) : null}
           <ScrollView
             style={styles.sheetScroll}
             contentContainerStyle={styles.sheetScrollContent}
             keyboardShouldPersistTaps="handled"
             nestedScrollEnabled
-            showsVerticalScrollIndicator={false}
-          />
+            showsVerticalScrollIndicator
+          >
+            <ContactPickList
+              contacts={filteredContacts}
+              onPick={onPickContact}
+              emptyLabel={
+                contactList.length === 0
+                  ? "No contacts yet — add some in Settings"
+                  : "No matches"
+              }
+            />
+          </ScrollView>
         </View>
       </InteractiveBottomSheet>
+
+      <InteractiveBottomSheet
+        open={!!idPickerContact}
+        onDismiss={() => setIdPickerContact(null)}
+        visibleFraction={0.5}
+      >
+        <View style={styles.sheetBody}>
+          <Text style={styles.sheetTitle}>PICK IDENTIFIER</Text>
+          <Text style={styles.sheetCaption}>{idPickerContact?.name}</Text>
+          <ScrollView keyboardShouldPersistTaps="handled">
+            {(idPickerContact?.identifiers ?? []).map((ident) => {
+              const ok = identifierEligible(ident);
+              return (
+                <Pressable
+                  key={ident.id}
+                  style={[styles.myWalletRow, !ok && { opacity: 0.45 }]}
+                  onPress={() => {
+                    if (!idPickerContact) return;
+                    void applyContactIdentifier(idPickerContact, ident);
+                  }}
+                >
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.myWalletLabel} numberOfLines={1}>
+                      {kindPillLabel(ident)}
+                      {ident.label ? ` · ${ident.label}` : ""}
+                    </Text>
+                    <Text style={[styles.sheetCaption, { marginBottom: 0, textAlign: "left" }]} numberOfLines={1}>
+                      {contactMidEllipsis(ident.value, 14, 8)}
+                    </Text>
+                  </View>
+                  <Text style={styles.myWalletAction}>{ok ? "Use" : "…"}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </InteractiveBottomSheet>
+
+      <SaveToContactsSheet
+        open={saveAfterEnterOpen}
+        destination={saveAfterEnterDest}
+        onDismiss={() => {
+          setSaveAfterEnterOpen(false);
+          setSaveAfterEnterDest("");
+        }}
+      />
 
       <InteractiveBottomSheet
         open={myWalletsSheetOpen}
