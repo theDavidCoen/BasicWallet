@@ -16,6 +16,7 @@ import { SQLiteAssetSwapRepository } from "@arkade-os/swap/repositories/sqlite";
 import type { AssetSwapRepository } from "@arkade-os/swap";
 import { openNetworkDatabase } from "../account/sqliteCipher";
 import type { ArkadeNetworkId } from "../config/network";
+import { migrateLegacyVtxoVirtualStatus } from "./migrateLegacyVtxoSchema";
 
 type CacheKey = string;
 
@@ -23,6 +24,8 @@ type Cached = {
   executor: SQLExecutor;
   storage: StorageConfig;
   swapRepository: AssetSwapRepository;
+  /** One-shot legacy schema migrate (virtual_status_json → drop). */
+  legacyVtxoMigrate: Promise<void>;
 };
 
 const cache = new Map<CacheKey, Cached>();
@@ -71,6 +74,12 @@ function ensureCached(networkId: ArkadeNetworkId, walletId: string): Cached {
   const db = openNetworkDatabase(networkId, dbNameFor(networkId, walletId));
   const executor = makeExecutor(db);
   const prefix = tablePrefix(walletId);
+  const legacyVtxoMigrate = migrateLegacyVtxoVirtualStatus(executor, prefix).then(
+    () => undefined,
+    (e) => {
+      console.warn("[basic] legacy vtxo schema migrate failed", e);
+    },
+  );
   const storage: StorageConfig = {
     walletRepository: new SQLiteWalletRepository(executor, { prefix }),
     contractRepository: new SQLiteContractRepository(executor, { prefix }),
@@ -85,7 +94,7 @@ function ensureCached(networkId: ArkadeNetworkId, walletId: string): Cached {
     prefix: `${prefix}swap_`,
   });
 
-  const entry: Cached = { executor, storage, swapRepository };
+  const entry: Cached = { executor, storage, swapRepository, legacyVtxoMigrate };
   cache.set(key, entry);
   return entry;
 }
@@ -99,6 +108,16 @@ export function getPersistentStorage(
   walletId: string,
 ): StorageConfig {
   return ensureCached(networkId, walletId).storage;
+}
+
+/** Await SDK 0.5 vtxos schema fix (drop legacy virtual_status_json) before Wallet.create. */
+export async function ensurePersistentStorageReady(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+): Promise<StorageConfig> {
+  const cached = ensureCached(networkId, walletId);
+  await cached.legacyVtxoMigrate;
+  return cached.storage;
 }
 
 /** Expo-safe swap repository (same DB / executor as wallet storage). */
