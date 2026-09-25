@@ -29,6 +29,7 @@ import {
   stripFiatModeLabelSuffix,
   withFiatModeLabelSuffix,
 } from "./depixAssets";
+import { setFiatModeActiveGate } from "./fiatModeGate";
 import {
   cancelDepixSwap,
   disposeDepixSwapClient,
@@ -101,6 +102,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     refresh,
     beginOutboundSend,
     endOutboundSend,
+    notifyFundsReceived,
   } = useWallet();
 
   const [state, setState] = useState<FiatModeState | null>(null);
@@ -112,6 +114,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const activeSwapIdRef = useRef<string | null>(null);
   const walletIdRef = useRef<string | null>(null);
   const lastSatsRef = useRef<number | null>(null);
+  const lastDepixRef = useRef<number | null>(null);
 
   const networkId = getNetworkConfig().id;
   const walletId = selectedWallet?.kind === "arkade" ? selectedWallet.id : null;
@@ -366,6 +369,27 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     : fiatMode
       ? "on"
       : "off";
+
+  useEffect(() => {
+    setFiatModeActiveGate(fiatMode);
+    return () => setFiatModeActiveGate(false);
+  }, [fiatMode]);
+
+  // DePix balance up while in Fiat Mode → BRL Funds Received (not sats dust).
+  useEffect(() => {
+    if (!fiatMode || converting) {
+      if (!fiatMode) lastDepixRef.current = null;
+      return;
+    }
+    if (depixDisplay == null) return;
+    const prev = lastDepixRef.current;
+    lastDepixRef.current = depixDisplay;
+    if (prev == null) return;
+    const delta = depixDisplay - prev;
+    if (delta >= 0.01) {
+      notifyFundsReceived(delta, "brl");
+    }
+  }, [fiatMode, converting, depixDisplay, notifyFundsReceived]);
 
   const satsEstimate = useMemo(() => {
     if (!fiatMode || depixDisplay == null || btcBrl == null) return null;

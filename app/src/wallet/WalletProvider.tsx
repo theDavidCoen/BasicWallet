@@ -22,6 +22,7 @@ import {
 } from "../account/walletRegistry";
 import { getNetworkConfig } from "../config/network";
 import { DEFAULT_MIN_VTXO_SATS } from "./arkMultiSend";
+import { isFiatModeActiveGate } from "../fiat/fiatModeGate";
 import { queueEncryptedBackupSync } from "../nostr/backupSync";
 import { storeNostrKeyPair } from "../nostr/identityStore";
 import {
@@ -92,7 +93,7 @@ import { setMnemonicSource, type MnemonicSource } from "./mnemonicMeta";
 
 export type FundsNotice = {
   amount: number;
-  kind: "boarding" | "arkade" | "lightning";
+  kind: "boarding" | "arkade" | "lightning" | "brl";
   at: number;
 };
 
@@ -130,6 +131,11 @@ type WalletContextValue = {
   bumpActivity: () => void;
   fundsNotice: FundsNotice | null;
   clearFundsNotice: () => void;
+  /** Emit Funds Received overlay (used by Fiat Mode for BRL fills). */
+  notifyFundsReceived: (
+    amount: number,
+    kind: FundsNotice["kind"],
+  ) => "shown" | "busy" | "blocked";
   /**
    * While Receive POS sheet is open, pause background balance polls so the
    * keypad stays responsive (boosted getBalance timeouts were starving taps).
@@ -661,6 +667,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     opts?: { bypassSendSuppress?: boolean },
   ): "shown" | "busy" | "blocked" => {
     if (amount <= 0) return "busy";
+    // Fiat Mode: DePix arrives on a 330-sat carrier VTXO — never toast that dust
+    // as a sats receive (BRL notice is emitted from FiatModeProvider).
+    if (
+      kind === "arkade" &&
+      isFiatModeActiveGate() &&
+      amount <= DEFAULT_MIN_VTXO_SATS
+    ) {
+      console.warn("[basic] fundsNotice suppressed (fiat dust carrier)", amount);
+      return "busy";
+    }
     // Only while bio/PIN sheet is open — not AppLock grace (that ate POS notices).
     if (isPresencePromptInFlight()) {
       console.warn("[basic] fundsNotice suppressed (presence)", kind, amount);
@@ -680,6 +696,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     clearCatchUpPolls();
     return "shown";
   }, []);
+
+  /** Public entry for Fiat Mode BRL receive toasts (and other callers). */
+  const notifyFundsReceived = useCallback(
+    (amount: number, kind: FundsNotice["kind"]) => emitFundsNotice(amount, kind),
+    [emitFundsNotice],
+  );
 
   /** Advance ack so persistBalance does not re-fire the same receive as FundsReceived. */
   const acknowledgeIncomingAmount = useCallback((amount: number) => {
@@ -2231,18 +2253,21 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   const shown = emitFundsNotice(amount, "arkade", {
                     bypassSendSuppress: expectingReceive,
                   });
-                  if (shown === "shown") {
+                  // Always ack dust carriers in Fiat Mode so resync does not re-toast.
+                  if (shown === "shown" || (isFiatModeActiveGate() && amount <= DEFAULT_MIN_VTXO_SATS)) {
                     acknowledgeIncomingAmount(amount);
-                    applyLocalReceive(amount);
-                    const wid = selectedIdRef.current;
-                    if (wid) {
-                      try {
-                        recordOptimisticArkadeReceive(getNetworkConfig().id, wid, {
-                          amountSats: amount,
-                        });
-                        setActivityEpoch((n) => n + 1);
-                      } catch (e) {
-                        console.warn("[basic] optimistic receive activity failed", e);
+                    if (shown === "shown") {
+                      applyLocalReceive(amount);
+                      const wid = selectedIdRef.current;
+                      if (wid) {
+                        try {
+                          recordOptimisticArkadeReceive(getNetworkConfig().id, wid, {
+                            amountSats: amount,
+                          });
+                          setActivityEpoch((n) => n + 1);
+                        } catch (e) {
+                          console.warn("[basic] optimistic receive activity failed", e);
+                        }
                       }
                     }
                   }
@@ -2330,6 +2355,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       bumpActivity,
       fundsNotice,
       clearFundsNotice,
+      notifyFundsReceived,
       setPosUiHold,
       setIncomingWatchBoost,
       noteLocalSend,
@@ -2378,6 +2404,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       bumpActivity,
       fundsNotice,
       clearFundsNotice,
+      notifyFundsReceived,
       setIncomingWatchBoost,
       noteLocalSend,
       beginOutboundSend,

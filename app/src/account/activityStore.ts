@@ -976,7 +976,7 @@ export function findRecentReceiveActivityId(
   networkId: ArkadeNetworkId,
   walletId: string,
   amountSats: number,
-  kind?: "boarding" | "arkade" | "lightning",
+  kind?: "boarding" | "arkade" | "lightning" | "brl",
 ): string | null {
   const abs = Math.abs(amountSats);
   if (!(abs > 0)) return null;

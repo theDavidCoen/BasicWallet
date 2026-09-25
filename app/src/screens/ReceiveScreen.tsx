@@ -77,68 +77,71 @@ export function ReceiveScreen() {
   const [boardingLoading, setBoardingLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [posOpen, setPosOpen] = useState(false);
+  /** Fiat Mode: classic Receive is the overlay; POS is the default page. */
+  const [classicOpen, setClassicOpen] = useState(false);
   const [brlAmount, setBrlAmount] = useState("0");
 
   useEffect(() => {
     setMode(fiatMode ? "brl" : "bip21");
+    if (!fiatMode) setClassicOpen(false);
   }, [fiatMode]);
 
   useEffect(() => {
-    if (!posOpen) return;
+    const hold = fiatMode ? classicOpen : posOpen;
+    if (!hold) return;
     setPosUiHold(true);
     return () => setPosUiHold(false);
-  }, [posOpen, setPosUiHold]);
+  }, [fiatMode, classicOpen, posOpen, setPosUiHold]);
 
   const windowW = Dimensions.get("window").width;
   /** Off-screen left — same side as Home POS (`InteractiveSideSheet` side="left"). */
-  const posOffX = -windowW;
-  const posX = useSharedValue(posOffX);
-  const posDragStart = useSharedValue(posOffX);
-  const posDir = useSharedValue(0);
-  const posOpenSV = useSharedValue(0);
+  const overlayOffX = -windowW;
+  const overlayX = useSharedValue(overlayOffX);
+  const overlayDragStart = useSharedValue(overlayOffX);
+  const overlayDir = useSharedValue(0);
+  const overlayOpenSV = useSharedValue(0);
 
   /** Commit open only after snap — never enable sheet hits mid-drag. */
-  const commitPosOpen = useCallback(() => {
-    posOpenSV.value = 1;
-    setPosOpen(true);
-  }, [posOpenSV]);
+  const commitOverlayOpen = useCallback(() => {
+    overlayOpenSV.value = 1;
+    if (fiatMode) setClassicOpen(true);
+    else setPosOpen(true);
+  }, [fiatMode, overlayOpenSV]);
 
-  const openPos = useCallback(() => {
-    posOpenSV.value = 1;
-    cancelAnimation(posX);
-    posX.value = withSpring(0, SHEET_SPRING, (finished) => {
-      if (finished) runOnJS(commitPosOpen)();
+  const openOverlay = useCallback(() => {
+    overlayOpenSV.value = 1;
+    cancelAnimation(overlayX);
+    overlayX.value = withSpring(0, SHEET_SPRING, (finished) => {
+      if (finished) runOnJS(commitOverlayOpen)();
     });
-  }, [commitPosOpen, posOpenSV, posX]);
+  }, [commitOverlayOpen, overlayOpenSV, overlayX]);
 
-  const closePos = useCallback(() => {
-    cancelAnimation(posX);
-    posX.value = withSpring(posOffX, SHEET_SPRING, (finished) => {
+  const closeOverlay = useCallback(() => {
+    cancelAnimation(overlayX);
+    overlayX.value = withSpring(overlayOffX, SHEET_SPRING, (finished) => {
       if (finished) {
-        posOpenSV.value = 0;
-        runOnJS(setPosOpen)(false);
+        overlayOpenSV.value = 0;
+        if (fiatMode) runOnJS(setClassicOpen)(false);
+        else runOnJS(setPosOpen)(false);
       }
     });
-  }, [posOffX, posOpenSV, posX]);
+  }, [fiatMode, overlayOffX, overlayOpenSV, overlayX]);
 
-  /** Visual drag started — keep React hits off until commitPosOpen. */
-  const beginPosDrag = useCallback(() => {
-    posOpenSV.value = 1;
-  }, [posOpenSV]);
+  /** Visual drag started — keep React hits off until commitOverlayOpen. */
+  const beginOverlayDrag = useCallback(() => {
+    overlayOpenSV.value = 1;
+  }, [overlayOpenSV]);
 
-  const finishPosDismiss = useCallback(() => {
-    posOpenSV.value = 0;
-    setPosOpen(false);
-  }, [posOpenSV]);
+  const finishOverlayDismiss = useCallback(() => {
+    overlayOpenSV.value = 0;
+    if (fiatMode) setClassicOpen(false);
+    else setPosOpen(false);
+  }, [fiatMode, overlayOpenSV]);
 
   const isLightning = selectedWallet?.kind === "lightning";
 
-  // Fiat Mode: POS is the default receive surface.
-  useEffect(() => {
-    if (!fiatMode || isLightning) return;
-    const t = setTimeout(() => openPos(), 80);
-    return () => clearTimeout(t);
-  }, [fiatMode, isLightning, openPos]);
+  // Non–Fiat Mode: POS stays an overlay (opened on demand). Fiat Mode: POS is
+  // the default page — no auto-open overlay.
 
   // —— Lightning receive ——
   const [lnAmount, setLnAmount] = useState("");
@@ -315,108 +318,105 @@ export function ReceiveScreen() {
   );
 
   /**
-   * Receive POS: sheet slides in from the left (L→R open), same as Home.
-   * Never wrap the keypad in a Pan — that steals Pressable taps.
-   * Open pan lives on main content (+ edge); close pan on sheet right edge only.
+   * Overlay sheet (POS when not fiat; classic Receive when fiat) slides in from
+   * the left (L→R open). Never wrap the keypad in a Pan — that steals taps.
    */
-  const posOpenPan = useMemo(() => {
+  const overlayOpenPan = useMemo(() => {
     if (isLightning) return Gesture.Pan().enabled(false);
     return Gesture.Pan()
       .activeOffsetX([-14, 14])
       .failOffsetY([-40, 40])
       .onBegin(() => {
         "worklet";
-        // Already open / opening — sheet owns dismiss via close pan.
-        if (posOpenSV.value === 1) {
-          posDir.value = 0;
+        if (overlayOpenSV.value === 1) {
+          overlayDir.value = 0;
           return;
         }
-        posDir.value = 0;
+        overlayDir.value = 0;
       })
       .onUpdate((e) => {
         "worklet";
-        if (posOpenSV.value === 1 && posDir.value === 0) return;
+        if (overlayOpenSV.value === 1 && overlayDir.value === 0) return;
         const dx = e.translationX;
-        if (posDir.value === 0) {
-          // Open only: finger moves right (L→R), matching Home POS.
+        if (overlayDir.value === 0) {
           if (dx > 10) {
-            posDir.value = 1;
-            cancelAnimation(posX);
-            posX.value = posOffX;
-            posDragStart.value = posOffX;
-            runOnJS(beginPosDrag)();
+            overlayDir.value = 1;
+            cancelAnimation(overlayX);
+            overlayX.value = overlayOffX;
+            overlayDragStart.value = overlayOffX;
+            runOnJS(beginOverlayDrag)();
           } else {
             return;
           }
         }
-        if (posDir.value === 1) {
-          const next = posOffX + dx;
-          posX.value = Math.max(posOffX, Math.min(0, next));
+        if (overlayDir.value === 1) {
+          const next = overlayOffX + dx;
+          overlayX.value = Math.max(overlayOffX, Math.min(0, next));
         }
       })
       .onEnd((e) => {
         "worklet";
-        const dir = posDir.value;
-        posDir.value = 0;
+        const dir = overlayDir.value;
+        overlayDir.value = 0;
         if (dir !== 1) return;
-        const open = posX.value > posOffX * 0.55 || e.velocityX > 600;
+        const open = overlayX.value > overlayOffX * 0.55 || e.velocityX > 600;
         if (open) {
-          posX.value = withSpring(0, SHEET_SPRING, (finished) => {
-            if (finished) runOnJS(commitPosOpen)();
+          overlayX.value = withSpring(0, SHEET_SPRING, (finished) => {
+            if (finished) runOnJS(commitOverlayOpen)();
           });
         } else {
-          posX.value = withSpring(posOffX, SHEET_SPRING, (finished) => {
-            if (finished) runOnJS(finishPosDismiss)();
+          overlayX.value = withSpring(overlayOffX, SHEET_SPRING, (finished) => {
+            if (finished) runOnJS(finishOverlayDismiss)();
           });
         }
       });
   }, [
-    beginPosDrag,
-    commitPosOpen,
-    finishPosDismiss,
+    beginOverlayDrag,
+    commitOverlayOpen,
+    finishOverlayDismiss,
     isLightning,
-    posDir,
-    posDragStart,
-    posOffX,
-    posOpenSV,
-    posX,
+    overlayDir,
+    overlayDragStart,
+    overlayOffX,
+    overlayOpenSV,
+    overlayX,
   ]);
 
-  /** Dismiss POS: right-edge grabber, swipe left (same as Home left side sheet). */
-  const posClosePan = useMemo(() => {
+  /** Dismiss overlay: right-edge grabber, swipe left. */
+  const overlayClosePan = useMemo(() => {
     return Gesture.Pan()
       .activeOffsetX([-16, 16])
       .failOffsetY([-32, 32])
       .onBegin(() => {
         "worklet";
-        cancelAnimation(posX);
-        posDragStart.value = posX.value;
+        cancelAnimation(overlayX);
+        overlayDragStart.value = overlayX.value;
       })
       .onUpdate((e) => {
         "worklet";
-        const next = posDragStart.value + e.translationX;
-        posX.value = Math.max(posOffX, Math.min(0, next));
+        const next = overlayDragStart.value + e.translationX;
+        overlayX.value = Math.max(overlayOffX, Math.min(0, next));
       })
       .onEnd((e) => {
         "worklet";
-        const close = posX.value < posOffX * 0.5 || e.velocityX < -600;
+        const close = overlayX.value < overlayOffX * 0.5 || e.velocityX < -600;
         if (close) {
-          posX.value = withSpring(posOffX, SHEET_SPRING, (finished) => {
-            if (finished) runOnJS(finishPosDismiss)();
+          overlayX.value = withSpring(overlayOffX, SHEET_SPRING, (finished) => {
+            if (finished) runOnJS(finishOverlayDismiss)();
           });
         } else {
-          posX.value = withSpring(0, SHEET_SPRING);
+          overlayX.value = withSpring(0, SHEET_SPRING);
         }
       });
-  }, [finishPosDismiss, posDragStart, posOffX, posX]);
+  }, [finishOverlayDismiss, overlayDragStart, overlayOffX, overlayX]);
 
-  const posStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: posX.value }],
+  const overlayStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: overlayX.value }],
   }));
 
   const receiveOpenGesture = useMemo(
-    () => Gesture.Simultaneous(Gesture.Native(), posOpenPan),
-    [posOpenPan],
+    () => Gesture.Simultaneous(Gesture.Native(), overlayOpenPan),
+    [overlayOpenPan],
   );
 
   const displayPayload =
@@ -623,218 +623,241 @@ export function ReceiveScreen() {
     );
   }
 
+  const classicBody = (
+    <ScreenChrome logoScale={0.77}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        bounces={false}
+      >
+        <Text style={styles.title}>RECEIVE</Text>
+        <Pressable onPress={toggleBalanceHidden} onLongPress={() => void refresh()}>
+          <Text style={styles.balance}>{bal}</Text>
+        </Pressable>
+        <Text style={styles.caption}>{caption}</Text>
+
+        <View style={styles.modeRow}>
+          {fiatMode ? (
+            <>
+              <Pressable
+                style={[styles.modeBtn, mode === "brl" && styles.modeBtnOn]}
+                onPress={() => setMode("brl")}
+              >
+                <Text style={[styles.modeLabel, mode === "brl" && styles.modeLabelOn]}>
+                  BRL
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modeBtn, mode === "bip21" && styles.modeBtnOn]}
+                onPress={() => setMode("bip21")}
+              >
+                <Text style={[styles.modeLabel, mode === "bip21" && styles.modeLabelOn]}>
+                  Universal BIP21
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modeBtn, mode === "arkade" && styles.modeBtnOn]}
+                onPress={() => setMode("arkade")}
+              >
+                <Text style={[styles.modeLabel, mode === "arkade" && styles.modeLabelOn]}>
+                  Arkade
+                </Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <Pressable
+                style={[styles.modeBtn, mode === "bip21" && styles.modeBtnOn]}
+                onPress={() => setMode("bip21")}
+              >
+                <Text style={[styles.modeLabel, mode === "bip21" && styles.modeLabelOn]}>
+                  BIP21
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modeBtn, mode === "arkade" && styles.modeBtnOn]}
+                onPress={() => setMode("arkade")}
+              >
+                <Text style={[styles.modeLabel, mode === "arkade" && styles.modeLabelOn]}>
+                  Arkade
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modeBtn, mode === "boarding" && styles.modeBtnOn]}
+                onPress={() => setMode("boarding")}
+              >
+                <Text style={[styles.modeLabel, mode === "boarding" && styles.modeLabelOn]}>
+                  Boarding
+                </Text>
+              </Pressable>
+            </>
+          )}
+        </View>
+
+        <View style={styles.qrWrap}>
+          {qrReady && displayPayload ? (
+            <ExpandableQrCode value={displayPayload} size={220} />
+          ) : (
+            <View style={styles.qrPlaceholder}>
+              <ActivityIndicator color="#000" />
+            </View>
+          )}
+        </View>
+
+        <View style={styles.pillRow}>
+          <View style={styles.pill}>
+            <Text style={styles.pillText} numberOfLines={1}>
+              {displayPayload
+                ? midEllipsis(displayPayload, mode === "bip21" ? 18 : 14, 8)
+                : "loading…"}
+            </Text>
+          </View>
+          <Pressable
+            style={styles.icoBtn}
+            onPress={() => void onCopy()}
+            disabled={!displayPayload}
+          >
+            <Text style={styles.icoLabel}>{copied ? "✓" : "Copy"}</Text>
+          </Pressable>
+          <Pressable
+            style={styles.icoBtn}
+            onPress={() => void onShare()}
+            disabled={!displayPayload}
+          >
+            <Text style={styles.icoLabel}>Share</Text>
+          </Pressable>
+        </View>
+
+        {mode === "boarding" ? (
+          <>
+            {boardingError && !boardingAddress ? (
+              <Text style={styles.errorText}>{boardingError}</Text>
+            ) : (
+              <Text style={styles.boardingHint}>
+                Fund this onchain address (faucet / L1). Boarding settles into Arkade
+                automatically after confirmation.
+                {boardingSats > 0
+                  ? `\nBoarding pending: ${boardingLabel} sats`
+                  : ""}
+              </Text>
+            )}
+            <Pressable
+              style={[styles.secondary, busy && { opacity: 0.6 }]}
+              disabled={busy}
+              onPress={() => void onNewBoardingAddress()}
+            >
+              {busy ? (
+                <ActivityIndicator color={colors.fg} />
+              ) : (
+                <Text style={styles.secondaryText}>New receive address</Text>
+              )}
+            </Pressable>
+          </>
+        ) : mode === "bip21" ? (
+          <>
+            {boardingError && !boardingAddress && !arkAddress ? (
+              <Text style={styles.errorText}>{boardingError}</Text>
+            ) : (
+              <Text style={styles.boardingHint}>
+                Unified URI: onchain boarding + Arkade address
+                {boardingSats > 0
+                  ? `\nBoarding pending: ${boardingLabel} sats`
+                  : ""}
+              </Text>
+            )}
+            <Pressable
+              style={[styles.secondary, busy && { opacity: 0.6 }]}
+              disabled={busy}
+              onPress={() => void onNewArkAddress()}
+            >
+              {busy ? (
+                <ActivityIndicator color={colors.fg} />
+              ) : (
+                <Text style={styles.secondaryText}>New receive address</Text>
+              )}
+            </Pressable>
+          </>
+        ) : (
+          <Pressable
+            style={[styles.secondary, busy && { opacity: 0.6 }]}
+            disabled={busy}
+            onPress={() => void onNewArkAddress()}
+          >
+            {busy ? (
+              <ActivityIndicator color={colors.fg} />
+            ) : (
+              <Text style={styles.secondaryText}>New receive address</Text>
+            )}
+          </Pressable>
+        )}
+
+        <View style={{ height: 24 }} />
+      </ScrollView>
+    </ScreenChrome>
+  );
+
+  const overlayOpen = fiatMode ? classicOpen : posOpen;
+  const edgeLabel = fiatMode ? "Open classic Receive" : "Open POS";
+
   return (
     <View style={styles.flexRoot} collapsable={false}>
       <GestureDetector gesture={receiveOpenGesture}>
         <View style={styles.flexRoot} collapsable={false}>
-          <ScreenChrome logoScale={0.77}>
-            <ScrollView
-              style={styles.scroll}
-              contentContainerStyle={styles.scrollContent}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-              bounces={false}
-            >
-              <Text style={styles.title}>RECEIVE</Text>
-              <Pressable onPress={toggleBalanceHidden} onLongPress={() => void refresh()}>
-                <Text style={styles.balance}>{bal}</Text>
-              </Pressable>
-              <Text style={styles.caption}>{caption}</Text>
+          {fiatMode ? (
+            <ReceivePosPanel
+              bip21Uri={bip21Uri}
+              onClose={() => navigation.navigate("Home")}
+              onRequestUri={buildPosBip21}
+              onRequestBrlUri={buildPosBrlUri}
+              fiatMode
+              active={!classicOpen}
+            />
+          ) : (
+            classicBody
+          )}
 
-              <View style={styles.modeRow}>
-                {fiatMode ? (
-                  <>
-                    <Pressable
-                      style={[styles.modeBtn, mode === "brl" && styles.modeBtnOn]}
-                      onPress={() => setMode("brl")}
-                    >
-                      <Text style={[styles.modeLabel, mode === "brl" && styles.modeLabelOn]}>
-                        BRL
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      style={[styles.modeBtn, mode === "bip21" && styles.modeBtnOn]}
-                      onPress={() => setMode("bip21")}
-                    >
-                      <Text style={[styles.modeLabel, mode === "bip21" && styles.modeLabelOn]}>
-                        Universal BIP21
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      style={[styles.modeBtn, mode === "arkade" && styles.modeBtnOn]}
-                      onPress={() => setMode("arkade")}
-                    >
-                      <Text style={[styles.modeLabel, mode === "arkade" && styles.modeLabelOn]}>
-                        Arkade
-                      </Text>
-                    </Pressable>
-                  </>
-                ) : (
-                  <>
-                    <Pressable
-                      style={[styles.modeBtn, mode === "bip21" && styles.modeBtnOn]}
-                      onPress={() => setMode("bip21")}
-                    >
-                      <Text style={[styles.modeLabel, mode === "bip21" && styles.modeLabelOn]}>
-                        BIP21
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      style={[styles.modeBtn, mode === "arkade" && styles.modeBtnOn]}
-                      onPress={() => setMode("arkade")}
-                    >
-                      <Text style={[styles.modeLabel, mode === "arkade" && styles.modeLabelOn]}>
-                        Arkade
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      style={[styles.modeBtn, mode === "boarding" && styles.modeBtnOn]}
-                      onPress={() => setMode("boarding")}
-                    >
-                      <Text style={[styles.modeLabel, mode === "boarding" && styles.modeLabelOn]}>
-                        Boarding
-                      </Text>
-                    </Pressable>
-                  </>
-                )}
-              </View>
-
-              <View style={styles.qrWrap}>
-                {qrReady && displayPayload ? (
-                  <ExpandableQrCode value={displayPayload} size={220} />
-                ) : (
-                  <View style={styles.qrPlaceholder}>
-                    <ActivityIndicator color="#000" />
-                  </View>
-                )}
-              </View>
-
-              <View style={styles.pillRow}>
-                <View style={styles.pill}>
-                  <Text style={styles.pillText} numberOfLines={1}>
-                    {displayPayload
-                      ? midEllipsis(displayPayload, mode === "bip21" ? 18 : 14, 8)
-                      : "loading…"}
-                  </Text>
-                </View>
-                <Pressable
-                  style={styles.icoBtn}
-                  onPress={() => void onCopy()}
-                  disabled={!displayPayload}
-                >
-                  <Text style={styles.icoLabel}>{copied ? "✓" : "Copy"}</Text>
-                </Pressable>
-                <Pressable
-                  style={styles.icoBtn}
-                  onPress={() => void onShare()}
-                  disabled={!displayPayload}
-                >
-                  <Text style={styles.icoLabel}>Share</Text>
-                </Pressable>
-              </View>
-
-              {mode === "boarding" ? (
-                <>
-                  {boardingError && !boardingAddress ? (
-                    <Text style={styles.errorText}>{boardingError}</Text>
-                  ) : (
-                    <Text style={styles.boardingHint}>
-                      Fund this onchain address (faucet / L1). Boarding settles into Arkade
-                      automatically after confirmation.
-                      {boardingSats > 0
-                        ? `\nBoarding pending: ${boardingLabel} sats`
-                        : ""}
-                    </Text>
-                  )}
-                  <Pressable
-                    style={[styles.secondary, busy && { opacity: 0.6 }]}
-                    disabled={busy}
-                    onPress={() => void onNewBoardingAddress()}
-                  >
-                    {busy ? (
-                      <ActivityIndicator color={colors.fg} />
-                    ) : (
-                      <Text style={styles.secondaryText}>New receive address</Text>
-                    )}
-                  </Pressable>
-                </>
-              ) : mode === "bip21" ? (
-                <>
-                  {boardingError && !boardingAddress && !arkAddress ? (
-                    <Text style={styles.errorText}>{boardingError}</Text>
-                  ) : (
-                    <Text style={styles.boardingHint}>
-                      Unified URI: onchain boarding + Arkade address
-                      {boardingSats > 0
-                        ? `\nBoarding pending: ${boardingLabel} sats`
-                        : ""}
-                    </Text>
-                  )}
-                  <Pressable
-                    style={[styles.secondary, busy && { opacity: 0.6 }]}
-                    disabled={busy}
-                    onPress={() => void onNewArkAddress()}
-                  >
-                    {busy ? (
-                      <ActivityIndicator color={colors.fg} />
-                    ) : (
-                      <Text style={styles.secondaryText}>New receive address</Text>
-                    )}
-                  </Pressable>
-                </>
-              ) : (
-                <Pressable
-                  style={[styles.secondary, busy && { opacity: 0.6 }]}
-                  disabled={busy}
-                  onPress={() => void onNewArkAddress()}
-                >
-                  {busy ? (
-                    <ActivityIndicator color={colors.fg} />
-                  ) : (
-                    <Text style={styles.secondaryText}>New receive address</Text>
-                  )}
-                </Pressable>
-              )}
-
-              <View style={{ height: 24 }} />
-            </ScrollView>
-          </ScreenChrome>
-
-          {/* POS swipe affordance — vertical handle on left edge (Home-aligned). */}
           <Pressable
             style={styles.posEdgeHit}
-            onPress={openPos}
+            onPress={openOverlay}
             hitSlop={8}
-            accessibilityLabel="Open POS"
+            accessibilityLabel={edgeLabel}
           >
             <View style={styles.posEdgeLine} />
           </Pressable>
         </View>
       </GestureDetector>
 
-      {/* POS sheet outside open-pan — keypad taps never compete with Pan. */}
       <Animated.View
-        style={[styles.posSheet, posStyle]}
-        pointerEvents={posOpen ? "auto" : "none"}
+        style={[styles.posSheet, overlayStyle]}
+        pointerEvents={overlayOpen ? "auto" : "none"}
       >
-        <GestureDetector gesture={posClosePan}>
-          <View style={styles.posCloseEdge} accessibilityLabel="Close POS">
+        <GestureDetector gesture={overlayClosePan}>
+          <View
+            style={styles.posCloseEdge}
+            accessibilityLabel={fiatMode ? "Close classic Receive" : "Close POS"}
+          >
             <View style={styles.posEdgeLine} />
           </View>
         </GestureDetector>
         <View style={styles.posBody} collapsable={false}>
-          <ReceivePosPanel
-            bip21Uri={bip21Uri}
-            onClose={closePos}
-            onRequestUri={buildPosBip21}
-            onRequestBrlUri={fiatMode ? buildPosBrlUri : undefined}
-            fiatMode={fiatMode}
-            active={posOpen}
-          />
+          {fiatMode ? (
+            classicBody
+          ) : (
+            <ReceivePosPanel
+              bip21Uri={bip21Uri}
+              onClose={closeOverlay}
+              onRequestUri={buildPosBip21}
+              fiatMode={false}
+              active={posOpen}
+            />
+          )}
         </View>
       </Animated.View>
     </View>
   );
+
 }
 
 const styles = StyleSheet.create({

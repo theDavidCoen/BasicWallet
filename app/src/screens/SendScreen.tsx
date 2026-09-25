@@ -62,6 +62,7 @@ import { useFiatMode } from "../fiat/FiatModeProvider";
 import {
   depixAssetIdForNetwork,
   formatBrlDisplay,
+  parseBrlDisplay,
 } from "../fiat/depixAssets";
 import { resolvePayIntent } from "../wallet/bip21Pay";
 import type { WalletRecord } from "../account/walletRegistry";
@@ -436,7 +437,9 @@ export function SendScreen() {
             intent.amountSats != null
           ? String(intent.amountSats)
           : null;
-    const assetId = intent?.assetId ?? null;
+    const assetId =
+      intent?.assetId ??
+      (fiatMode && !isLightning ? depixAssetId : null);
 
     if (isLightning) {
       setAddress(dest);
@@ -710,8 +713,8 @@ export function SendScreen() {
       return;
     }
     if (fiatMode) {
-      const brl = Number(String(addDraftAmount).replace(",", ".").replace(/\s/g, ""));
-      if (!Number.isFinite(brl) || !(brl > 0)) {
+      const brl = parseBrlDisplay(addDraftAmount);
+      if (brl == null) {
         Alert.alert("Amount required", "Enter how many BRL for this recipient.");
         return;
       }
@@ -915,9 +918,14 @@ export function SendScreen() {
     const built: SendRecipient[] = [];
     for (const line of lines) {
       const trimmed = line.address.trim();
-      if (line.assetId) {
-        const display = Number(line.amountStr.replace(/[,\s]/g, ""));
-        if (!trimmed || !Number.isFinite(display) || display <= 0) {
+      const assetIdForLine =
+        line.assetId ||
+        (fiatMode && trimmed && !isBtcAddress(trimmed) && isValidArkAddress(trimmed)
+          ? depixAssetId
+          : null);
+      if (assetIdForLine) {
+        const display = parseBrlDisplay(line.amountStr);
+        if (!trimmed || display == null) {
           Alert.alert(
             "Incomplete recipient",
             "Each DePix recipient needs an ark… address and a positive BRL amount.",
@@ -934,7 +942,7 @@ export function SendScreen() {
           amount: 330, // dust carrier sats
           assets: [
             {
-              assetId: line.assetId,
+              assetId: assetIdForLine,
               amount: toAtomic(display),
             },
           ],
@@ -1030,7 +1038,17 @@ export function SendScreen() {
 
       let working = recipients.map((r) => ({ ...r }));
       let paymentSum = working.reduce((s, r) => s + r.amount, 0);
-      if (spendable !== null && paymentSum > spendable) {
+      if (wantsAsset) {
+        const needBrl = lines.reduce((s, l) => {
+          const d = parseBrlDisplay(l.amountStr);
+          return s + (d ?? 0);
+        }, 0);
+        const have = depixDisplay ?? 0;
+        if (needBrl > have + 1e-8) {
+          Alert.alert("Insufficient balance", `Available: ${bal}`);
+          return;
+        }
+      } else if (spendable !== null && paymentSum > spendable) {
         Alert.alert("Insufficient balance", `Available: ${bal}`);
         return;
       }

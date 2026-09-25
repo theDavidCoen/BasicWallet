@@ -19,6 +19,7 @@ import {
   resolveActivityRecipients,
   type StoredActivity,
 } from "../account/activityStore";
+import { looksLikePaymentAddress } from "../account/sendDestinations";
 import { findContactByIdentifierValue } from "../contacts/contactStore";
 import {
   getTxMeta,
@@ -511,7 +512,15 @@ export function ActivityDetailView({
     : "";
   const toRecipients: SendRecipientSnapshot[] = useMemo(() => {
     if (!row || !walletId) return [];
-    const list = resolveActivityRecipients(network.id, walletId, row);
+    let list = resolveActivityRecipients(network.id, walletId, row);
+    // Single outbound: fall back to full-address subtitle when kv/txs lost recipients.
+    if (
+      list.length === 0 &&
+      isSend &&
+      looksLikePaymentAddress(row.subtitle ?? "")
+    ) {
+      list = [{ address: row.subtitle!.trim(), amount: Math.abs(row.amount) }];
+    }
     if (isSend) return list;
     // Inbound: only show when this device recorded a multi-send for the same txid.
     return list.length > 1 ? list : [];

@@ -78,7 +78,7 @@ export type FundsSentPayload = {
 
 export type FundsReceivedPayload = {
   amount: number;
-  kind: "boarding" | "arkade" | "lightning";
+  kind: "boarding" | "arkade" | "lightning" | "brl";
 };
 
 type SheetsApi = {
@@ -1209,7 +1209,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
           ref={fiatModeRef}
           open={fiatModeSheet != null}
           onDismiss={dismissFiatModeSheet}
-          visibleFraction={fiatModeSheet === "exit" ? 0.48 : 0.88}
+          visibleFraction={fiatModeSheet === "exit" ? 0.4 : 0.88}
         >
           {fiatModeSheet === "enter" ? (
             <FiatModeEnterSheetContent
@@ -1248,12 +1248,15 @@ export function SheetHost({ children }: { children: ReactNode }) {
                   return;
                 }
                 const networkId = getNetworkConfig().id;
-                const activityId = findRecentReceiveActivityId(
-                  networkId,
-                  walletId,
-                  amount,
-                  kind,
-                );
+                const activityId =
+                  kind === "brl"
+                    ? null
+                    : findRecentReceiveActivityId(
+                        networkId,
+                        walletId,
+                        amount,
+                        kind,
+                      );
                 if (activityId) {
                   openActivityDetailFromHome(activityId, walletId);
                 } else {

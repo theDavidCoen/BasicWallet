@@ -17,7 +17,7 @@ export function FundsReceivedScreen() {
       kind={kind}
       onViewDetails={() => {
         const walletId = selectedWallet?.id;
-        if (walletId) {
+        if (walletId && kind !== "brl") {
           const activityId = findRecentReceiveActivityId(
             getNetworkConfig().id,
             walletId,
@@ -29,7 +29,7 @@ export function FundsReceivedScreen() {
             return;
           }
         }
-        navigation.navigate("Home");
+        navigation.navigate("Activity");
       }}
       onDone={() => navigation.navigate("Home")}
     />

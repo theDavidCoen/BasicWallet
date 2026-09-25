@@ -1,8 +1,9 @@
 import { StyleSheet, Text, View } from "react-native";
 import { Pressable } from "react-native-gesture-handler";
+import { formatBrlDisplay } from "../fiat/depixAssets";
 import { colors } from "../theme/colors";
 
-export type FundsReceivedKind = "boarding" | "arkade" | "lightning";
+export type FundsReceivedKind = "boarding" | "arkade" | "lightning" | "brl";
 
 export function FundsReceivedView({
   amount,
@@ -20,18 +21,27 @@ export function FundsReceivedView({
       ? "BOARDING RECEIVED"
       : kind === "lightning"
         ? "LIGHTNING RECEIVED"
-        : "FUNDS RECEIVED";
+        : kind === "brl"
+          ? "BRL RECEIVED"
+          : "FUNDS RECEIVED";
   const caption =
     kind === "boarding"
       ? "Onchain deposit detected.\nIt will settle into Arkade when the batch completes."
       : kind === "lightning"
         ? "Lightning invoice paid.\nNew balance is available."
-        : "New Arkade balance is available.";
+        : kind === "brl"
+          ? "DePix / BRL arrived.\nNew Fiat Mode balance is available."
+          : "New Arkade balance is available.";
+
+  const amountLabel =
+    kind === "brl"
+      ? `+${formatBrlDisplay(amount).replace(/^R\$\s*/, "R$ ")}`
+      : `+${amount.toLocaleString("en-US")} sats`;
 
   return (
     <View style={styles.root} collapsable={false}>
       <Text style={styles.title}>{title}</Text>
-      <Text style={styles.amount}>+{amount.toLocaleString("en-US")} sats</Text>
+      <Text style={styles.amount}>{amountLabel}</Text>
       <Text style={styles.caption}>{caption}</Text>
 
       <Pressable
@@ -100,15 +110,16 @@ const styles = StyleSheet.create({
   },
   secondary: {
     alignSelf: "stretch",
+    marginTop: 12,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: colors.border,
     paddingVertical: 16,
     alignItems: "center",
-    marginTop: 12,
+    backgroundColor: "#000",
   },
   secondaryText: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: "JetBrainsMono_700Bold",
     fontSize: 15,
     color: colors.fg,
   },

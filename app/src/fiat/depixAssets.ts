@@ -60,9 +60,21 @@ export function isDesignatedDepixId(assetId: string, networkId: ArkadeNetworkId)
   return assetId.trim().toLowerCase() === depixAssetIdForNetwork(networkId).toLowerCase();
 }
 
+/** Parse BRL display from user input (accepts `2,50` or `2.50`). */
+export function parseBrlDisplay(raw: string): number | null {
+  const t = String(raw ?? "")
+    .trim()
+    .replace(/\s/g, "")
+    .replace(",", ".");
+  if (!t) return null;
+  const n = Number(t);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
 /** Display units (e.g. 1000 BRL) → atomic bigint. */
 export function depixDisplayToAtomic(display: number | string): bigint {
-  const n = typeof display === "string" ? Number(display) : display;
+  const n = typeof display === "string" ? Number(String(display).replace(",", ".")) : display;
   if (!Number.isFinite(n) || n < 0) return 0n;
   return BigInt(Math.round(n * Number(DEPIX_ATOMIC_PER_UNIT)));
 }

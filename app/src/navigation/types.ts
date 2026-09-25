@@ -104,7 +104,7 @@ export type RootStackParamList = {
   Activity: undefined;
   ActivityDetail: { activityId: string; walletId?: string };
   /** @deprecated Sheet host — do not navigate. */
-  FundsReceived: { amount: number; kind: "boarding" | "arkade" | "lightning" };
+  FundsReceived: { amount: number; kind: "boarding" | "arkade" | "lightning" | "brl" };
   /** @deprecated Sheet host — do not navigate. */
   FundsSent: {
     amount: number;
