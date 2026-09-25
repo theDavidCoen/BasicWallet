@@ -187,7 +187,6 @@ async function createHdWalletEngine(
     Wallet.create({
       identity,
       walletMode: "hd",
-      esploraUrl: network.esploraUrl,
       arkProvider: new TimedExpoArkProvider(network.arkServerUrl),
       indexerProvider: new ExpoIndexerProvider(network.arkServerUrl),
       onchainProvider: new NoWatchEsploraProvider(network.esploraUrl),

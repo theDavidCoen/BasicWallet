@@ -10,7 +10,11 @@ export const MAX_SEND_RECIPIENTS = 10;
 /** Local alias — matches Wallet.getSpendableVtxos() / SendParams.selectedVtxos. */
 export type SpendableVtxo = NormalizedExtendedVirtualCoin;
 
-export type SendRecipient = { address: string; amount: number };
+export type SendRecipient = {
+  address: string;
+  amount: number;
+  assets?: Array<{ assetId: string; amount: bigint }>;
+};
 
 export type DustSafeSendPlan = {
   amount: number;
@@ -63,8 +67,7 @@ export async function readSpendableAvailable(w: {
 }
 
 function vtxoBatchExpiry(v: SpendableVtxo): number {
-  const fromStatus = Number(v.virtualStatus?.batchExpiry);
-  if (Number.isFinite(fromStatus) && fromStatus > 0) return fromStatus;
+  // SDK 0.5+: batch expiry lives on expiresAt (virtualStatus removed).
   const fromDate = v.expiresAt instanceof Date ? v.expiresAt.getTime() : Number.NaN;
   if (Number.isFinite(fromDate) && fromDate > 0) return fromDate;
   return Number.MAX_SAFE_INTEGER;
@@ -183,14 +186,26 @@ export function formatSendError(e: unknown, dust = DEFAULT_MIN_VTXO_SATS): strin
 /** Merge duplicate addresses (sum amounts); preserve first-seen order. */
 export function mergeRecipientsByAddress(recipients: SendRecipient[]): SendRecipient[] {
   const order: string[] = [];
-  const map = new Map<string, number>();
+  const map = new Map<string, SendRecipient>();
   for (const r of recipients) {
     const addr = r.address.trim();
     if (!addr) continue;
-    if (!map.has(addr)) order.push(addr);
-    map.set(addr, (map.get(addr) ?? 0) + r.amount);
+    const prev = map.get(addr);
+    if (!prev) {
+      order.push(addr);
+      map.set(addr, {
+        address: addr,
+        amount: r.amount,
+        assets: r.assets ? [...r.assets] : undefined,
+      });
+    } else {
+      prev.amount += r.amount;
+      if (r.assets?.length) {
+        prev.assets = [...(prev.assets ?? []), ...r.assets];
+      }
+    }
   }
-  return order.map((address) => ({ address, amount: map.get(address)! }));
+  return order.map((address) => map.get(address)!);
 }
 
 const SEND_TIMEOUT_MS_DEFAULT = 45_000;

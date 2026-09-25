@@ -35,12 +35,15 @@ import {
 import { loadLndHubCredentials } from "../lightning/lndhubCredentials";
 import { useSheets } from "../navigation/SheetHost";
 import { encodeReceiveBip21 } from "../wallet/bip21Receive";
+import { encodeReceiveBip21Asset } from "../wallet/bip21Asset";
 import { useWallet } from "../wallet/WalletProvider";
 import { formatSatsLabel } from "../wallet/formatSats";
 import { colors } from "../theme/colors";
 import { ReceivePosPanel } from "./ReceivePosPanel";
+import { useFiatMode } from "../fiat/FiatModeProvider";
+import { depixAssetIdForNetwork, padSatsForDepixSwap } from "../fiat/depixAssets";
 
-type ReceiveMode = "bip21" | "arkade" | "boarding";
+type ReceiveMode = "bip21" | "arkade" | "boarding" | "brl";
 
 function midEllipsis(s: string, left = 16, right = 6): string {
   if (s.length <= left + right + 1) return s;
@@ -67,12 +70,18 @@ export function ReceiveScreen() {
     bumpActivity,
     setPosUiHold,
   } = useWallet();
+  const { fiatMode } = useFiatMode();
   const network = getNetworkConfig();
-  const [mode, setMode] = useState<ReceiveMode>("bip21");
+  const [mode, setMode] = useState<ReceiveMode>(fiatMode ? "brl" : "bip21");
   const [busy, setBusy] = useState(false);
   const [boardingLoading, setBoardingLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [posOpen, setPosOpen] = useState(false);
+  const [brlAmount, setBrlAmount] = useState("0");
+
+  useEffect(() => {
+    setMode(fiatMode ? "brl" : "bip21");
+  }, [fiatMode]);
 
   useEffect(() => {
     if (!posOpen) return;
@@ -123,6 +132,13 @@ export function ReceiveScreen() {
   }, [posOpenSV]);
 
   const isLightning = selectedWallet?.kind === "lightning";
+
+  // Fiat Mode: POS is the default receive surface.
+  useEffect(() => {
+    if (!fiatMode || isLightning) return;
+    const t = setTimeout(() => openPos(), 80);
+    return () => clearTimeout(t);
+  }, [fiatMode, isLightning, openPos]);
 
   // —— Lightning receive ——
   const [lnAmount, setLnAmount] = useState("");
@@ -259,10 +275,27 @@ export function ReceiveScreen() {
     [boardingAddress, arkAddress],
   );
 
+  const brlUri = useMemo(() => {
+    if (!arkAddress) return null;
+    const amt = Number(brlAmount);
+    const display = Number.isFinite(amt) && amt > 0 ? amt : 0;
+    try {
+      return encodeReceiveBip21Asset(
+        arkAddress,
+        depixAssetIdForNetwork(network.id),
+        display > 0 ? display : 0,
+      );
+    } catch {
+      return null;
+    }
+  }, [arkAddress, brlAmount, network.id]);
+
   const buildPosBip21 = useCallback(
-    (amountSats: number) =>
-      encodeReceiveBip21(boardingAddress, arkAddress, null, amountSats),
-    [boardingAddress, arkAddress],
+    (amountSats: number) => {
+      const sats = fiatMode ? padSatsForDepixSwap(amountSats) : amountSats;
+      return encodeReceiveBip21(boardingAddress, arkAddress, null, sats);
+    },
+    [boardingAddress, arkAddress, fiatMode],
   );
 
   /**
@@ -371,7 +404,13 @@ export function ReceiveScreen() {
   );
 
   const displayPayload =
-    mode === "bip21" ? bip21Uri : mode === "arkade" ? arkAddress : boardingAddress;
+    mode === "brl"
+      ? brlUri
+      : mode === "bip21"
+        ? bip21Uri
+        : mode === "arkade"
+          ? arkAddress
+          : boardingAddress;
 
   const bal = formatSatsLabel(balanceSats, balanceHidden);
   const boardingSats = balance?.boarding ?? 0;
@@ -379,20 +418,30 @@ export function ReceiveScreen() {
     ? "******"
     : boardingSats.toLocaleString("en-US");
 
-  const caption =
-    mode === "bip21"
+  const caption = fiatMode
+    ? mode === "brl"
+      ? `BRL (DePix) · ${network.label}`
+      : mode === "bip21"
+        ? `Universal BIP21 · ${network.label}`
+        : `Arkade · ${network.label}`
+    : mode === "bip21"
       ? `BIP21 · boarding + Arkade · ${network.label}`
       : mode === "arkade"
         ? `Arkade · ${network.label}`
         : `Onchain boarding · ${network.label}`;
 
   const qrReady =
-    mode === "bip21"
-      ? Boolean(bip21Uri && (boardingAddress || arkAddress))
-      : Boolean(displayPayload);
+    mode === "brl"
+      ? Boolean(brlUri && arkAddress)
+      : mode === "bip21"
+        ? Boolean(bip21Uri && (boardingAddress || arkAddress))
+        : Boolean(displayPayload);
 
   const showBoardingSpinner =
-    (mode === "boarding" || mode === "bip21") && boardingLoading && !boardingAddress;
+    !fiatMode &&
+    (mode === "boarding" || mode === "bip21") &&
+    boardingLoading &&
+    !boardingAddress;
 
   async function onCopy() {
     const text = isLightning ? lnInvoice?.paymentRequest : displayPayload;
@@ -575,30 +624,61 @@ export function ReceiveScreen() {
               <Text style={styles.caption}>{caption}</Text>
 
               <View style={styles.modeRow}>
-                <Pressable
-                  style={[styles.modeBtn, mode === "bip21" && styles.modeBtnOn]}
-                  onPress={() => setMode("bip21")}
-                >
-                  <Text style={[styles.modeLabel, mode === "bip21" && styles.modeLabelOn]}>
-                    BIP21
-                  </Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.modeBtn, mode === "arkade" && styles.modeBtnOn]}
-                  onPress={() => setMode("arkade")}
-                >
-                  <Text style={[styles.modeLabel, mode === "arkade" && styles.modeLabelOn]}>
-                    Arkade
-                  </Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.modeBtn, mode === "boarding" && styles.modeBtnOn]}
-                  onPress={() => setMode("boarding")}
-                >
-                  <Text style={[styles.modeLabel, mode === "boarding" && styles.modeLabelOn]}>
-                    Boarding
-                  </Text>
-                </Pressable>
+                {fiatMode ? (
+                  <>
+                    <Pressable
+                      style={[styles.modeBtn, mode === "brl" && styles.modeBtnOn]}
+                      onPress={() => setMode("brl")}
+                    >
+                      <Text style={[styles.modeLabel, mode === "brl" && styles.modeLabelOn]}>
+                        BRL
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.modeBtn, mode === "bip21" && styles.modeBtnOn]}
+                      onPress={() => setMode("bip21")}
+                    >
+                      <Text style={[styles.modeLabel, mode === "bip21" && styles.modeLabelOn]}>
+                        Universal BIP21
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.modeBtn, mode === "arkade" && styles.modeBtnOn]}
+                      onPress={() => setMode("arkade")}
+                    >
+                      <Text style={[styles.modeLabel, mode === "arkade" && styles.modeLabelOn]}>
+                        Arkade
+                      </Text>
+                    </Pressable>
+                  </>
+                ) : (
+                  <>
+                    <Pressable
+                      style={[styles.modeBtn, mode === "bip21" && styles.modeBtnOn]}
+                      onPress={() => setMode("bip21")}
+                    >
+                      <Text style={[styles.modeLabel, mode === "bip21" && styles.modeLabelOn]}>
+                        BIP21
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.modeBtn, mode === "arkade" && styles.modeBtnOn]}
+                      onPress={() => setMode("arkade")}
+                    >
+                      <Text style={[styles.modeLabel, mode === "arkade" && styles.modeLabelOn]}>
+                        Arkade
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.modeBtn, mode === "boarding" && styles.modeBtnOn]}
+                      onPress={() => setMode("boarding")}
+                    >
+                      <Text style={[styles.modeLabel, mode === "boarding" && styles.modeLabelOn]}>
+                        Boarding
+                      </Text>
+                    </Pressable>
+                  </>
+                )}
               </View>
 
               <View style={styles.qrWrap}>

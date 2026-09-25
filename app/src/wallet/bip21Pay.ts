@@ -8,14 +8,19 @@ import {
   extractArkAddressFromScan,
   extractLightningPayFromScan,
 } from "../screens/ScanQrModal";
+import { parseAssetBip21 } from "./bip21Asset";
 
 export type PayIntentPrefer = "arkade" | "lightning";
 
 export type PayIntent = {
   /** Value for the Send destination field (ark… / bolt11 / lnurl / …). */
   destination: string;
-  /** From BIP21 amount=, when present. */
+  /** From BIP21 amount=, when present (BTC mode only). */
   amountSats?: number;
+  /** Present when URI carries `assetid` (DePix / BRL). */
+  assetId?: string;
+  /** Asset display units from `amount=` when `assetId` is set. */
+  assetAmountDisplay?: string;
 };
 
 function amountFromRaw(raw: string): number | undefined {
@@ -42,6 +47,14 @@ export function resolvePayIntent(
 
   if (/^bitcoin:/i.test(t)) {
     try {
+      const assetParsed = parseAssetBip21(t);
+      if (assetParsed.assetId && assetParsed.arkAddress && isValidArkAddress(assetParsed.arkAddress)) {
+        return {
+          destination: assetParsed.arkAddress,
+          assetId: assetParsed.assetId,
+          assetAmountDisplay: assetParsed.assetAmountDisplay ?? undefined,
+        };
+      }
       const { params } = BIP21.parse(t);
       const ark = typeof params.ark === "string" ? params.ark.trim() : "";
       const ln =

@@ -1,0 +1,24 @@
+{
+  "version": 0,
+  "name": "solver-ae6c048f",
+  "markets": [
+    {
+      "pair": "BTC/DePix",
+      "base_asset": { "id": "btc", "name": "Bitcoin", "ticker": "BTC", "decimals": 8 },
+      "quote_asset": {
+        "id": "0abcbc23c60028511880807dfe42aa16de88bd56df210a0b9135262d5d3959510000",
+        "name": "Decentralized PIX",
+        "ticker": "DePix",
+        "decimals": 8
+      },
+      "price_feed": "https://api.binance.com/api/v3/ticker/price?symbol=BTCBRL",
+      "price_feed_schema": { "type": "json", "price_path": "/price" },
+      "price_decimals": 0,
+      "fee_bps": 140,
+      "min_base_amount": "1001",
+      "max_base_amount": "10000000000000",
+      "min_quote_amount": "330",
+      "max_quote_amount": "10000000000000"
+    }
+  ]
+}

@@ -32,6 +32,8 @@ export type RootStackParamList = {
   ArkadeNetwork: undefined;
   /** Penpot 05b */
   DisplayCurrencies: undefined;
+  /** Fiat Mode (DePix / BRL) for selected Arkade wallet */
+  FiatModeSettings: undefined;
   /** Arkade VTXO delegates */
   Delegates: undefined;
   /** Status for selected wallet (Arkade operator / Lightning node). Not the connect hub. */

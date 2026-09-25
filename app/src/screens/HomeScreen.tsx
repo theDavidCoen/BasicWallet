@@ -45,6 +45,8 @@ import {
 import { useWallet } from "../wallet/WalletProvider";
 import { formatSatsAmount, formatSatsLabel } from "../wallet/formatSats";
 import { colors } from "../theme/colors";
+import { useFiatMode } from "../fiat/FiatModeProvider";
+import { formatBrlDisplay } from "../fiat/depixAssets";
 
 const MUTINYNET_OK = "#7DCEA0";
 const MUTINYNET_DOWN = "#E07070";
@@ -79,6 +81,12 @@ export function HomeScreen() {
     avatarLabel,
     bumpActivity,
   } = useWallet();
+  const {
+    fiatMode,
+    requestEnter,
+    requestExit,
+    depixDisplay,
+  } = useFiatMode();
   const { activeCount, pendingSweep, refreshPendingSweep } = useExitJobs();
   const {
     openActivity,
@@ -146,14 +154,21 @@ export function HomeScreen() {
   }, [balanceUnit, fiatCodes]);
 
   const cycleBalanceUnit = useCallback(() => {
+    if (fiatMode) return;
     setBalanceUnit((prev) => {
       const i = unitCycle.indexOf(prev);
       const next = unitCycle[(i < 0 ? 0 : i + 1) % unitCycle.length];
       return next ?? "sats";
     });
-  }, [unitCycle]);
+  }, [unitCycle, fiatMode]);
 
   const primaryBalance = useMemo(() => {
+    if (fiatMode) {
+      if (depixDisplay == null) {
+        return balanceStatus === "loading" ? "…" : formatBrlDisplay(0, { hidden: balanceHidden });
+      }
+      return formatBrlDisplay(depixDisplay, { hidden: balanceHidden });
+    }
     if (balanceUnit === "sats") return bal;
     if (balanceSats === null) {
       return balanceStatus === "loading" ? "…" : `0 ${balanceUnit}`;
@@ -164,6 +179,8 @@ export function HomeScreen() {
       }) ?? (balanceHidden ? `****** ${balanceUnit}` : `… ${balanceUnit}`)
     );
   }, [
+    fiatMode,
+    depixDisplay,
     bal,
     balanceHidden,
     balanceSats,
@@ -173,12 +190,17 @@ export function HomeScreen() {
   ]);
 
   const secondaryBalance = useMemo(() => {
-    if (balanceHidden || balanceSats === null) return null;
+    if (balanceHidden) return null;
+    if (fiatMode) {
+      if (balanceSats === null) return null;
+      return `≈ ${formatSatsAmount(balanceSats, false)} sats`;
+    }
+    if (balanceSats === null) return null;
     if (balanceUnit === "sats") {
       return formatHomeFiatLine(balanceSats, fiatCodes, fiatRates);
     }
     return `≈ ${formatSatsAmount(balanceSats, false)} sats`;
-  }, [balanceHidden, balanceSats, balanceUnit, fiatCodes, fiatRates]);
+  }, [balanceHidden, balanceSats, balanceUnit, fiatCodes, fiatRates, fiatMode]);
 
   const mutinynetColor = mutinynetOnline ? MUTINYNET_OK : MUTINYNET_DOWN;
 
@@ -604,10 +626,18 @@ export function HomeScreen() {
             <WalletAvatar label={avatarLabel} onPress={openWalletSwitcher} />
           }
           headerRight={
-            activeCount > 0 ||
-            pendingSweep.count > 0 ||
-            network.id === "mutinynet" ? (
             <View style={styles.headerRightStack}>
+              {selectedWallet?.kind === "arkade" ? (
+                <Pressable
+                  onPress={fiatMode ? requestExit : requestEnter}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel={fiatMode ? "Exit Fiat Mode" : "Enter Fiat Mode"}
+                  style={styles.fiatModeBtn}
+                >
+                  <Text style={styles.fiatModeBtnLabel}>{fiatMode ? "₿" : "R$"}</Text>
+                </Pressable>
+              ) : null}
               {activeCount > 0 ? (
                 <Pressable
                   onPress={() => navigation.navigate("UnilateralExitHub")}
@@ -656,7 +686,6 @@ export function HomeScreen() {
                 </Pressable>
               ) : null}
             </View>
-            ) : null
           }
           onLongPressEmpty={openSettings}
         >
@@ -676,14 +705,16 @@ export function HomeScreen() {
                     {primaryBalance}
                   </Text>
                 </Pressable>
-                <Pressable
-                  onPress={cycleBalanceUnit}
-                  style={styles.swapBtn}
-                  hitSlop={12}
-                  accessibilityLabel="Switch balance unit"
-                >
-                  <Text style={styles.swapIco}>⇅</Text>
-                </Pressable>
+                {!fiatMode ? (
+                  <Pressable
+                    onPress={cycleBalanceUnit}
+                    style={styles.swapBtn}
+                    hitSlop={12}
+                    accessibilityLabel="Switch balance unit"
+                  >
+                    <Text style={styles.swapIco}>⇅</Text>
+                  </Pressable>
+                ) : null}
               </View>
               {secondaryBalance ? (
                 <Text style={styles.fiatHint}>{secondaryBalance}</Text>
@@ -743,7 +774,22 @@ const styles = StyleSheet.create({
   headerRightStack: {
     alignItems: "flex-end",
     gap: 6,
-    maxWidth: 120,
+    maxWidth: 140,
+  },
+  fiatModeBtn: {
+    minWidth: 36,
+    minHeight: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+  },
+  fiatModeBtnLabel: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 13,
+    color: colors.fg,
   },
   exitBadgeRow: {
     flexDirection: "row",

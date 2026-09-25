@@ -16,6 +16,8 @@ import {
 } from "./src/security/accountDbKey";
 import { WalletProvider } from "./src/wallet/WalletProvider";
 import { ExitJobsProvider } from "./src/exit/ExitJobsProvider";
+import { FiatModeProvider } from "./src/fiat/FiatModeProvider";
+import { FiatModeConvertingOverlay } from "./src/fiat/FiatModeConvertingOverlay";
 import { colors } from "./src/theme/colors";
 
 // Dev banner noise — does not hide real redbox errors.
@@ -101,10 +103,13 @@ export default function App() {
     <GestureHandlerRootView style={{ flex: 1 }} key={sessionKey}>
       <SafeAreaProvider>
         <WalletProvider>
-          <ExitJobsProvider>
-            <RootNavigator />
-          </ExitJobsProvider>
-          <StatusBar style="light" />
+          <FiatModeProvider>
+            <ExitJobsProvider>
+              <RootNavigator />
+            </ExitJobsProvider>
+            <FiatModeConvertingOverlay />
+            <StatusBar style="light" />
+          </FiatModeProvider>
         </WalletProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

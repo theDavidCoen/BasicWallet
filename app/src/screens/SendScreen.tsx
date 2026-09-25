@@ -58,6 +58,7 @@ import {
 import { useWallet } from "../wallet/WalletProvider";
 import { formatSatsLabel } from "../wallet/formatSats";
 import { ScanQrModal, extractLightningPayFromScan, extractArkAddressFromScan } from "./ScanQrModal";
+import { useFiatMode } from "../fiat/FiatModeProvider";
 import { resolvePayIntent } from "../wallet/bip21Pay";
 import type { WalletRecord } from "../account/walletRegistry";
 
@@ -71,6 +72,9 @@ type SendLine = {
   address: string;
   amountStr: string;
   walletLabel: string | null;
+  /** When set, amountStr is DePix display units and send uses assets[]. */
+  assetId?: string | null;
+  assetAmountDisplay?: string | null;
 };
 
 function newSendLine(partial?: Partial<SendLine>): SendLine {
@@ -222,6 +226,7 @@ export function SendScreen() {
     wallets,
     bumpActivity,
   } = useWallet();
+  const { fiatMode, convertDepixToSatsForPay, depixDisplay } = useFiatMode();
   const network = getNetworkConfig();
   /** Lightning path still uses flat address/amount. */
   const [address, setAddress] = useState("");
@@ -403,9 +408,14 @@ export function SendScreen() {
         ? intent.destination
         : text;
     const amt =
-      intent && (text.includes("?") || /^bitcoin:/i.test(text.trim())) && intent.amountSats != null
-        ? String(intent.amountSats)
-        : null;
+      intent?.assetId && intent.assetAmountDisplay
+        ? intent.assetAmountDisplay
+        : intent &&
+            (text.includes("?") || /^bitcoin:/i.test(text.trim())) &&
+            intent.amountSats != null
+          ? String(intent.amountSats)
+          : null;
+    const assetId = intent?.assetId ?? null;
 
     if (isLightning) {
       setAddress(dest);
@@ -430,6 +440,8 @@ export function SendScreen() {
               address: dest,
               walletLabel,
               ...(amt ? { amountStr: amt } : {}),
+              assetId,
+              assetAmountDisplay: intent?.assetAmountDisplay ?? null,
             }
           : l,
       ),
@@ -849,6 +861,32 @@ export function SendScreen() {
     const built: SendRecipient[] = [];
     for (const line of lines) {
       const trimmed = line.address.trim();
+      if (line.assetId) {
+        const display = Number(line.amountStr.replace(/[,\s]/g, ""));
+        if (!trimmed || !Number.isFinite(display) || display <= 0) {
+          Alert.alert(
+            "Incomplete recipient",
+            "Each DePix recipient needs an ark… address and a positive BRL amount.",
+          );
+          return;
+        }
+        if (!isValidArkAddress(trimmed)) {
+          Alert.alert("Invalid address", "Paste a valid Arkade (ark…) address.");
+          return;
+        }
+        const { depixDisplayToAtomic: toAtomic } = await import("../fiat/depixAssets");
+        built.push({
+          address: trimmed,
+          amount: 330, // dust carrier sats
+          assets: [
+            {
+              assetId: line.assetId,
+              amount: toAtomic(display),
+            },
+          ],
+        });
+        continue;
+      }
       const amount = parseAmountSats(line.amountStr);
       if (!trimmed && amount == null) continue;
       if (!trimmed || amount == null) {
@@ -878,6 +916,45 @@ export function SendScreen() {
     }
 
     const recipients = mergeRecipientsByAddress(built);
+    const wantsAsset = recipients.some((r) => (r.assets?.length ?? 0) > 0);
+    if (fiatMode && !wantsAsset) {
+      try {
+        const need = recipients.reduce((s, r) => s + r.amount, 0);
+        const brl = depixDisplay ?? 0;
+        if (!(brl > 0)) {
+          Alert.alert("Insufficient BRL", "Convert or receive DePix before sending sats.");
+          return;
+        }
+        Alert.alert(
+          "Convert to sats",
+          `This payment needs sats. Convert your BRL balance (~${brl.toFixed(2)}) to sats first? Fee applies.`,
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Convert & send",
+              onPress: () => {
+                void (async () => {
+                  try {
+                    await convertDepixToSatsForPay(need);
+                    // User can tap Send again after conversion settles.
+                    Alert.alert("Converted", "Tap Send again to pay the sats invoice.");
+                  } catch (e) {
+                    Alert.alert(
+                      "Conversion failed",
+                      e instanceof Error ? e.message : "Unknown error",
+                    );
+                  }
+                })();
+              },
+            },
+          ],
+        );
+        return;
+      } catch (e) {
+        Alert.alert("Conversion failed", e instanceof Error ? e.message : "Unknown error");
+        return;
+      }
+    }
     if (!wallet) {
       Alert.alert("Wallet closed", "Re-open the wallet and try again.");
       return;
