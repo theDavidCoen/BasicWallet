@@ -32,8 +32,6 @@ import {
   runDepixExchange,
   type DepixSwapProgress,
 } from "./depixSwapClient";
-import { FiatModeEnterDialog } from "./FiatModeEnterDialog";
-import { FiatModeExitDialog } from "./FiatModeExitDialog";
 import {
   readFiatModeState,
   writeFiatModeState,
@@ -54,13 +52,11 @@ type FiatModeContextValue = {
   satsEstimate: number | null;
   feeBps: number;
   minEnterSats: number;
-  /** Home: open FundsReceived-style enter overlay (does not navigate). */
-  requestEnter: () => void;
-  /** Home: open exit overlay (does not navigate). */
-  requestExit: () => void;
-  /** Settings page: run enter without overlay (caller already confirmed on-page). */
+  /**
+   * Home enter/exit UI lives in SheetHost (`openFiatModeEnter` / `openFiatModeExit`).
+   * Settings uses confirmEnter / confirmExit on-page.
+   */
   confirmEnter: () => void;
-  /** Settings page: run exit without overlay. */
   confirmExit: () => void;
   cancelConverting: () => void;
   /** Refresh DePix balance from live wallet.getBalance().assets. */
@@ -108,8 +104,6 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const [converting, setConverting] = useState(false);
   const [convertingMessage, setConvertingMessage] = useState("");
   const [depixDisplay, setDepixDisplay] = useState<number | null>(null);
-  const [enterDialogOpen, setEnterDialogOpen] = useState(false);
-  const [exitDialogOpen, setExitDialogOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const activeSwapIdRef = useRef<string | null>(null);
   const walletIdRef = useRef<string | null>(null);
@@ -256,23 +250,13 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     ],
   );
 
-  const requestEnter = useCallback(() => {
+  const confirmEnter = useCallback(() => {
     if (!walletId || selectedWallet?.kind !== "arkade") {
       Alert.alert("Fiat Mode", "Select an Arkade wallet first.");
       return;
     }
     if (state?.fiatMode || converting) return;
-    setExitDialogOpen(false);
-    setEnterDialogOpen(true);
-  }, [walletId, selectedWallet, state?.fiatMode, converting]);
-
-  const dismissEnterDialog = useCallback(() => {
-    setEnterDialogOpen(false);
-  }, []);
-
-  const confirmEnter = useCallback(() => {
     const sats = balanceSats ?? 0;
-    setEnterDialogOpen(false);
     if (sats < DEPIX_MIN_BASE_SATS) {
       Alert.alert(
         "Not enough sats",
@@ -281,29 +265,18 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       return;
     }
     void runJob("enter", "btc-to-depix", BigInt(sats));
-  }, [balanceSats, runJob]);
-
-  const requestExit = useCallback(() => {
-    if (!walletId || !state?.fiatMode || converting) return;
-    setEnterDialogOpen(false);
-    setExitDialogOpen(true);
-  }, [walletId, state?.fiatMode, converting]);
-
-  const dismissExitDialog = useCallback(() => {
-    setExitDialogOpen(false);
-  }, []);
+  }, [walletId, selectedWallet, state?.fiatMode, converting, balanceSats, runJob]);
 
   const confirmExit = useCallback(() => {
+    if (!walletId || !state?.fiatMode || converting) return;
     const display = depixDisplay ?? 0;
-    setExitDialogOpen(false);
     if (!(display > 0)) {
-      // Nothing to convert: leave mode without a swap.
       void patchState({ fiatMode: false, pendingJob: null });
       return;
     }
     const atomic = BigInt(Math.round(display * 1e8));
     void runJob("exit", "depix-to-btc", atomic);
-  }, [depixDisplay, runJob, patchState]);
+  }, [walletId, state?.fiatMode, converting, depixDisplay, runJob, patchState]);
 
   const cancelConverting = useCallback(() => {
     abortRef.current?.abort();
@@ -374,8 +347,6 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       satsEstimate: null,
       feeBps: DEPIX_FEE_BPS,
       minEnterSats: DEPIX_MIN_BASE_SATS,
-      requestEnter,
-      requestExit,
       confirmEnter,
       confirmExit,
       cancelConverting,
@@ -389,8 +360,6 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       converting,
       convertingMessage,
       depixDisplay,
-      requestEnter,
-      requestExit,
       confirmEnter,
       confirmExit,
       cancelConverting,
@@ -400,25 +369,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     ],
   );
 
-  return (
-    <FiatModeContext.Provider value={value}>
-      {children}
-      {enterDialogOpen ? (
-        <FiatModeEnterDialog
-          availableSats={balanceSats ?? 0}
-          onConfirm={confirmEnter}
-          onCancel={dismissEnterDialog}
-        />
-      ) : null}
-      {exitDialogOpen ? (
-        <FiatModeExitDialog
-          brlDisplay={depixDisplay ?? 0}
-          onConfirm={confirmExit}
-          onCancel={dismissExitDialog}
-        />
-      ) : null}
-    </FiatModeContext.Provider>
-  );
+  return <FiatModeContext.Provider value={value}>{children}</FiatModeContext.Provider>;
 }
 
 export function useFiatMode(): FiatModeContextValue {

@@ -63,6 +63,9 @@ import {
 import { getMnemonicSource } from "../wallet/mnemonicMeta";
 import { resolvePayIntent } from "../wallet/bip21Pay";
 import { useWallet } from "../wallet/WalletProvider";
+import { useFiatMode } from "../fiat/FiatModeProvider";
+import { FiatModeEnterSheetContent } from "../fiat/FiatModeEnterSheetContent";
+import { FiatModeExitSheetContent } from "../fiat/FiatModeExitSheetContent";
 
 export type FundsSentPayload = {
   amount: number;
@@ -89,6 +92,10 @@ type SheetsApi = {
   openNodeStatus: (payload: NodeStatusPayload) => void;
   openFundsSent: (payload: FundsSentPayload) => void;
   openFundsReceived: (payload: FundsReceivedPayload) => void;
+  /** Home: Enter Fiat Mode confirm as InteractiveBottomSheet (not a page). */
+  openFiatModeEnter: () => void;
+  /** Home: Exit Fiat Mode confirm as InteractiveBottomSheet. */
+  openFiatModeExit: () => void;
   /** Open Save to contacts sheet over current UI (Activity detail / Funds sent). */
   openSaveToContacts: (destination: string) => void;
   openPosSheet: () => void;
@@ -100,6 +107,7 @@ type SheetsApi = {
   dismissConnectNode: () => void;
   dismissFundsReceived: () => void;
   dismissFundsSent: () => void;
+  dismissFiatModeSheet: () => void;
   dismissPosSheet: () => void;
   dismissScanSheet: () => void;
   activitySheetRef: RefObject<InteractiveBottomSheetRef | null>;
@@ -123,6 +131,7 @@ type SheetsApi = {
   connectNodeOpen: boolean;
   fundsReceivedOpen: boolean;
   fundsSentOpen: boolean;
+  fiatModeSheetOpen: boolean;
   activityMotion: SheetMotionShared;
   posMotion: SideMotionShared;
   scanMotion: SideMotionShared;
@@ -178,11 +187,13 @@ function closeNoticeSheets(
 
 export function SheetHost({ children }: { children: ReactNode }) {
   const navigation = useNavigation<RootNav>();
-  const { fundsNotice, clearFundsNotice, selectedWallet, setPosUiHold, walletInteractive } =
+  const { fundsNotice, clearFundsNotice, selectedWallet, setPosUiHold, walletInteractive, balanceSats } =
     useWallet();
+  const { confirmEnter, confirmExit, fiatMode, converting, depixDisplay } = useFiatMode();
 
   const activityRef = useRef<InteractiveBottomSheetRef>(null);
   const walletRef = useRef<InteractiveBottomSheetRef>(null);
+  const fiatModeRef = useRef<InteractiveBottomSheetRef>(null);
   const posRef = useRef<InteractiveSideSheetRef>(null);
   const scanRef = useRef<InteractiveSideSheetRef>(null);
 
@@ -219,6 +230,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
   );
   const [saveContactOpen, setSaveContactOpen] = useState(false);
   const [saveContactDest, setSaveContactDest] = useState("");
+  const [fiatModeSheet, setFiatModeSheet] = useState<"enter" | "exit" | null>(null);
   const [activitySkipEnter, setActivitySkipEnter] = useState(false);
   const [activityAnchorY, setActivityAnchorYState] = useState<number | null>(null);
   const [, setHomeDragging] = useState(false);
@@ -325,6 +337,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
     setPosSkipEnter(false);
     setScanOpen(false);
     setScanSkipEnter(false);
+    setFiatModeSheet(null);
     closeNoticeSheets(
       setFundsSentOpen,
       setFundsSentPayload,
@@ -354,6 +367,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
     setPosSkipEnter(false);
     setScanOpen(false);
     setScanSkipEnter(false);
+    setFiatModeSheet(null);
     closeNoticeSheets(
       setFundsSentOpen,
       setFundsSentPayload,
@@ -411,6 +425,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
       setActivityOpen(false);
       setWalletOpen(false);
       resetWalletFlow();
+      setFiatModeSheet(null);
       setFundsReceivedOpen(false);
       setFundsReceivedPayload(null);
       clearFundsNotice();
@@ -429,6 +444,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
       setPosSkipEnter(false);
       setScanOpen(false);
       setScanSkipEnter(false);
+      setFiatModeSheet(null);
       setFundsSentOpen(false);
       setFundsSentPayload(null);
       clearFundsNotice();
@@ -445,6 +461,60 @@ export function SheetHost({ children }: { children: ReactNode }) {
     setSaveContactOpen(true);
   }, []);
 
+  const dismissFiatModeSheet = useCallback(() => {
+    setFiatModeSheet(null);
+  }, []);
+
+  const openFiatModeEnter = useCallback(() => {
+    if (selectedWallet?.kind !== "arkade" || fiatMode || converting) return;
+    setActivityOpen(false);
+    setWalletOpen(false);
+    resetWalletFlow();
+    setPosOpen(false);
+    setPosSkipEnter(false);
+    setScanOpen(false);
+    setScanSkipEnter(false);
+    closeNoticeSheets(
+      setFundsSentOpen,
+      setFundsSentPayload,
+      setFundsReceivedOpen,
+      setFundsReceivedPayload,
+      clearFundsNotice,
+    );
+    setFiatModeSheet("enter");
+  }, [
+    selectedWallet?.kind,
+    fiatMode,
+    converting,
+    resetWalletFlow,
+    clearFundsNotice,
+  ]);
+
+  const openFiatModeExit = useCallback(() => {
+    if (selectedWallet?.kind !== "arkade" || !fiatMode || converting) return;
+    setActivityOpen(false);
+    setWalletOpen(false);
+    resetWalletFlow();
+    setPosOpen(false);
+    setPosSkipEnter(false);
+    setScanOpen(false);
+    setScanSkipEnter(false);
+    closeNoticeSheets(
+      setFundsSentOpen,
+      setFundsSentPayload,
+      setFundsReceivedOpen,
+      setFundsReceivedPayload,
+      clearFundsNotice,
+    );
+    setFiatModeSheet("exit");
+  }, [
+    selectedWallet?.kind,
+    fiatMode,
+    converting,
+    resetWalletFlow,
+    clearFundsNotice,
+  ]);
+
   const beginActivityDrag = useCallback(() => {
     setWalletOpen(false);
     resetWalletFlow();
@@ -452,6 +522,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
     setPosSkipEnter(false);
     setScanOpen(false);
     setScanSkipEnter(false);
+    setFiatModeSheet(null);
     closeNoticeSheets(
       setFundsSentOpen,
       setFundsSentPayload,
@@ -712,7 +783,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
       walletOpen ||
       activityOpen ||
       posOpen ||
-      scanOpen;
+      scanOpen ||
+      fiatModeSheet != null;
     if (!anyOpen) return;
     const sub = BackHandler.addEventListener("hardwareBackPress", () => {
       if (fundsReceivedOpen) {
@@ -721,6 +793,10 @@ export function SheetHost({ children }: { children: ReactNode }) {
       }
       if (fundsSentOpen) {
         finishFundsSentHome();
+        return true;
+      }
+      if (fiatModeSheet != null) {
+        dismissFiatModeSheet();
         return true;
       }
       if (posOpen) {
@@ -742,8 +818,10 @@ export function SheetHost({ children }: { children: ReactNode }) {
     return () => sub.remove();
   }, [
     activityOpen,
+    dismissFiatModeSheet,
     dismissPosAnimated,
     dismissScanAnimated,
+    fiatModeSheet,
     finishFundsReceivedHome,
     finishFundsSentHome,
     fundsReceivedOpen,
@@ -787,6 +865,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
       openNodeStatus,
       openFundsSent,
       openFundsReceived,
+      openFiatModeEnter,
+      openFiatModeExit,
       openSaveToContacts,
       openPosSheet,
       openScanSheet,
@@ -797,6 +877,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
       dismissConnectNode,
       dismissFundsReceived,
       dismissFundsSent,
+      dismissFiatModeSheet,
       dismissPosSheet,
       dismissScanSheet,
       activitySheetRef: activityRef,
@@ -817,6 +898,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
       connectNodeOpen,
       fundsReceivedOpen,
       fundsSentOpen,
+      fiatModeSheetOpen: fiatModeSheet != null,
       activityMotion,
       posMotion,
       scanMotion,
@@ -835,12 +917,14 @@ export function SheetHost({ children }: { children: ReactNode }) {
       dismissActivity,
       dismissAddWallet,
       dismissConnectNode,
+      dismissFiatModeSheet,
       dismissFundsReceived,
       dismissFundsSent,
       dismissImportWallet,
       dismissPosSheet,
       dismissScanSheet,
       dismissWalletSwitcher,
+      fiatModeSheet,
       fundsReceivedOpen,
       fundsSentOpen,
       importWalletOpen,
@@ -849,6 +933,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
       openConnectBtcPay,
       openConnectLndHub,
       openConnectNode,
+      openFiatModeEnter,
+      openFiatModeExit,
       openFundsSent,
       openFundsReceived,
       openSaveToContacts,
@@ -1118,6 +1204,34 @@ export function SheetHost({ children }: { children: ReactNode }) {
             setSaveContactDest("");
           }}
         />
+
+        <InteractiveBottomSheet
+          ref={fiatModeRef}
+          open={fiatModeSheet != null}
+          onDismiss={dismissFiatModeSheet}
+          visibleFraction={fiatModeSheet === "exit" ? 0.58 : 0.88}
+        >
+          {fiatModeSheet === "enter" ? (
+            <FiatModeEnterSheetContent
+              availableSats={balanceSats ?? 0}
+              onConfirm={() => {
+                dismissFiatModeSheet();
+                confirmEnter();
+              }}
+              onCancel={dismissFiatModeSheet}
+            />
+          ) : null}
+          {fiatModeSheet === "exit" ? (
+            <FiatModeExitSheetContent
+              brlDisplay={depixDisplay ?? 0}
+              onConfirm={() => {
+                dismissFiatModeSheet();
+                confirmExit();
+              }}
+              onCancel={dismissFiatModeSheet}
+            />
+          ) : null}
+        </InteractiveBottomSheet>
 
         <FundsNoticeOverlay open={fundsReceivedOpen}>
           {fundsReceivedPayload ? (

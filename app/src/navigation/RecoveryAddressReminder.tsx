@@ -40,6 +40,7 @@ export function RecoveryAddressReminder({
     fundsSentOpen,
     posOpen,
     scanOpen,
+    fiatModeSheetOpen,
   } = useSheets();
   const [visible, setVisible] = useState(false);
   const [routeName, setRouteName] = useState<string | undefined>();
@@ -51,7 +52,8 @@ export function RecoveryAddressReminder({
     fundsReceivedOpen ||
     fundsSentOpen ||
     posOpen ||
-    scanOpen;
+    scanOpen ||
+    fiatModeSheetOpen;
 
   const refresh = useCallback(() => {
     void (async () => {

@@ -44,6 +44,7 @@ export function ContactShareReminder({
     fundsSentOpen,
     posOpen,
     scanOpen,
+    fiatModeSheetOpen,
   } = useSheets();
   const [offer, setOffer] = useState<ContactShareOffer | null>(null);
   const [routeName, setRouteName] = useState<string | undefined>();
@@ -55,7 +56,8 @@ export function ContactShareReminder({
     fundsReceivedOpen ||
     fundsSentOpen ||
     posOpen ||
-    scanOpen;
+    scanOpen ||
+    fiatModeSheetOpen;
 
   const refresh = useCallback(() => {
     void (async () => {

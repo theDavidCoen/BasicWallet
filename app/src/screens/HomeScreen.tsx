@@ -83,14 +83,14 @@ export function HomeScreen() {
   } = useWallet();
   const {
     fiatMode,
-    requestEnter,
-    requestExit,
     depixDisplay,
   } = useFiatMode();
   const { activeCount, pendingSweep, refreshPendingSweep } = useExitJobs();
   const {
     openActivity,
     openWalletSwitcher,
+    openFiatModeEnter,
+    openFiatModeExit,
     beginActivityDrag,
     beginPosDrag,
     beginScanDrag,
@@ -629,8 +629,8 @@ export function HomeScreen() {
             <View style={styles.headerRightStack}>
               {selectedWallet?.kind === "arkade" ? (
                 <Pressable
-                  // Overlay dialog only (never navigate to Settings Fiat Mode).
-                  onPress={fiatMode ? requestExit : requestEnter}
+                  // InteractiveBottomSheet via SheetHost (same pattern as Wallets).
+                  onPress={fiatMode ? openFiatModeExit : openFiatModeEnter}
                   hitSlop={8}
                   accessibilityRole="button"
                   accessibilityLabel={fiatMode ? "Exit Fiat Mode" : "Enter Fiat Mode"}
