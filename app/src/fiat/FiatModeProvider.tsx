@@ -22,7 +22,6 @@ import {
   DEPIX_MIN_BASE_SATS,
   depixAssetIdForNetwork,
   depixAtomicToDisplay,
-  formatBrlDisplay,
   isDefaultishWalletLabel,
   stripFiatModeLabelSuffix,
   withFiatModeLabelSuffix,
@@ -33,6 +32,8 @@ import {
   runDepixExchange,
   type DepixSwapProgress,
 } from "./depixSwapClient";
+import { FiatModeEnterDialog } from "./FiatModeEnterDialog";
+import { FiatModeExitDialog } from "./FiatModeExitDialog";
 import {
   readFiatModeState,
   writeFiatModeState,
@@ -101,6 +102,8 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const [converting, setConverting] = useState(false);
   const [convertingMessage, setConvertingMessage] = useState("");
   const [depixDisplay, setDepixDisplay] = useState<number | null>(null);
+  const [enterDialogOpen, setEnterDialogOpen] = useState(false);
+  const [exitDialogOpen, setExitDialogOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const activeSwapIdRef = useRef<string | null>(null);
   const walletIdRef = useRef<string | null>(null);
@@ -252,58 +255,49 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       Alert.alert("Fiat Mode", "Select an Arkade wallet first.");
       return;
     }
-    if (state?.fiatMode) return;
+    if (state?.fiatMode || converting) return;
+    setExitDialogOpen(false);
+    setEnterDialogOpen(true);
+  }, [walletId, selectedWallet, state?.fiatMode, converting]);
+
+  const dismissEnterDialog = useCallback(() => {
+    setEnterDialogOpen(false);
+  }, []);
+
+  const confirmEnterDialog = useCallback(() => {
     const sats = balanceSats ?? 0;
-    Alert.alert(
-      "Enter Fiat Mode",
-      `Hold BRL via DePix on Bitcoin/Arkade (not a bank).\n\n` +
-        `Conversion uses a solver card (~${DEPIX_FEE_BPS / 100}% fee, min ${DEPIX_MIN_BASE_SATS} sats).\n` +
-        `Funds stay locked in the swap until filled or cancelled.\n\n` +
-        `Available now: ${sats.toLocaleString("en-US")} sats.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Confirm",
-          onPress: () => {
-            if (sats < DEPIX_MIN_BASE_SATS) {
-              Alert.alert(
-                "Not enough sats",
-                `Need at least ${DEPIX_MIN_BASE_SATS} sats to enter Fiat Mode.`,
-              );
-              return;
-            }
-            void runJob("enter", "btc-to-depix", BigInt(sats));
-          },
-        },
-      ],
-    );
-  }, [walletId, selectedWallet, state?.fiatMode, balanceSats, runJob]);
+    setEnterDialogOpen(false);
+    if (sats < DEPIX_MIN_BASE_SATS) {
+      Alert.alert(
+        "Not enough sats",
+        `Need at least ${DEPIX_MIN_BASE_SATS.toLocaleString("en-US")} sats to enter Fiat Mode.`,
+      );
+      return;
+    }
+    void runJob("enter", "btc-to-depix", BigInt(sats));
+  }, [balanceSats, runJob]);
 
   const requestExit = useCallback(() => {
-    if (!walletId || !state?.fiatMode) return;
+    if (!walletId || !state?.fiatMode || converting) return;
+    setEnterDialogOpen(false);
+    setExitDialogOpen(true);
+  }, [walletId, state?.fiatMode, converting]);
+
+  const dismissExitDialog = useCallback(() => {
+    setExitDialogOpen(false);
+  }, []);
+
+  const confirmExitDialog = useCallback(() => {
     const display = depixDisplay ?? 0;
-    Alert.alert(
-      "Exit Fiat Mode",
-      `Convert your DePix (BRL) balance back to sats.\n\n` +
-        `Current BRL: ${formatBrlDisplay(display)}\n` +
-        `Fee ~${DEPIX_FEE_BPS / 100}% on the sats take leg.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Confirm",
-          onPress: () => {
-            if (!(display > 0)) {
-              // Nothing to convert — just leave mode
-              void patchState({ fiatMode: false, pendingJob: null });
-              return;
-            }
-            const atomic = BigInt(Math.round(display * 1e8));
-            void runJob("exit", "depix-to-btc", atomic);
-          },
-        },
-      ],
-    );
-  }, [walletId, state?.fiatMode, depixDisplay, runJob, patchState]);
+    setExitDialogOpen(false);
+    if (!(display > 0)) {
+      // Nothing to convert: leave mode without a swap.
+      void patchState({ fiatMode: false, pendingJob: null });
+      return;
+    }
+    const atomic = BigInt(Math.round(display * 1e8));
+    void runJob("exit", "depix-to-btc", atomic);
+  }, [depixDisplay, runJob, patchState]);
 
   const cancelConverting = useCallback(() => {
     abortRef.current?.abort();
@@ -396,7 +390,25 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     ],
   );
 
-  return <FiatModeContext.Provider value={value}>{children}</FiatModeContext.Provider>;
+  return (
+    <FiatModeContext.Provider value={value}>
+      {children}
+      {enterDialogOpen ? (
+        <FiatModeEnterDialog
+          availableSats={balanceSats ?? 0}
+          onConfirm={confirmEnterDialog}
+          onCancel={dismissEnterDialog}
+        />
+      ) : null}
+      {exitDialogOpen ? (
+        <FiatModeExitDialog
+          brlDisplay={depixDisplay ?? 0}
+          onConfirm={confirmExitDialog}
+          onCancel={dismissExitDialog}
+        />
+      ) : null}
+    </FiatModeContext.Provider>
+  );
 }
 
 export function useFiatMode(): FiatModeContextValue {
