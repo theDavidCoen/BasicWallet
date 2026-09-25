@@ -59,6 +59,10 @@ import { useWallet } from "../wallet/WalletProvider";
 import { formatSatsLabel } from "../wallet/formatSats";
 import { ScanQrModal, extractLightningPayFromScan, extractArkAddressFromScan } from "./ScanQrModal";
 import { useFiatMode } from "../fiat/FiatModeProvider";
+import {
+  depixAssetIdForNetwork,
+  formatBrlDisplay,
+} from "../fiat/depixAssets";
 import { resolvePayIntent } from "../wallet/bip21Pay";
 import type { WalletRecord } from "../account/walletRegistry";
 
@@ -228,6 +232,7 @@ export function SendScreen() {
   } = useWallet();
   const { fiatMode, convertDepixToSatsForPay, depixDisplay } = useFiatMode();
   const network = getNetworkConfig();
+  const depixAssetId = depixAssetIdForNetwork(network.id);
   /** Lightning path still uses flat address/amount. */
   const [address, setAddress] = useState("");
   const [amountStr, setAmountStr] = useState("");
@@ -348,7 +353,23 @@ export function SendScreen() {
   const [lnProbeError, setLnProbeError] = useState<string | null>(null);
 
   const spendable = balance?.available ?? null;
-  const bal = formatSatsLabel(spendable, balanceHidden);
+  const bal = fiatMode
+    ? formatBrlDisplay(depixDisplay ?? 0, { hidden: balanceHidden })
+    : formatSatsLabel(spendable, balanceHidden);
+
+  // Fiat Mode: amount fields are BRL; stamp DePix asset id on lines.
+  useEffect(() => {
+    if (!fiatMode || isLightning) return;
+    setLines((prev) => {
+      let changed = false;
+      const next = prev.map((l) => {
+        if (l.assetId) return l;
+        changed = true;
+        return { ...l, assetId: depixAssetId };
+      });
+      return changed ? next : prev;
+    });
+  }, [fiatMode, isLightning, depixAssetId]);
 
   useEffect(() => {
     if (!isLightning || !selectedWallet?.id) {
@@ -684,11 +705,31 @@ export function SendScreen() {
 
   function confirmAddRecipient() {
     const addr = addDraftAddress.trim();
-    const amt = parseAmountSats(addDraftAmount);
     if (!isValidArkAddress(addr)) {
       Alert.alert("Invalid address", "Paste a valid Arkade (ark…) address.");
       return;
     }
+    if (fiatMode) {
+      const brl = Number(String(addDraftAmount).replace(",", ".").replace(/\s/g, ""));
+      if (!Number.isFinite(brl) || !(brl > 0)) {
+        Alert.alert("Amount required", "Enter how many BRL for this recipient.");
+        return;
+      }
+      if (lines.length >= MAX_SEND_RECIPIENTS) {
+        Alert.alert("Limit reached", `You can send to at most ${MAX_SEND_RECIPIENTS} recipients.`);
+        return;
+      }
+      const line = newSendLine({
+        address: addr,
+        amountStr: String(brl),
+        walletLabel: addDraftLabel,
+        assetId: depixAssetId,
+      });
+      setLines((prev) => [...prev, line]);
+      closeAddRecipientSheet();
+      return;
+    }
+    const amt = parseAmountSats(addDraftAmount);
     if (amt == null) {
       Alert.alert("Amount required", "Enter how many sats for this recipient.");
       return;
@@ -707,6 +748,19 @@ export function SendScreen() {
   }
 
   function fillMaxSend(target: "primary" | "add" | string = "primary") {
+    if (fiatMode && !isLightning) {
+      const maxBrl = depixDisplay ?? 0;
+      if (!(maxBrl > 0)) return;
+      const formatted = maxBrl.toFixed(2);
+      if (target === "add") {
+        setAddDraftAmount(formatted);
+        return;
+      }
+      const targetId = target === "primary" ? lines[0]?.id : target;
+      if (!targetId) return;
+      patchLine(targetId, { amountStr: formatted, assetId: depixAssetId });
+      return;
+    }
     if (spendable == null || spendable <= 0) return;
     if (isLightning) {
       let max = Math.floor(spendable);
@@ -1341,7 +1395,11 @@ export function SendScreen() {
                       {truncateDest(line.address.trim() || "—", 12, 8)}
                     </Text>
                     <Text style={styles.compactAmt}>
-                      {(parseAmountSats(line.amountStr) ?? 0).toLocaleString("en-US")} sats
+                      {fiatMode || line.assetId
+                        ? formatBrlDisplay(
+                            Number(String(line.amountStr).replace(",", ".")) || 0,
+                          )
+                        : `${(parseAmountSats(line.amountStr) ?? 0).toLocaleString("en-US")} sats`}
                     </Text>
                   </View>
                   <Pressable
@@ -1358,17 +1416,25 @@ export function SendScreen() {
             <>
               {/* Penpot 16 — single recipient: classic Send (no card) */}
               <View style={styles.toRow}>
-                <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>Amount (sats)</Text>
+                <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>
+                  {fiatMode ? "Amount (BRL)" : "Amount (sats)"}
+                </Text>
                 <Pressable
                   onPress={() => fillMaxSend("primary")}
-                  disabled={spendable == null || spendable <= 0}
+                  disabled={
+                    fiatMode
+                      ? !(depixDisplay != null && depixDisplay > 0)
+                      : spendable == null || spendable <= 0
+                  }
                   hitSlop={8}
                   accessibilityLabel="Max send"
                 >
                   <Text
                     style={[
                       styles.maxLink,
-                      (spendable == null || spendable <= 0) && styles.maxLinkDisabled,
+                      (fiatMode
+                        ? !(depixDisplay != null && depixDisplay > 0)
+                        : spendable == null || spendable <= 0) && styles.maxLinkDisabled,
                     ]}
                   >
                     Max send
@@ -1379,14 +1445,19 @@ export function SendScreen() {
                 value={primaryLine?.amountStr ?? ""}
                 onChangeText={(v) => {
                   setPickerTarget("primary");
-                  if (primaryLine) patchLine(primaryLine.id, { amountStr: v });
+                  if (primaryLine) {
+                    patchLine(primaryLine.id, {
+                      amountStr: v,
+                      ...(fiatMode ? { assetId: depixAssetId } : {}),
+                    });
+                  }
                 }}
                 onFocus={() => {
                   setPickerTarget("primary");
                   if (primaryLine) setActiveLineId(primaryLine.id);
                 }}
-                keyboardType="number-pad"
-                placeholder="0"
+                keyboardType={fiatMode ? "decimal-pad" : "number-pad"}
+                placeholder={fiatMode ? "0.00" : "0"}
                 placeholderTextColor={colors.hint}
                 style={styles.input}
               />
@@ -1605,17 +1676,25 @@ export function SendScreen() {
           </View>
 
           <View style={styles.toRow}>
-            <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>Amount (sats)</Text>
+            <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>
+              {fiatMode ? "Amount (BRL)" : "Amount (sats)"}
+            </Text>
             <Pressable
               onPress={() => fillMaxSend("add")}
-              disabled={spendable == null || spendable <= 0}
+              disabled={
+                fiatMode
+                  ? !(depixDisplay != null && depixDisplay > 0)
+                  : spendable == null || spendable <= 0
+              }
               hitSlop={8}
               accessibilityLabel="Max send"
             >
               <Text
                 style={[
                   styles.maxLink,
-                  (spendable == null || spendable <= 0) && styles.maxLinkDisabled,
+                  (fiatMode
+                    ? !(depixDisplay != null && depixDisplay > 0)
+                    : spendable == null || spendable <= 0) && styles.maxLinkDisabled,
                 ]}
               >
                 Max
@@ -1625,8 +1704,8 @@ export function SendScreen() {
           <TextInput
             value={addDraftAmount}
             onChangeText={setAddDraftAmount}
-            keyboardType="number-pad"
-            placeholder="0"
+            keyboardType={fiatMode ? "decimal-pad" : "number-pad"}
+            placeholder={fiatMode ? "0.00" : "0"}
             placeholderTextColor={colors.hint}
             style={[styles.input, { marginBottom: 12 }]}
           />

@@ -21,6 +21,7 @@ import {
   type WalletRecord,
 } from "../account/walletRegistry";
 import { getNetworkConfig } from "../config/network";
+import { DEFAULT_MIN_VTXO_SATS } from "./arkMultiSend";
 import { queueEncryptedBackupSync } from "../nostr/backupSync";
 import { storeNostrKeyPair } from "../nostr/identityStore";
 import {
@@ -876,6 +877,34 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
               live: bal.total,
               ackTotal: ack.total,
               fullCatchUp: looksLikeFullWalletCatchUp,
+            });
+          } else if (
+            // Live total already matches what Home shows — ack was stale/0.
+            // Common after Fiat Mode enter (330 carrier dust) and quiet-open races.
+            !!displayed &&
+            totalDelta > 0 &&
+            Math.abs(displayed.total - bal.total) <= 2 &&
+            Math.abs((displayed.available ?? 0) - bal.available) <= 2
+          ) {
+            console.warn("[basic] persistBalance skip notice (already on screen)", {
+              totalDelta,
+              displayed: displayed.total,
+              live: bal.total,
+              ackTotal: ack.total,
+            });
+          } else if (
+            // Dust-only bump that equals min VTXO carrier (DePix leftover) while
+            // UI already shows a near-zero sats balance — never toast as receive.
+            totalDelta > 0 &&
+            totalDelta <= DEFAULT_MIN_VTXO_SATS &&
+            bal.total <= DEFAULT_MIN_VTXO_SATS &&
+            !!displayed &&
+            displayed.total <= DEFAULT_MIN_VTXO_SATS
+          ) {
+            console.warn("[basic] persistBalance skip dust delta", {
+              totalDelta,
+              live: bal.total,
+              displayed: displayed.total,
             });
           } else if (boardingDelta > 0) {
             // Drop any UI-pinned ark receive so BIP21/Arkade pick up HD rotation.
@@ -2156,12 +2185,30 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 sawSubscribeReplay = true;
                 const ackAvail = lastAckRef.current?.available ?? 0;
                 const ackTotal = lastAckRef.current?.total ?? 0;
+                const displayed = prevBalanceRef.current;
+                const baselineReady = balanceBaselineReadyRef.current;
+                // First callback often replays existing vtxos (incl. 330 dust
+                // after Fiat Mode enter). Skip when ack/display already match,
+                // or baseline is not ready yet (ack still loading).
                 const looksLikeFullReplay =
-                  Date.now() - subscribedAt < 800 &&
-                  (Math.abs(amount - ackAvail) <= 2 ||
-                    (ackTotal > 0 && amount >= ackTotal * 0.9));
+                  Date.now() - subscribedAt < 2500 &&
+                  (!baselineReady ||
+                    lastAckRef.current == null ||
+                    Math.abs(amount - ackAvail) <= 2 ||
+                    (ackTotal > 0 && amount >= ackTotal * 0.9) ||
+                    (displayed != null &&
+                      (Math.abs(amount - (displayed.available ?? 0)) <= 2 ||
+                        Math.abs(amount - displayed.total) <= 2)) ||
+                    (amount <= DEFAULT_MIN_VTXO_SATS &&
+                      displayed != null &&
+                      displayed.total <= DEFAULT_MIN_VTXO_SATS));
                 if (looksLikeFullReplay) {
-                  console.warn("[basic] notifyIncomingFunds skip replay", { amount, ackAvail });
+                  console.warn("[basic] notifyIncomingFunds skip replay", {
+                    amount,
+                    ackAvail,
+                    displayed: displayed?.total ?? null,
+                    baselineReady,
+                  });
                   scheduleReload(w, walletId, { event: true });
                   return;
                 }

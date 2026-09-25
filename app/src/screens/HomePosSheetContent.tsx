@@ -4,7 +4,11 @@
 
 import { useCallback, useEffect, useMemo } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { getNetworkConfig } from "../config/network";
+import { useFiatMode } from "../fiat/FiatModeProvider";
+import { depixAssetIdForNetwork } from "../fiat/depixAssets";
 import { useWallet } from "../wallet/WalletProvider";
+import { encodeReceiveBip21Asset } from "../wallet/bip21Asset";
 import { encodeReceiveBip21 } from "../wallet/bip21Receive";
 import { colors } from "../theme/colors";
 import { ReceivePosPanel } from "./ReceivePosPanel";
@@ -25,6 +29,8 @@ export function HomePosSheetContent({
     walletInteractive,
     balanceStatus,
   } = useWallet();
+  const { fiatMode } = useFiatMode();
+  const network = getNetworkConfig();
 
   const isLightning = selectedWallet?.kind === "lightning";
 
@@ -47,6 +53,22 @@ export function HomePosSheetContent({
     (amountSats: number) =>
       encodeReceiveBip21(boardingAddress, arkAddress, null, amountSats),
     [boardingAddress, arkAddress],
+  );
+
+  const buildPosBrlUri = useCallback(
+    (brlDisplay: number) => {
+      if (!arkAddress || !(brlDisplay > 0)) return null;
+      try {
+        return encodeReceiveBip21Asset(
+          arkAddress,
+          depixAssetIdForNetwork(network.id),
+          brlDisplay,
+        );
+      } catch {
+        return null;
+      }
+    },
+    [arkAddress, network.id],
   );
 
   if (isLightning) {
@@ -72,6 +94,8 @@ export function HomePosSheetContent({
         bip21Uri={bip21Uri}
         onClose={onClose}
         onRequestUri={buildPosBip21}
+        onRequestBrlUri={fiatMode ? buildPosBrlUri : undefined}
+        fiatMode={fiatMode}
         active={active && posReady}
       />
       {!posReady ? (

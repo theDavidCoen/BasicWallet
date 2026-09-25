@@ -41,7 +41,7 @@ import { formatSatsLabel } from "../wallet/formatSats";
 import { colors } from "../theme/colors";
 import { ReceivePosPanel } from "./ReceivePosPanel";
 import { useFiatMode } from "../fiat/FiatModeProvider";
-import { depixAssetIdForNetwork, padSatsForDepixSwap } from "../fiat/depixAssets";
+import { depixAssetIdForNetwork, formatBrlDisplay, padSatsForDepixSwap } from "../fiat/depixAssets";
 
 type ReceiveMode = "bip21" | "arkade" | "boarding" | "brl";
 
@@ -70,7 +70,7 @@ export function ReceiveScreen() {
     bumpActivity,
     setPosUiHold,
   } = useWallet();
-  const { fiatMode } = useFiatMode();
+  const { fiatMode, depixDisplay } = useFiatMode();
   const network = getNetworkConfig();
   const [mode, setMode] = useState<ReceiveMode>(fiatMode ? "brl" : "bip21");
   const [busy, setBusy] = useState(false);
@@ -298,6 +298,22 @@ export function ReceiveScreen() {
     [boardingAddress, arkAddress, fiatMode],
   );
 
+  const buildPosBrlUri = useCallback(
+    (brlDisplay: number) => {
+      if (!arkAddress || !(brlDisplay > 0)) return null;
+      try {
+        return encodeReceiveBip21Asset(
+          arkAddress,
+          depixAssetIdForNetwork(network.id),
+          brlDisplay,
+        );
+      } catch {
+        return null;
+      }
+    },
+    [arkAddress, network.id],
+  );
+
   /**
    * Receive POS: sheet slides in from the left (L→R open), same as Home.
    * Never wrap the keypad in a Pan — that steals Pressable taps.
@@ -412,7 +428,9 @@ export function ReceiveScreen() {
           ? arkAddress
           : boardingAddress;
 
-  const bal = formatSatsLabel(balanceSats, balanceHidden);
+  const bal = fiatMode
+    ? formatBrlDisplay(depixDisplay ?? 0, { hidden: balanceHidden })
+    : formatSatsLabel(balanceSats, balanceHidden);
   const boardingSats = balance?.boarding ?? 0;
   const boardingLabel = balanceHidden
     ? "******"
@@ -809,6 +827,8 @@ export function ReceiveScreen() {
             bip21Uri={bip21Uri}
             onClose={closePos}
             onRequestUri={buildPosBip21}
+            onRequestBrlUri={fiatMode ? buildPosBrlUri : undefined}
+            fiatMode={fiatMode}
             active={posOpen}
           />
         </View>
