@@ -8,8 +8,9 @@ import { getNetworkConfig } from "../config/network";
 import { colors } from "../theme/colors";
 import { sheetUi } from "../theme/sheetUi";
 import {
-  DEPIX_FEE_BPS,
-  DEPIX_MIN_BASE_SATS,
+  fiatFeeBps,
+  fiatMinBaseSats,
+  fiatStableForNetwork,
   isFiatModeSwapAvailable,
 } from "./depixAssets";
 
@@ -24,8 +25,12 @@ export function FiatModeEnterSheetContent({
 }) {
   const network = getNetworkConfig();
   const swapOk = isFiatModeSwapAvailable(network.id);
-  const feePct = (DEPIX_FEE_BPS / 100).toFixed(1);
-  const minSats = DEPIX_MIN_BASE_SATS.toLocaleString("en-US");
+  const stable = fiatStableForNetwork(network.id);
+  const feePct = (fiatFeeBps(network.id) / 100).toFixed(1);
+  const minSats = fiatMinBaseSats(network.id).toLocaleString("en-US");
+  const unitName =
+    stable.displayCode === "USD" ? "US Dollars (USDT)" : "Brazilian Real (BRL via DePix)";
+  const shortName = stable.displayCode;
 
   return (
     <ScrollView
@@ -39,19 +44,18 @@ export function FiatModeEnterSheetContent({
 
       {!swapOk ? (
         <Text style={[styles.body, styles.warn]}>
-          BRL conversion is not available on Mutinynet yet. The Mutinynet DePix
-          asset id is known, but no swap card is pinned for this network. Switch
-          to Bitcoin mainnet in Settings to use Fiat Mode.
+          No stable swap card is pinned for this network. Switch network in
+          Settings to use Fiat Mode.
         </Text>
       ) : (
         <>
           <Text style={styles.body}>
-            Fiat Mode keeps your balance in Brazilian Real instead of bitcoin.
+            Fiat Mode keeps your balance in {unitName} instead of bitcoin.
           </Text>
           <Text style={styles.body}>
-            When you turn it on, your sats are converted to BRL so everyday spending
-            feels familiar: prices stay steady while you still use Bitcoin under the
-            hood.
+            When you turn it on, your sats are converted to {shortName} so everyday
+            spending feels familiar: prices stay steady while you still use Bitcoin
+            under the hood.
           </Text>
           <Text style={styles.body}>
             You can leave Fiat Mode whenever you want and go back to sats.

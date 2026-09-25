@@ -41,7 +41,7 @@ import { formatSatsLabel } from "../wallet/formatSats";
 import { colors } from "../theme/colors";
 import { ReceivePosPanel } from "./ReceivePosPanel";
 import { useFiatMode } from "../fiat/FiatModeProvider";
-import { depixAssetIdForNetwork, formatBrlDisplay, padSatsForDepixSwap } from "../fiat/depixAssets";
+import { depixAssetIdForNetwork, fiatStableForNetwork, formatBrlDisplay, padSatsForDepixSwap } from "../fiat/depixAssets";
 
 type ReceiveMode = "bip21" | "arkade" | "boarding" | "brl";
 
@@ -429,16 +429,17 @@ export function ReceiveScreen() {
           : boardingAddress;
 
   const bal = fiatMode
-    ? formatBrlDisplay(depixDisplay ?? 0, { hidden: balanceHidden })
+    ? formatBrlDisplay(depixDisplay ?? 0, { hidden: balanceHidden, networkId: network.id })
     : formatSatsLabel(balanceSats, balanceHidden);
   const boardingSats = balance?.boarding ?? 0;
   const boardingLabel = balanceHidden
     ? "******"
     : boardingSats.toLocaleString("en-US");
 
+  const fiatLabel = fiatStableForNetwork(network.id);
   const caption = fiatMode
     ? mode === "brl"
-      ? `BRL (DePix) · ${network.label}`
+      ? `${fiatLabel.displayCode} (${fiatLabel.ticker}) · ${network.label}`
       : mode === "bip21"
         ? `Universal BIP21 · ${network.label}`
         : `Arkade · ${network.label}`
@@ -646,7 +647,7 @@ export function ReceiveScreen() {
                 onPress={() => setMode("brl")}
               >
                 <Text style={[styles.modeLabel, mode === "brl" && styles.modeLabelOn]}>
-                  BRL
+                  {fiatLabel.displayCode}
                 </Text>
               </Pressable>
               <Pressable

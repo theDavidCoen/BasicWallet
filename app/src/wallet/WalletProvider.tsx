@@ -23,6 +23,10 @@ import {
 import { getNetworkConfig } from "../config/network";
 import { DEFAULT_MIN_VTXO_SATS } from "./arkMultiSend";
 import { isFiatModeActiveGate } from "../fiat/fiatModeGate";
+import {
+  depixAtomicToDisplay,
+  sumDesignatedAssetAtomic,
+} from "../fiat/depixAssets";
 import { queueEncryptedBackupSync } from "../nostr/backupSync";
 import { storeNostrKeyPair } from "../nostr/identityStore";
 import {
@@ -2199,6 +2203,34 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           if (cancelled) return;
           if (funds.type !== "utxo" && funds.spentVtxos.length === 0) {
             const amount = funds.newVtxos.reduce((s, c) => s + (c.value ?? 0), 0);
+            const networkId = getNetworkConfig().id;
+            // Pure asset receive (arkade.money DePix/USDT send uses amount: 0).
+            const assetAtomic = sumDesignatedAssetAtomic(funds.newVtxos, networkId);
+            if (
+              isFiatModeActiveGate() &&
+              assetAtomic > 0n &&
+              !openSyncQuietRef.current &&
+              !quietImportSyncRef.current
+            ) {
+              const display = depixAtomicToDisplay(assetAtomic, networkId);
+              if (display >= 0.01) {
+                const postSend = Date.now() < suppressIncomingUntilRef.current;
+                const expectingReceive =
+                  posUiHoldRef.current > 0 || incomingWatchBoostRef.current > 0;
+                if (!postSend || expectingReceive) {
+                  const shown = emitFundsNotice(display, "brl", {
+                    bypassSendSuppress: expectingReceive,
+                  });
+                  if (shown === "shown") {
+                    console.warn("[basic] notifyIncomingFunds fiat asset", {
+                      display,
+                      assetAtomic: String(assetAtomic),
+                      sats: amount,
+                    });
+                  }
+                }
+              }
+            }
             if (amount > 0) {
               // First callback often replays existing vtxos (= full balance).
               // Skip only that immediate replay — a real receive can be first

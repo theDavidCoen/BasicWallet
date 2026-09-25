@@ -13,11 +13,13 @@ import {
 import type { ArkadeNetworkId } from "../config/network";
 import { getAssetSwapRepository } from "../wallet/persistentStorage";
 import {
-  DEPIX_FEE_BPS,
-  DEPIX_MIN_BASE_SATS,
   depixAssetIdForNetwork,
+  fiatFeeBps,
+  fiatMinBaseSats,
+  fiatStableForNetwork,
 } from "./depixAssets";
 import depixSolverCard from "./depix-solver.card.json";
+import usdtMutinySolverCard from "./usdt-mutiny-solver.card.json";
 
 export type DepixSwapDirection = "btc-to-depix" | "depix-to-btc";
 
@@ -49,13 +51,12 @@ export async function getOrCreateDepixSwapClient(
 
   const repository = getAssetSwapRepository(networkId, walletId);
   const net = bitcoinNetworkLabel(networkId);
-  // Mutinynet: still pin mainnet card structure but local ASP won't fill —
-  // exchange is mainnet-oriented; mutinynet builds use the mutiny asset id
-  // in helpers while discovery stays empty-ish until a mutiny card exists.
   const localCards =
     networkId === "mainnet"
       ? [{ card: depixSolverCard as object, network: "bitcoin" as const }]
-      : [];
+      : networkId === "mutinynet"
+        ? [{ card: usdtMutinySolverCard as object, network: "mutinynet" as const }]
+        : [];
 
   const client = createSwapClient({
     wallet,
@@ -85,14 +86,17 @@ function maxFeeForTake(
     networkId === "mutinynet" ? "mutinynet" : "bitcoin",
     asset.AssetId.fromString(depixAssetIdForNetwork(networkId)),
   );
-  // Generous ceiling: ~fee_bps on take + headroom (card uses 140 bps on DePix take).
+  const feeBps = fiatFeeBps(networkId);
+  // Generous ceiling: ~fee_bps on take + headroom.
   if (direction === "btc-to-depix") {
-    // Amount is sats on give; unknown DePix out — allow large take-side fee ceiling.
-    const ceiling = 50_000_000_000n; // 500 DePix display units
+    // Amount is sats on give; unknown stable out — allow large take-side fee ceiling.
+    const { decimals } = fiatStableForNetwork(networkId);
+    const ceiling =
+      decimals <= 2 ? 50_000_000n /* 500_000.00 USDT atomic */ : 50_000_000_000n;
     return { amount: ceiling, asset: DEPIX };
   }
   // Exit: take BTC — fee in sats
-  const feeSats = BigInt(Math.ceil(Number(amountGive) * (DEPIX_FEE_BPS / 10_000))) + 500n;
+  const feeSats = BigInt(Math.ceil(Number(amountGive) * (feeBps / 10_000))) + 500n;
   return { amount: feeSats > 0n ? feeSats : 500n, asset: BTC };
 }
 
@@ -116,8 +120,9 @@ export async function runDepixExchange(opts: {
 
   const run = (async () => {
     const { wallet, networkId, walletId, direction, amount, onProgress, signal } = opts;
-    if (direction === "btc-to-depix" && amount < BigInt(DEPIX_MIN_BASE_SATS)) {
-      throw new Error(`Minimum convert is ${DEPIX_MIN_BASE_SATS} sats`);
+    const minBase = fiatMinBaseSats(networkId);
+    if (direction === "btc-to-depix" && amount < BigInt(minBase)) {
+      throw new Error(`Minimum convert is ${minBase.toLocaleString("en-US")} sats`);
     }
 
     onProgress?.({ phase: "quoting", message: "Preparing conversion…" });

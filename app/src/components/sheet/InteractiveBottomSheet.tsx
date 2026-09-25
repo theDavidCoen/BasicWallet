@@ -71,6 +71,11 @@ type Props = {
    */
   visibleFraction?: number;
   /**
+   * Shrink sheet height to measured content (capped at visibleFraction).
+   * Use for short confirm sheets (Exit Fiat Mode) to avoid a tall empty void.
+   */
+  fitContent?: boolean;
+  /**
    * When true, lift the sheet above the system keyboard so content stays visible
    * (Send Enter). Caps at visibleFraction when the keyboard is hidden.
    */
@@ -119,6 +124,7 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
       skipEnterSnap = false,
       anchorY = null,
       visibleFraction = SNAP_OPEN,
+      fitContent = false,
       avoidKeyboard = false,
       motion: motionProp,
       portal = false,
@@ -130,6 +136,7 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
     const offscreenY = windowHeight;
     const clampedVisible = Math.max(0.2, Math.min(1, visibleFraction));
     const [keyboardHeight, setKeyboardHeight] = useState(0);
+    const [contentH, setContentH] = useState(0);
 
     useEffect(() => {
       if (!avoidKeyboard || !open) {
@@ -163,6 +170,8 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
     );
     const kb = avoidKeyboard && open ? keyboardHeight : 0;
     const maxVisibleH = windowHeight * clampedVisible;
+    // Handle (~22) + top padding (~8) + bottomPad — keep content from clipping.
+    const chromeExtra = 22 + 8 + bottomPad;
 
     let resolvedOpenY: number;
     let sheetHeight: number;
@@ -174,6 +183,12 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
       resolvedOpenY = Math.max(insets.top + 12, windowHeight - kb - visibleH);
       sheetHeight = visibleH;
       sheetPaddingBottom = 8;
+    } else if (fitContent && contentH > 0) {
+      const fitted = Math.min(maxVisibleH, contentH + chromeExtra);
+      const minH = Math.max(180, fitted);
+      sheetHeight = minH;
+      resolvedOpenY = Math.max(insets.top + 12, windowHeight - minH);
+      sheetPaddingBottom = bottomPad;
     } else {
       resolvedOpenY = Math.max(
         translateForVisibleFraction(windowHeight, clampedVisible),
@@ -394,7 +409,19 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
               <View style={styles.grabber} />
             </View>
           </GestureDetector>
-          <View style={styles.body}>{children}</View>
+          <View
+            style={styles.body}
+            onLayout={
+              fitContent
+                ? (e) => {
+                    const h = e.nativeEvent.layout.height;
+                    if (h > 0 && Math.abs(h - contentH) > 1) setContentH(h);
+                  }
+                : undefined
+            }
+          >
+            {children}
+          </View>
         </Animated.View>
       </View>
     );

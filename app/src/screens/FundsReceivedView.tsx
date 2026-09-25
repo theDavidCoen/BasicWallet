@@ -1,6 +1,7 @@
 import { StyleSheet, Text, View } from "react-native";
 import { Pressable } from "react-native-gesture-handler";
-import { formatBrlDisplay } from "../fiat/depixAssets";
+import { getNetworkConfig } from "../config/network";
+import { fiatStableForNetwork, formatBrlDisplay } from "../fiat/depixAssets";
 import { colors } from "../theme/colors";
 
 export type FundsReceivedKind = "boarding" | "arkade" | "lightning" | "brl";
@@ -16,13 +17,15 @@ export function FundsReceivedView({
   onViewDetails: () => void;
   onDone: () => void;
 }) {
+  const networkId = getNetworkConfig().id;
+  const stable = fiatStableForNetwork(networkId);
   const title =
     kind === "boarding"
       ? "BOARDING RECEIVED"
       : kind === "lightning"
         ? "LIGHTNING RECEIVED"
         : kind === "brl"
-          ? "BRL RECEIVED"
+          ? `${stable.displayCode} RECEIVED`
           : "FUNDS RECEIVED";
   const caption =
     kind === "boarding"
@@ -30,12 +33,12 @@ export function FundsReceivedView({
       : kind === "lightning"
         ? "Lightning invoice paid.\nNew balance is available."
         : kind === "brl"
-          ? "DePix / BRL arrived.\nNew Fiat Mode balance is available."
+          ? `${stable.ticker} / ${stable.displayCode} arrived.\nNew Fiat Mode balance is available.`
           : "New Arkade balance is available.";
 
   const amountLabel =
     kind === "brl"
-      ? `+${formatBrlDisplay(amount).replace(/^R\$\s*/, "R$ ")}`
+      ? `+${formatBrlDisplay(amount, { networkId })}`
       : `+${amount.toLocaleString("en-US")} sats`;
 
   return (

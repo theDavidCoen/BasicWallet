@@ -61,6 +61,7 @@ import { ScanQrModal, extractLightningPayFromScan, extractArkAddressFromScan } f
 import { useFiatMode } from "../fiat/FiatModeProvider";
 import {
   depixAssetIdForNetwork,
+  fiatStableForNetwork,
   formatBrlDisplay,
   parseBrlDisplay,
 } from "../fiat/depixAssets";
@@ -354,8 +355,9 @@ export function SendScreen() {
   const [lnProbeError, setLnProbeError] = useState<string | null>(null);
 
   const spendable = balance?.available ?? null;
+  const fiatUnit = fiatStableForNetwork(network.id).displayCode;
   const bal = fiatMode
-    ? formatBrlDisplay(depixDisplay ?? 0, { hidden: balanceHidden })
+    ? formatBrlDisplay(depixDisplay ?? 0, { hidden: balanceHidden, networkId: network.id })
     : formatSatsLabel(spendable, balanceHidden);
 
   // Fiat Mode: amount fields are BRL; stamp DePix asset id on lines.
@@ -715,7 +717,7 @@ export function SendScreen() {
     if (fiatMode) {
       const brl = parseBrlDisplay(addDraftAmount);
       if (brl == null) {
-        Alert.alert("Amount required", "Enter how many BRL for this recipient.");
+        Alert.alert("Amount required", `Enter how many ${fiatUnit} for this recipient.`);
         return;
       }
       if (lines.length >= MAX_SEND_RECIPIENTS) {
@@ -928,7 +930,7 @@ export function SendScreen() {
         if (!trimmed || display == null) {
           Alert.alert(
             "Incomplete recipient",
-            "Each DePix recipient needs an ark… address and a positive BRL amount.",
+            "Each recipient needs an ark… address and a positive fiat amount.",
           );
           return;
         }
@@ -939,11 +941,13 @@ export function SendScreen() {
         const { depixDisplayToAtomic: toAtomic } = await import("../fiat/depixAssets");
         built.push({
           address: trimmed,
-          amount: 330, // dust carrier sats
+          // Official arkade.money sendAssets uses amount: 0 for pure asset transfers
+          // (no carrier dust). Users in Fiat Mode may have zero sats.
+          amount: 0,
           assets: [
             {
               assetId: assetIdForLine,
-              amount: toAtomic(display),
+              amount: toAtomic(display, network.id),
             },
           ],
         });
@@ -984,12 +988,15 @@ export function SendScreen() {
         const need = recipients.reduce((s, r) => s + r.amount, 0);
         const brl = depixDisplay ?? 0;
         if (!(brl > 0)) {
-          Alert.alert("Insufficient BRL", "Convert or receive DePix before sending sats.");
+          Alert.alert(
+            `Insufficient ${fiatUnit}`,
+            "Convert or receive the stable asset before sending sats.",
+          );
           return;
         }
         Alert.alert(
           "Convert to sats",
-          `This payment needs sats. Convert your BRL balance (~${brl.toFixed(2)}) to sats first? Fee applies.`,
+          `This payment needs sats. Convert your ${fiatUnit} balance (~${brl.toFixed(2)}) to sats first? Fee applies.`,
           [
             { text: "Cancel", style: "cancel" },
             {
@@ -1027,6 +1034,9 @@ export function SendScreen() {
     try {
       dust = await readMinVtxoSats(wallet);
       for (const r of recipients) {
+        // Asset-only recipients (amount 0 + assets) skip the sats dust floor —
+        // matches arkade.money sendAssets / Network fees $0.00.
+        if ((r.assets?.length ?? 0) > 0 && r.amount === 0) continue;
         if (r.amount < dust) {
           Alert.alert(
             "Amount too low",
@@ -1053,7 +1063,16 @@ export function SendScreen() {
         return;
       }
 
-      const plan = await prepareDustSafeSend(wallet, paymentSum, dust);
+      // Pure asset multi-send: no sats dust bump / change planning.
+      let plan: Awaited<ReturnType<typeof prepareDustSafeSend>> = {
+        amount: paymentSum,
+        amountBumped: false,
+        originalAmount: paymentSum,
+        selectedVtxos: undefined,
+      };
+      if (!wantsAsset || paymentSum > 0) {
+        plan = await prepareDustSafeSend(wallet, paymentSum, dust);
+      }
       if (plan.amountBumped) {
         const last = working[working.length - 1]!;
         const lastOriginal = last.amount;
@@ -1435,7 +1454,7 @@ export function SendScreen() {
               {/* Penpot 16 — single recipient: classic Send (no card) */}
               <View style={styles.toRow}>
                 <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>
-                  {fiatMode ? "Amount (BRL)" : "Amount (sats)"}
+                  {fiatMode ? `Amount (${fiatUnit})` : "Amount (sats)"}
                 </Text>
                 <Pressable
                   onPress={() => fillMaxSend("primary")}
@@ -1695,7 +1714,7 @@ export function SendScreen() {
 
           <View style={styles.toRow}>
             <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>
-              {fiatMode ? "Amount (BRL)" : "Amount (sats)"}
+              {fiatMode ? `Amount (${fiatUnit})` : "Amount (sats)"}
             </Text>
             <Pressable
               onPress={() => fillMaxSend("add")}

@@ -166,9 +166,9 @@ export function HomeScreen() {
   const primaryBalance = useMemo(() => {
     if (fiatMode) {
       if (depixDisplay == null) {
-        return balanceStatus === "loading" ? "…" : formatBrlDisplay(0, { hidden: balanceHidden });
+        return balanceStatus === "loading" ? "…" : formatBrlDisplay(0, { hidden: balanceHidden, networkId: network.id });
       }
-      return formatBrlDisplay(depixDisplay, { hidden: balanceHidden });
+      return formatBrlDisplay(depixDisplay, { hidden: balanceHidden, networkId: network.id });
     }
     if (balanceUnit === "sats") return bal;
     if (balanceSats === null) {
@@ -188,6 +188,7 @@ export function HomeScreen() {
     balanceStatus,
     balanceUnit,
     fiatRates,
+    network.id,
   ]);
 
   const secondaryBalance = useMemo(() => {

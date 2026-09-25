@@ -18,12 +18,14 @@ import type { IWallet } from "@arkade-os/sdk";
 import { getNetworkConfig } from "../config/network";
 import { useWallet } from "../wallet/WalletProvider";
 import {
-  DEPIX_FEE_BPS,
-  DEPIX_MIN_BASE_SATS,
   brlToSatsEstimate,
   depixAssetIdForNetwork,
   depixAtomicToDisplay,
-  fetchBtcBrlSpot,
+  depixDisplayToAtomic,
+  fetchFiatSpot,
+  fiatFeeBps,
+  fiatMinBaseSats,
+  fiatStableForNetwork,
   isDefaultishWalletLabel,
   isFiatModeSwapAvailable,
   stripFiatModeLabelSuffix,
@@ -145,7 +147,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     try {
       const raw = await wallet.getBalance();
       const atomic = readDepixAtomicFromBalance(raw, depixAssetIdForNetwork(networkId));
-      setDepixDisplay(depixAtomicToDisplay(atomic));
+      setDepixDisplay(depixAtomicToDisplay(atomic, networkId));
     } catch (e) {
       console.warn("[basic] depix balance read failed", e);
     }
@@ -154,9 +156,13 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!state?.fiatMode || !wallet) return;
     void refreshDepixBalance();
+    // Pure asset receives may not change balanceSats (amount: 0 carrier).
+    // Poll the designated stable so BRL/USD Funds Received can fire.
+    const timer = setInterval(() => void refreshDepixBalance(), 4_000);
+    return () => clearInterval(timer);
   }, [state?.fiatMode, wallet, refreshDepixBalance, balanceSats]);
 
-  // Spot BTCBRL for Home secondary sats-estimate of DePix (not leftover carrier dust).
+  // Spot BTC/fiat for Home secondary sats-estimate of the stable (not leftover carrier dust).
   useEffect(() => {
     if (!state?.fiatMode) {
       setBtcBrl(null);
@@ -164,7 +170,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     }
     let cancelled = false;
     const pull = async () => {
-      const spot = await fetchBtcBrlSpot();
+      const spot = await fetchFiatSpot(networkId);
       if (!cancelled && spot != null) setBtcBrl(spot);
     };
     void pull();
@@ -173,7 +179,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [state?.fiatMode, depixDisplay]);
+  }, [state?.fiatMode, depixDisplay, networkId]);
 
   const patchState = useCallback(
     async (patch: Partial<FiatModeState>) => {
@@ -198,7 +204,11 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       const ac = new AbortController();
       abortRef.current = ac;
       setConverting(true);
-      setConvertingMessage(kind === "enter" ? "Converting to BRL…" : "Converting to sats…");
+      setConvertingMessage(
+        kind === "enter"
+          ? `Converting to ${fiatStableForNetwork(networkId).displayCode}…`
+          : "Converting to sats…",
+      );
       await patchState({ pendingJob: kind });
       beginOutboundSend();
       try {
@@ -285,20 +295,29 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     if (!isFiatModeSwapAvailable(networkId)) {
       Alert.alert(
         "Fiat Mode unavailable",
-        "BRL conversion is not available on Mutinynet yet. Switch to Bitcoin mainnet in Settings to use Fiat Mode.",
+        "No stable swap card is pinned for this network.",
       );
       return;
     }
+    const minBase = fiatMinBaseSats(networkId);
     const sats = balanceSats ?? 0;
-    if (sats < DEPIX_MIN_BASE_SATS) {
+    if (sats < minBase) {
       Alert.alert(
         "Not enough sats",
-        `Need at least ${DEPIX_MIN_BASE_SATS.toLocaleString("en-US")} sats to enter Fiat Mode.`,
+        `Need at least ${minBase.toLocaleString("en-US")} sats to enter Fiat Mode.`,
       );
       return;
     }
     void runJob("enter", "btc-to-depix", BigInt(sats));
-  }, [walletId, selectedWallet, state?.fiatMode, converting, balanceSats, runJob, networkId]);
+  }, [
+    walletId,
+    selectedWallet,
+    state?.fiatMode,
+    converting,
+    balanceSats,
+    runJob,
+    networkId,
+  ]);
 
   const confirmExit = useCallback(() => {
     if (!walletId || !state?.fiatMode || converting) return;
@@ -307,9 +326,9 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       void patchState({ fiatMode: false, pendingJob: null });
       return;
     }
-    const atomic = BigInt(Math.round(display * 1e8));
+    const atomic = depixDisplayToAtomic(display, networkId);
     void runJob("exit", "depix-to-btc", atomic);
-  }, [walletId, state?.fiatMode, converting, depixDisplay, runJob, patchState]);
+  }, [walletId, state?.fiatMode, converting, depixDisplay, runJob, patchState, networkId]);
 
   const cancelConverting = useCallback(() => {
     abortRef.current?.abort();
@@ -327,13 +346,14 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const maybeAutoSwapInboundSats = useCallback(
     (sats: number) => {
       if (!state?.fiatMode || converting) return;
-      if (!(sats >= DEPIX_MIN_BASE_SATS)) return;
+      const minBase = fiatMinBaseSats(networkId);
+      if (!(sats >= minBase)) return;
       void runJob("auto-inbound", "btc-to-depix", BigInt(Math.floor(sats)));
     },
-    [state?.fiatMode, converting, runJob],
+    [state?.fiatMode, converting, runJob, networkId],
   );
 
-  // Inbound sats while in Fiat Mode → auto-swap to DePix.
+  // Inbound sats while in Fiat Mode → auto-swap to designated stable.
   useEffect(() => {
     if (!state?.fiatMode || converting) {
       lastSatsRef.current = balanceSats;
@@ -344,23 +364,26 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     lastSatsRef.current = balanceSats;
     if (prev == null) return;
     const delta = balanceSats - prev;
-    if (delta >= DEPIX_MIN_BASE_SATS) {
+    if (delta >= fiatMinBaseSats(networkId)) {
       maybeAutoSwapInboundSats(delta);
     }
-  }, [balanceSats, state?.fiatMode, converting, maybeAutoSwapInboundSats]);
+  }, [balanceSats, state?.fiatMode, converting, maybeAutoSwapInboundSats, networkId]);
 
   const convertDepixToSatsForPay = useCallback(
     async (satsNeeded: number) => {
       if (!(satsNeeded > 0)) return;
-      // Quote via exchange give=DePix amounting enough; for v1 use whole available DePix
-      // when estimate is uncertain — caller should check insufficiency first.
       const display = depixDisplay ?? 0;
-      if (!(display > 0)) throw new Error("No BRL balance to convert");
-      const atomic = BigInt(Math.round(display * 1e8));
+      if (!(display > 0)) {
+        throw new Error(
+          `No ${fiatStableForNetwork(networkId).displayCode} balance to convert`,
+        );
+      }
+      const { depixDisplayToAtomic: toAtomic } = await import("./depixAssets");
+      const atomic = toAtomic(display, networkId);
       await runJob("pay-convert", "depix-to-btc", atomic);
       void satsNeeded;
     },
-    [depixDisplay, runJob],
+    [depixDisplay, runJob, networkId],
   );
 
   const fiatMode = Boolean(state?.fiatMode);
@@ -404,8 +427,8 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       convertingMessage,
       depixDisplay: fiatMode ? depixDisplay : null,
       satsEstimate: fiatMode ? satsEstimate : null,
-      feeBps: DEPIX_FEE_BPS,
-      minEnterSats: DEPIX_MIN_BASE_SATS,
+      feeBps: fiatFeeBps(networkId),
+      minEnterSats: fiatMinBaseSats(networkId),
       confirmEnter,
       confirmExit,
       cancelConverting,
@@ -426,6 +449,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       refreshDepixBalance,
       maybeAutoSwapInboundSats,
       convertDepixToSatsForPay,
+      networkId,
     ],
   );
 

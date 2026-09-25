@@ -1,6 +1,7 @@
 /**
  * Receive POS — keypad → simplified receive (amount, QR, URI, Edit amount).
- * In Fiat Mode the primary unit is BRL (DePix), not display-currency EUR/USD.
+ * Layout/behavior matches main; Fiat Mode only changes the currency label/unit
+ * to the network stable (BRL on mainnet, USD on Mutinynet).
  */
 
 import * as Clipboard from "expo-clipboard";
@@ -16,7 +17,12 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ExpandableQrCode } from "../components/ExpandableQrCode";
 import { BasicLogo } from "../components/BasicLogo";
-import { fetchBtcBrlSpot, formatBrlDisplay } from "../fiat/depixAssets";
+import { getNetworkConfig } from "../config/network";
+import {
+  fetchFiatSpot,
+  fiatStableForNetwork,
+  formatBrlDisplay,
+} from "../fiat/depixAssets";
 import {
   fetchSpotRates,
   readDisplayCurrencies,
@@ -37,18 +43,25 @@ const MAX_POS_SATS = 21_000_000 * 100_000_000;
 
 type Unit = "fiat" | "sats";
 type Phase = "keypad" | "receive";
+type PosFiatCode = DisplayCurrencyCode | "BRL" | "USD";
 
-function fiatMinorFactor(code: DisplayCurrencyCode | "BRL"): number {
+function fiatMinorFactor(code: PosFiatCode): number {
   return code === "JPY" ? 1 : 100;
 }
 
-function formatFiatMinor(minor: number, code: DisplayCurrencyCode | "BRL"): string {
+function formatFiatMinor(minor: number, code: PosFiatCode): string {
   if (code === "JPY") {
     return minor.toLocaleString("it-IT");
   }
   const major = minor / 100;
   if (code === "BRL") {
     return major.toLocaleString("pt-BR", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  }
+  if (code === "USD") {
+    return major.toLocaleString("en-US", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
@@ -65,7 +78,7 @@ function formatSats(sats: number): string {
 
 function satsFromFiatMinor(
   minor: number,
-  code: DisplayCurrencyCode | "BRL",
+  code: PosFiatCode,
   rateBtc: number | undefined,
 ): number | null {
   if (rateBtc == null || rateBtc <= 0 || minor <= 0) return null;
@@ -75,7 +88,7 @@ function satsFromFiatMinor(
 
 function fiatMinorFromSats(
   sats: number,
-  code: DisplayCurrencyCode | "BRL",
+  code: PosFiatCode,
   rateBtc: number | undefined,
 ): number | null {
   if (rateBtc == null || rateBtc <= 0 || sats <= 0) return null;
@@ -97,23 +110,27 @@ export function ReceivePosPanel({
   /** Build BIP21 with amount (sats) → full URI for QR. */
   onRequestUri: (amountSats: number) => string | null;
   /**
-   * Fiat Mode: build DePix/BRL receive URI from display units.
+   * Fiat Mode: build stable-asset receive URI from display units.
    * When set, Request prefers this over padded sats BIP21.
    */
-  onRequestBrlUri?: (brlDisplay: number) => string | null;
+  onRequestBrlUri?: (fiatDisplay: number) => string | null;
   /** When false (sheet dismissed), return to keypad so the next open is fresh. */
   active?: boolean;
-  /** When true, primary unit is BRL (not EUR/USD display currencies). */
+  /** When true, primary unit is the network stable (BRL / USD), not EUR. */
   fiatMode?: boolean;
 }) {
   const insets = useSafeAreaInsets();
+  const networkId = getNetworkConfig().id;
+  const stable = fiatStableForNetwork(networkId);
+  const stableCode = stable.displayCode;
+
   const [unit, setUnit] = useState<Unit>("fiat");
   const [digits, setDigits] = useState(""); // fiat: minor units; sats: sats
   const [phase, setPhase] = useState<Phase>("keypad");
   const [requestUri, setRequestUri] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [fiatCode, setFiatCode] = useState<DisplayCurrencyCode | "BRL">(
-    fiatMode ? "BRL" : "EUR",
+  const [fiatCode, setFiatCode] = useState<PosFiatCode>(
+    fiatMode ? stableCode : "EUR",
   );
   const [rate, setRate] = useState<number | undefined>();
 
@@ -127,19 +144,19 @@ export function ReceivePosPanel({
 
   useEffect(() => {
     if (fiatMode) {
-      setFiatCode("BRL");
+      setFiatCode(stableCode);
       setUnit("fiat");
     }
-  }, [fiatMode]);
+  }, [fiatMode, stableCode]);
 
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | null = null;
     const pull = async () => {
       if (fiatMode) {
-        const spot = await fetchBtcBrlSpot();
+        const spot = await fetchFiatSpot(networkId);
         if (!cancelled && spot != null) {
-          setFiatCode("BRL");
+          setFiatCode(stableCode);
           setRate(spot);
         }
         return;
@@ -157,11 +174,11 @@ export function ReceivePosPanel({
       cancelled = true;
       if (timer) clearInterval(timer);
     };
-  }, [fiatMode]);
+  }, [fiatMode, networkId, stableCode]);
 
   const raw = digits === "" ? 0 : Number.parseInt(digits, 10) || 0;
 
-  const brlDisplay = useMemo(() => {
+  const fiatDisplay = useMemo(() => {
     if (!fiatMode) return null;
     if (unit === "fiat") return raw / 100;
     if (rate == null || raw <= 0) return 0;
@@ -174,7 +191,7 @@ export function ReceivePosPanel({
     return Math.min(sats, MAX_POS_SATS);
   }, [fiatCode, raw, rate, unit]);
 
-  const primaryLabel = unit === "fiat" ? (fiatMode ? "BRL" : fiatCode) : "SATS";
+  const primaryLabel = unit === "fiat" ? (fiatMode ? stableCode : fiatCode) : "SATS";
   const primaryValue =
     unit === "fiat" ? formatFiatMinor(raw, fiatCode) : formatSats(raw);
 
@@ -185,23 +202,21 @@ export function ReceivePosPanel({
       return `≈ ${formatSats(amountSats)} sats`;
     }
     if (fiatMode) {
-      const brl = brlDisplay ?? 0;
-      if (!(brl > 0)) return rate == null ? "Rate unavailable" : null;
-      return `≈ ${formatBrlDisplay(brl)}`;
+      const d = fiatDisplay ?? 0;
+      if (!(d > 0)) return rate == null ? "Rate unavailable" : null;
+      return `≈ ${formatBrlDisplay(d, { networkId })}`;
     }
     const minor = fiatMinorFromSats(raw, fiatCode, rate);
     if (minor == null) return rate == null ? "Rate unavailable" : null;
     return `≈ ${fiatCode} ${formatFiatMinor(minor, fiatCode)}`;
-  }, [amountSats, brlDisplay, fiatCode, fiatMode, raw, rate, unit]);
+  }, [amountSats, fiatCode, fiatDisplay, fiatMode, networkId, raw, rate, unit]);
 
   const requestAmountLabel = useMemo(() => {
     if (fiatMode) {
-      const brl =
-        unit === "fiat"
-          ? raw / 100
-          : brlDisplay ?? 0;
-      if (!(brl > 0)) return formatBrlDisplay(0);
-      const primary = formatBrlDisplay(brl);
+      const d =
+        unit === "fiat" ? raw / 100 : fiatDisplay ?? 0;
+      if (!(d > 0)) return formatBrlDisplay(0, { networkId });
+      const primary = formatBrlDisplay(d, { networkId });
       if (amountSats > 0) return `${primary} · ≈ ${formatSats(amountSats)} sats`;
       return primary;
     }
@@ -209,7 +224,7 @@ export function ReceivePosPanel({
     const fiatMinor = fiatMinorFromSats(amountSats, fiatCode, rate);
     if (fiatMinor == null || rate == null) return satsPart;
     return `${satsPart} · ${fiatCode} ${formatFiatMinor(fiatMinor, fiatCode)}`;
-  }, [amountSats, brlDisplay, fiatCode, fiatMode, raw, rate, unit]);
+  }, [amountSats, fiatCode, fiatDisplay, fiatMode, networkId, raw, rate, unit]);
 
   const onKey = useCallback(
     (key: string) => {
@@ -253,14 +268,14 @@ export function ReceivePosPanel({
 
   const onRequest = useCallback(() => {
     if (fiatMode && onRequestBrlUri) {
-      const brl =
+      const d =
         unit === "fiat"
           ? raw / 100
           : rate != null && raw > 0
             ? (raw / 100_000_000) * rate
             : 0;
-      if (!(brl > 0)) return;
-      const uri = onRequestBrlUri(brl);
+      if (!(d > 0)) return;
+      const uri = onRequestBrlUri(d);
       if (!uri) return;
       setRequestUri(uri);
       setPhase("receive");
@@ -290,7 +305,7 @@ export function ReceivePosPanel({
   const padBottom = insets.bottom + 16;
 
   const canRequest = fiatMode
-    ? (brlDisplay ?? 0) > 0 || (unit === "fiat" && raw > 0)
+    ? (fiatDisplay ?? 0) > 0 || (unit === "fiat" && raw > 0)
     : amountSats > 0 && amountSats <= MAX_POS_SATS && Boolean(bip21Uri);
 
   if (phase === "receive" && requestUri) {
@@ -349,7 +364,11 @@ export function ReceivePosPanel({
           onPress={toggleUnit}
           style={styles.swapBtn}
           hitSlop={12}
-          accessibilityLabel={fiatMode ? "Switch BRL and sats" : "Switch fiat and sats"}
+          accessibilityLabel={
+            fiatMode
+              ? `Switch ${stableCode} and sats`
+              : "Switch fiat and sats"
+          }
         >
           <Text style={styles.swapIco}>⇅</Text>
         </Pressable>
@@ -380,16 +399,19 @@ export function ReceivePosPanel({
       </View>
 
       <Pressable
-        style={[styles.primary, !canRequest && styles.primaryDisabled]}
+        style={[styles.cta, !canRequest && styles.ctaDisabled]}
         disabled={!canRequest}
         onPress={onRequest}
-        accessibilityRole="button"
-        accessibilityLabel="Request"
       >
-        {rate == null && unit === "fiat" ? (
+        {!fiatMode && !bip21Uri ? (
+          <View style={styles.ctaBusy}>
+            <ActivityIndicator color="#000" />
+            <Text style={styles.ctaPreparing}>Preparing receive…</Text>
+          </View>
+        ) : fiatMode && rate == null && unit === "fiat" ? (
           <ActivityIndicator color="#000" />
         ) : (
-          <Text style={styles.primaryText}>Request</Text>
+          <Text style={styles.ctaText}>Request</Text>
         )}
       </Pressable>
     </View>
@@ -400,7 +422,7 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.bg,
-    paddingHorizontal: 20,
+    paddingHorizontal: 28,
   },
   flex: { flex: 1 },
   header: {
@@ -408,152 +430,159 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 8,
+    minHeight: 48,
   },
-  headerSide: { width: 44 },
+  headerSide: { width: 40 },
   title: {
     fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 18,
+    fontSize: 20,
     color: colors.fg,
-    letterSpacing: 1,
     textAlign: "center",
-    marginBottom: 6,
+    marginTop: 4,
   },
   ccy: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 13,
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 14,
     color: colors.caption,
     textAlign: "center",
-    marginBottom: 4,
+    marginTop: 20,
   },
   amtRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 10,
+    alignSelf: "center",
+    maxWidth: "100%",
+    marginTop: 8,
+    paddingHorizontal: 4,
+    gap: 2,
     minHeight: 56,
-    marginBottom: 4,
   },
   amt: {
     fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 40,
+    fontSize: 48,
     color: colors.fg,
+    textAlign: "right",
     flexShrink: 1,
-    textAlign: "center",
+    maxWidth: "88%",
   },
   swapBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: "center",
-    justifyContent: "center",
+    paddingVertical: 8,
+    paddingLeft: 2,
+    paddingRight: 4,
+    flexShrink: 0,
   },
   swapIco: {
     fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 18,
+    fontSize: 22,
     color: colors.fg,
   },
   secondaryLine: {
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 13,
-    color: colors.hint,
+    color: colors.caption,
     textAlign: "center",
-    marginBottom: 12,
+    marginTop: 8,
+    minHeight: 18,
   },
   pad: {
+    marginTop: 28,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#333",
+    backgroundColor: "#141414",
+    overflow: "hidden",
     flexGrow: 1,
-    justifyContent: "center",
-    gap: 10,
-    marginVertical: 8,
+    maxHeight: 340,
   },
-  padRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 10,
-  },
+  padRow: { flex: 1, flexDirection: "row" },
   key: {
     flex: 1,
-    aspectRatio: 1.35,
-    maxHeight: 72,
-    borderRadius: 12,
-    backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: colors.border,
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#2a2a2a",
   },
   keyLabel: {
     fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 22,
+    fontSize: 24,
     color: colors.fg,
   },
   keyMuted: {
+    fontSize: 20,
     color: colors.caption,
-    fontSize: 18,
   },
-  primary: {
-    backgroundColor: "#fff",
+  cta: {
+    marginTop: 20,
+    backgroundColor: colors.fg,
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: "center",
-    marginTop: 8,
   },
-  primaryDisabled: {
-    opacity: 0.4,
+  ctaDisabled: { opacity: 0.4 },
+  ctaBusy: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
   },
-  primaryText: {
+  ctaPreparing: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 13,
+    color: "#000",
+  },
+  ctaText: {
     fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 15,
+    fontSize: 17,
     color: "#000",
   },
   receiveScroll: {
     alignItems: "center",
-    paddingBottom: 24,
+    paddingBottom: 32,
   },
   requestAmt: {
     fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 18,
+    fontSize: 16,
     color: colors.fg,
     textAlign: "center",
-    marginBottom: 16,
+    marginTop: 16,
+    marginBottom: 24,
   },
   qrWrap: {
-    marginBottom: 16,
+    alignItems: "center",
+    marginBottom: 20,
   },
   uriBox: {
     alignSelf: "stretch",
-    backgroundColor: colors.card,
-    borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
+    borderRadius: 10,
     padding: 14,
     marginBottom: 16,
   },
   uriText: {
     fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 11,
-    color: colors.caption,
-    textAlign: "center",
+    fontSize: 12,
+    color: colors.fg,
+    lineHeight: 18,
   },
   copyHint: {
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 11,
     color: colors.hint,
-    textAlign: "center",
     marginTop: 8,
+    textAlign: "center",
   },
   secondary: {
     alignSelf: "stretch",
-    borderRadius: 12,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: colors.border,
-    paddingVertical: 14,
+    paddingVertical: 16,
     alignItems: "center",
   },
   secondaryText: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 14,
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 15,
     color: colors.fg,
   },
 });
