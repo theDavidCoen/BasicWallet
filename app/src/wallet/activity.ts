@@ -6,7 +6,12 @@
  */
 
 import type { Activity, ArkTransaction } from "@arkade-os/sdk";
+import type { ArkadeNetworkId } from "../config/network";
 import { offchainTxUrl, onchainTxUrl } from "../config/explorers";
+import {
+  depixAssetIdForNetwork,
+  depixAtomicToDisplay,
+} from "../fiat/depixAssets";
 import type { BasicWallet } from "./hdWallet";
 
 /** User-facing status — aligned with arkade.money Transaction.tsx labels. */
@@ -33,6 +38,12 @@ export type SendRecipientSnapshot = {
   amount: number;
 };
 
+/** Asset leg on a history tx (amount as decimal string for JSON / bigint safety). */
+export type ActivityAssetRow = {
+  assetId: string;
+  amount: string;
+};
+
 export type ArkTxRow = {
   type: string;
   amount: number;
@@ -56,6 +67,8 @@ export type ArkTxRow = {
    * Survives in txs_json; also mirrored in account_kv for rematerialize.
    */
   recipients?: SendRecipientSnapshot[];
+  /** Non-BTC assets on this tx (e.g. DePix). Carrier sats stay in `amount`. */
+  assets?: ActivityAssetRow[];
 };
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -124,6 +137,25 @@ function subtitleForActivity(a: Activity): string {
   return "";
 }
 
+function assetsToRows(
+  assets: ArkTransaction["assets"] | undefined,
+): ActivityAssetRow[] | undefined {
+  if (!assets?.length) return undefined;
+  const out: ActivityAssetRow[] = [];
+  for (const a of assets) {
+    if (!a?.assetId) continue;
+    let amount: string;
+    if (typeof a.amount === "bigint") amount = a.amount.toString();
+    else if (typeof a.amount === "number" && Number.isFinite(a.amount)) {
+      amount = String(Math.trunc(a.amount));
+    } else if (typeof a.amount === "string" && /^-?\d+$/.test(a.amount)) {
+      amount = a.amount;
+    } else continue;
+    out.push({ assetId: String(a.assetId), amount });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 function toTxRow(tx: ArkTransaction): ArkTxRow {
   return {
     type: String(tx.type),
@@ -134,7 +166,63 @@ function toTxRow(tx: ArkTransaction): ArkTxRow {
     boardingTxid: tx.key.boardingTxid || "",
     commitmentTxid: tx.key.commitmentTxid || "",
     arkTxid: tx.key.arkTxid || "",
+    assets: assetsToRows(tx.assets),
   };
+}
+
+/**
+ * Net designated-DePix atomic amount for a row, signed like sats
+ * (positive received, negative sent). Null when no DePix leg.
+ */
+export function activityDepixAtomic(
+  row: { txs: ArkTxRow[]; amount?: number },
+  networkId: ArkadeNetworkId,
+): bigint | null {
+  const want = depixAssetIdForNetwork(networkId).toLowerCase();
+  let sum = 0n;
+  let found = false;
+  for (const tx of row.txs) {
+    for (const a of tx.assets ?? []) {
+      if (String(a.assetId).toLowerCase() !== want) continue;
+      let amt: bigint;
+      try {
+        amt = BigInt(a.amount);
+      } catch {
+        continue;
+      }
+      found = true;
+      const neg =
+        tx.amount < 0 || String(tx.type).toUpperCase() === "SENT";
+      sum += neg ? -amt : amt;
+    }
+  }
+  return found ? sum : null;
+}
+
+export function activityHasDepix(row: { txs: ArkTxRow[] }, networkId: ArkadeNetworkId): boolean {
+  return activityDepixAtomic(row, networkId) != null;
+}
+
+/**
+ * Prefer DePix/BRL when the row carries designated DePix assets
+ * (carrier dust sats alone must not be shown as the fill).
+ */
+export function formatActivityAmountSigned(
+  row: { amount: number; txs: ArkTxRow[] },
+  networkId: ArkadeNetworkId,
+): string {
+  const atomic = activityDepixAtomic(row, networkId);
+  if (atomic != null && atomic !== 0n) {
+    const abs = atomic < 0n ? -atomic : atomic;
+    const sign = atomic > 0n ? "+" : "−";
+    const display = depixAtomicToDisplay(abs);
+    const formatted = display.toLocaleString("pt-BR", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    return `${sign}R$ ${formatted}`;
+  }
+  return formatSatsSigned(row.amount);
 }
 
 /** Unconfirmed boarding often arrives with createdAt 0 — keep 0 so upsert can

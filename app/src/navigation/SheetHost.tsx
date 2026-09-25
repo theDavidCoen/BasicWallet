@@ -1209,7 +1209,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
           ref={fiatModeRef}
           open={fiatModeSheet != null}
           onDismiss={dismissFiatModeSheet}
-          visibleFraction={fiatModeSheet === "exit" ? 0.58 : 0.88}
+          visibleFraction={fiatModeSheet === "exit" ? 0.48 : 0.88}
         >
           {fiatModeSheet === "enter" ? (
             <FiatModeEnterSheetContent

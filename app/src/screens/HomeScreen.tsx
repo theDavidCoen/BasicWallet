@@ -84,6 +84,7 @@ export function HomeScreen() {
   const {
     fiatMode,
     depixDisplay,
+    satsEstimate,
   } = useFiatMode();
   const { activeCount, pendingSweep, refreshPendingSweep } = useExitJobs();
   const {
@@ -192,15 +193,16 @@ export function HomeScreen() {
   const secondaryBalance = useMemo(() => {
     if (balanceHidden) return null;
     if (fiatMode) {
-      if (balanceSats === null) return null;
-      return `≈ ${formatSatsAmount(balanceSats, false)} sats`;
+      // Sats-equivalent of DePix/BRL, not leftover carrier dust on the VTXO.
+      if (satsEstimate == null) return null;
+      return `≈ ${formatSatsAmount(satsEstimate, false)} sats`;
     }
     if (balanceSats === null) return null;
     if (balanceUnit === "sats") {
       return formatHomeFiatLine(balanceSats, fiatCodes, fiatRates);
     }
     return `≈ ${formatSatsAmount(balanceSats, false)} sats`;
-  }, [balanceHidden, balanceSats, balanceUnit, fiatCodes, fiatRates, fiatMode]);
+  }, [balanceHidden, balanceSats, balanceUnit, fiatCodes, fiatRates, fiatMode, satsEstimate]);
 
   const mutinynetColor = mutinynetOnline ? MUTINYNET_OK : MUTINYNET_DOWN;
 

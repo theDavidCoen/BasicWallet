@@ -20,8 +20,40 @@ export const DEPIX_ATOMIC_PER_UNIT = 100_000_000n;
 export const DEPIX_FEE_BPS = 140;
 export const DEPIX_MIN_BASE_SATS = 1001;
 
+/** Card price feed (same as depix-solver.card.json). */
+export const DEPIX_BTCBRL_FEED =
+  "https://api.binance.com/api/v3/ticker/price?symbol=BTCBRL";
+
+/**
+ * Enter/exit swaps need a pinned solver card. Mainnet ships with
+ * `depix-solver.card.json`. Mutinynet DePix id is known but no mutiny card
+ * is pinned yet, so Fiat Mode convert is disabled there.
+ */
+export function isFiatModeSwapAvailable(networkId: ArkadeNetworkId): boolean {
+  return networkId === "mainnet";
+}
+
 export function depixAssetIdForNetwork(networkId: ArkadeNetworkId): string {
   return networkId === "mutinynet" ? MUTINYNET_DEPIX_ASSET_ID : MAINNET_DEPIX_ASSET_ID;
+}
+
+/** Spot BTC/BRL from the DePix card price feed. */
+export async function fetchBtcBrlSpot(): Promise<number | null> {
+  try {
+    const res = await fetch(DEPIX_BTCBRL_FEED);
+    if (!res.ok) return null;
+    const json = (await res.json()) as { price?: string };
+    const p = Number(json.price);
+    return Number.isFinite(p) && p > 0 ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+/** DePix/BRL display units → approx sats via BTCBRL spot. */
+export function brlToSatsEstimate(brlDisplay: number, btcBrl: number): number | null {
+  if (!(brlDisplay > 0) || !(btcBrl > 0)) return null;
+  return Math.max(0, Math.round((brlDisplay / btcBrl) * 100_000_000));
 }
 
 export function isDesignatedDepixId(assetId: string, networkId: ArkadeNetworkId): boolean {

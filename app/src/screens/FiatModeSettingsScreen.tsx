@@ -5,8 +5,14 @@
 import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { getNetworkConfig } from "../config/network";
 import { useFiatMode } from "../fiat/FiatModeProvider";
-import { DEPIX_FEE_BPS, DEPIX_MIN_BASE_SATS, formatBrlDisplay } from "../fiat/depixAssets";
+import {
+  DEPIX_FEE_BPS,
+  DEPIX_MIN_BASE_SATS,
+  formatBrlDisplay,
+  isFiatModeSwapAvailable,
+} from "../fiat/depixAssets";
 import { useWallet } from "../wallet/WalletProvider";
 import { colors } from "../theme/colors";
 
@@ -50,6 +56,8 @@ function StableCard({ title, status, selected, soon, onSelect }: StableCardProps
 
 export function FiatModeSettingsScreen() {
   const { selectedWallet } = useWallet();
+  const network = getNetworkConfig();
+  const swapOk = isFiatModeSwapAvailable(network.id);
   const {
     fiatMode,
     status,
@@ -78,9 +86,12 @@ export function FiatModeSettingsScreen() {
       ? `Converting…${convertingMessage ? ` ${convertingMessage}` : ""}`
       : fiatMode
         ? `On${depixDisplay != null ? ` · ${formatBrlDisplay(depixDisplay)}` : ""}`
-        : "Off";
+        : !swapOk
+          ? "Mainnet only"
+          : "Off";
 
-  const canConfirm = arkade && selected === "brl" && !converting;
+  const canConfirm =
+    arkade && selected === "brl" && !converting && (fiatMode || swapOk);
   const confirmLabel = fiatMode ? "Exit Fiat Mode" : "Enter Fiat Mode";
 
   return (
@@ -96,10 +107,17 @@ export function FiatModeSettingsScreen() {
         later. No KYC is applied. You can leave Fiat Mode anytime and switch back
         to sats.
       </Text>
-      <Text style={[styles.caption, styles.captionLast]}>
-        Select a stable below, then confirm on this page. Back cancels without
-        changing mode. Conversion cost is about {feePct}%, minimum {minSats} sats.
-      </Text>
+      {!swapOk ? (
+        <Text style={[styles.caption, styles.captionLast]}>
+          Network is Mutinynet: convert is disabled until a Mutinynet DePix swap
+          card is pinned. Switch to Bitcoin mainnet to enter Fiat Mode.
+        </Text>
+      ) : (
+        <Text style={[styles.caption, styles.captionLast]}>
+          Select a stable below, then confirm on this page. Back cancels without
+          changing mode. Conversion cost is about {feePct}%, minimum {minSats} sats.
+        </Text>
+      )}
 
       <StableCard
         title="BRL (DePix)"
@@ -112,7 +130,7 @@ export function FiatModeSettingsScreen() {
 
       <StableCard title="Other stablecoin" status="Soon" soon />
 
-      {selected === "brl" ? (
+      {selected === "brl" && swapOk ? (
         <View style={styles.feeCard}>
           <Text style={styles.feeTitle}>What it costs to switch</Text>
           <Text style={styles.feeLine}>

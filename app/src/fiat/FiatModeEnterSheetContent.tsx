@@ -4,9 +4,14 @@
 
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { Pressable } from "react-native-gesture-handler";
+import { getNetworkConfig } from "../config/network";
 import { colors } from "../theme/colors";
 import { sheetUi } from "../theme/sheetUi";
-import { DEPIX_FEE_BPS, DEPIX_MIN_BASE_SATS } from "./depixAssets";
+import {
+  DEPIX_FEE_BPS,
+  DEPIX_MIN_BASE_SATS,
+  isFiatModeSwapAvailable,
+} from "./depixAssets";
 
 export function FiatModeEnterSheetContent({
   availableSats,
@@ -17,6 +22,8 @@ export function FiatModeEnterSheetContent({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const network = getNetworkConfig();
+  const swapOk = isFiatModeSwapAvailable(network.id);
   const feePct = (DEPIX_FEE_BPS / 100).toFixed(1);
   const minSats = DEPIX_MIN_BASE_SATS.toLocaleString("en-US");
 
@@ -30,38 +37,50 @@ export function FiatModeEnterSheetContent({
     >
       <Text style={sheetUi.title}>Enter Fiat Mode</Text>
 
-      <Text style={styles.body}>
-        Fiat Mode keeps your balance in Brazilian Real instead of bitcoin.
-      </Text>
-      <Text style={styles.body}>
-        When you turn it on, your sats are converted to BRL so everyday spending
-        feels familiar: prices stay steady while you still use Bitcoin under the
-        hood.
-      </Text>
-      <Text style={styles.body}>
-        You can leave Fiat Mode whenever you want and go back to sats.
-      </Text>
-      <Text style={styles.body}>No KYC is applied!</Text>
+      {!swapOk ? (
+        <Text style={[styles.body, styles.warn]}>
+          BRL conversion is not available on Mutinynet yet. The Mutinynet DePix
+          asset id is known, but no swap card is pinned for this network. Switch
+          to Bitcoin mainnet in Settings to use Fiat Mode.
+        </Text>
+      ) : (
+        <>
+          <Text style={styles.body}>
+            Fiat Mode keeps your balance in Brazilian Real instead of bitcoin.
+          </Text>
+          <Text style={styles.body}>
+            When you turn it on, your sats are converted to BRL so everyday spending
+            feels familiar: prices stay steady while you still use Bitcoin under the
+            hood.
+          </Text>
+          <Text style={styles.body}>
+            You can leave Fiat Mode whenever you want and go back to sats.
+          </Text>
+          <Text style={styles.body}>No KYC is applied!</Text>
 
-      <View style={styles.feeCard}>
-        <Text style={styles.feeTitle}>What it costs to switch</Text>
-        <Text style={styles.feeLine}>About {feePct}% conversion fee</Text>
-        <Text style={styles.feeLine}>Minimum {minSats} sats</Text>
-      </View>
+          <View style={styles.feeCard}>
+            <Text style={styles.feeTitle}>What it costs to switch</Text>
+            <Text style={styles.feeLine}>About {feePct}% conversion fee</Text>
+            <Text style={styles.feeLine}>Minimum {minSats} sats</Text>
+          </View>
 
-      <Text style={styles.available}>
-        Available now: {availableSats.toLocaleString("en-US")} sats
-      </Text>
+          <Text style={styles.available}>
+            Available now: {availableSats.toLocaleString("en-US")} sats
+          </Text>
+        </>
+      )}
 
-      <Pressable
-        style={sheetUi.primaryBtn}
-        onPress={onConfirm}
-        hitSlop={8}
-        accessibilityRole="button"
-        accessibilityLabel="Confirm Enter Fiat Mode"
-      >
-        <Text style={sheetUi.primaryBtnText}>Confirm</Text>
-      </Pressable>
+      {swapOk ? (
+        <Pressable
+          style={sheetUi.primaryBtn}
+          onPress={onConfirm}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Confirm Enter Fiat Mode"
+        >
+          <Text style={sheetUi.primaryBtnText}>Confirm</Text>
+        </Pressable>
+      ) : null}
       <Pressable
         style={styles.secondaryBtn}
         onPress={onCancel}
@@ -69,7 +88,7 @@ export function FiatModeEnterSheetContent({
         accessibilityRole="button"
         accessibilityLabel="Cancel"
       >
-        <Text style={sheetUi.secondaryBtnText}>Cancel</Text>
+        <Text style={sheetUi.secondaryBtnText}>{swapOk ? "Cancel" : "Close"}</Text>
       </Pressable>
     </ScrollView>
   );
@@ -89,6 +108,10 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 19,
     marginBottom: 10,
+  },
+  warn: {
+    color: colors.fg,
+    marginBottom: 16,
   },
   feeCard: {
     alignSelf: "stretch",

@@ -36,12 +36,15 @@ import type { RootNav, RootStackParamList } from "../navigation/types";
 import { readBackupMeta } from "../nostr/backupPackage";
 import { useWallet } from "../wallet/WalletProvider";
 import {
+  activityDepixAtomic,
+  activityHasDepix,
   explorerUrlForTxKind,
-  formatSatsSigned,
+  formatActivityAmountSigned,
   formatWhen,
   statusLabel,
   type SendRecipientSnapshot,
 } from "../wallet/activity";
+import { depixAtomicToDisplay } from "../fiat/depixAssets";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -451,18 +454,20 @@ export function ActivityDetailView({
       return `${dir} · on-chain`;
     }
     if (isExit) return `${dir} · unilateral exit`;
+    if (activityHasDepix(row, network.id)) return `${dir} · BRL`;
     if (row.tags.includes("offchain") || primaryIds.ark) return `${dir} · Ark`;
     return `${dir} · on-chain`;
-  }, [row, isLn, isReceive, isSend, primaryIds.ark, isExit]);
+  }, [row, isLn, isReceive, isSend, primaryIds.ark, isExit, network.id]);
 
   const typeLabel = useMemo(() => {
     if (!row) return "—";
     if (isLn) return "Lightning payment";
     if (row.tags.includes("boarding") || row.tags.includes("batch")) return "On-chain deposit";
     if (isExit) return "Unilateral exit";
+    if (activityHasDepix(row, network.id)) return "BRL (DePix) payment";
     if (row.tags.includes("offchain") || primaryIds.ark) return "Ark payment";
     return "On-chain payment";
-  }, [row, isLn, primaryIds.ark, isExit]);
+  }, [row, isLn, primaryIds.ark, isExit, network.id]);
 
   const dirty = notes.trim() !== savedNotes.trim();
 
@@ -540,9 +545,15 @@ export function ActivityDetailView({
   const feeCopy =
     primaryIds.feeSats != null ? String(primaryIds.feeSats) : "";
   const dateDisplay = row ? formatWhen(row.createdAt) : "—";
-  const amountCopy = row ? String(Math.abs(row.amount)) : "";
+  const depixAtomic = row ? activityDepixAtomic(row, network.id) : null;
+  const amountCopy = row
+    ? depixAtomic != null && depixAtomic !== 0n
+      ? String(depixAtomicToDisplay(depixAtomic < 0n ? -depixAtomic : depixAtomic))
+      : String(Math.abs(row.amount))
+    : "";
+  const amountDisplay = row ? formatActivityAmountSigned(row, network.id) : "";
   const fiatCopy =
-    row?.fiatAmount != null && row.fiatCode
+    row?.fiatAmount != null && row.fiatCode && !(depixAtomic != null && depixAtomic !== 0n)
       ? `${row.fiatAmount.toFixed(2)} ${row.fiatCode.toUpperCase()}`
       : "";
 
@@ -595,7 +606,7 @@ export function ActivityDetailView({
                 isReceive ? styles.pos : isSend ? styles.neg : null,
               ]}
             >
-              {formatSatsSigned(row.amount)}
+              {amountDisplay}
             </Text>
           </Pressable>
           {fiatCopy ? (

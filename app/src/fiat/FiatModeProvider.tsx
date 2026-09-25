@@ -20,9 +20,12 @@ import { useWallet } from "../wallet/WalletProvider";
 import {
   DEPIX_FEE_BPS,
   DEPIX_MIN_BASE_SATS,
+  brlToSatsEstimate,
   depixAssetIdForNetwork,
   depixAtomicToDisplay,
+  fetchBtcBrlSpot,
   isDefaultishWalletLabel,
+  isFiatModeSwapAvailable,
   stripFiatModeLabelSuffix,
   withFiatModeLabelSuffix,
 } from "./depixAssets";
@@ -104,6 +107,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const [converting, setConverting] = useState(false);
   const [convertingMessage, setConvertingMessage] = useState("");
   const [depixDisplay, setDepixDisplay] = useState<number | null>(null);
+  const [btcBrl, setBtcBrl] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const activeSwapIdRef = useRef<string | null>(null);
   const walletIdRef = useRef<string | null>(null);
@@ -148,6 +152,25 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     if (!state?.fiatMode || !wallet) return;
     void refreshDepixBalance();
   }, [state?.fiatMode, wallet, refreshDepixBalance, balanceSats]);
+
+  // Spot BTCBRL for Home secondary sats-estimate of DePix (not leftover carrier dust).
+  useEffect(() => {
+    if (!state?.fiatMode) {
+      setBtcBrl(null);
+      return;
+    }
+    let cancelled = false;
+    const pull = async () => {
+      const spot = await fetchBtcBrlSpot();
+      if (!cancelled && spot != null) setBtcBrl(spot);
+    };
+    void pull();
+    const timer = setInterval(() => void pull(), 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [state?.fiatMode, depixDisplay]);
 
   const patchState = useCallback(
     async (patch: Partial<FiatModeState>) => {
@@ -256,6 +279,13 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (state?.fiatMode || converting) return;
+    if (!isFiatModeSwapAvailable(networkId)) {
+      Alert.alert(
+        "Fiat Mode unavailable",
+        "BRL conversion is not available on Mutinynet yet. Switch to Bitcoin mainnet in Settings to use Fiat Mode.",
+      );
+      return;
+    }
     const sats = balanceSats ?? 0;
     if (sats < DEPIX_MIN_BASE_SATS) {
       Alert.alert(
@@ -265,7 +295,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       return;
     }
     void runJob("enter", "btc-to-depix", BigInt(sats));
-  }, [walletId, selectedWallet, state?.fiatMode, converting, balanceSats, runJob]);
+  }, [walletId, selectedWallet, state?.fiatMode, converting, balanceSats, runJob, networkId]);
 
   const confirmExit = useCallback(() => {
     if (!walletId || !state?.fiatMode || converting) return;
@@ -337,6 +367,11 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       ? "on"
       : "off";
 
+  const satsEstimate = useMemo(() => {
+    if (!fiatMode || depixDisplay == null || btcBrl == null) return null;
+    return brlToSatsEstimate(depixDisplay, btcBrl);
+  }, [fiatMode, depixDisplay, btcBrl]);
+
   const value = useMemo<FiatModeContextValue>(
     () => ({
       fiatMode,
@@ -344,7 +379,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       converting,
       convertingMessage,
       depixDisplay: fiatMode ? depixDisplay : null,
-      satsEstimate: null,
+      satsEstimate: fiatMode ? satsEstimate : null,
       feeBps: DEPIX_FEE_BPS,
       minEnterSats: DEPIX_MIN_BASE_SATS,
       confirmEnter,
@@ -360,6 +395,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       converting,
       convertingMessage,
       depixDisplay,
+      satsEstimate,
       confirmEnter,
       confirmExit,
       cancelConverting,
