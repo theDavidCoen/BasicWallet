@@ -1,50 +1,50 @@
 /**
- * Settings → Fiat Mode: stablecoin cards (BRL active; others Soon).
+ * Settings → Fiat Mode: stablecoin cards (select then confirm on this page).
  */
 
+import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { ScreenChrome } from "../components/ScreenChrome";
 import { useFiatMode } from "../fiat/FiatModeProvider";
-import { formatBrlDisplay } from "../fiat/depixAssets";
+import { DEPIX_FEE_BPS, DEPIX_MIN_BASE_SATS, formatBrlDisplay } from "../fiat/depixAssets";
 import { useWallet } from "../wallet/WalletProvider";
 import { colors } from "../theme/colors";
+
+type StableId = "brl";
 
 type StableCardProps = {
   title: string;
   status: string;
-  active?: boolean;
-  onPress?: () => void;
-  actionLabel?: string;
+  selected?: boolean;
   soon?: boolean;
+  onSelect?: () => void;
 };
 
-function StableCard({
-  title,
-  status,
-  active,
-  onPress,
-  actionLabel,
-  soon,
-}: StableCardProps) {
-  const disabled = soon || !onPress;
-  return (
-    <View style={[styles.card, soon ? styles.cardSoon : null, active ? styles.cardActive : null]}>
-      <View style={styles.cardRow}>
-        <Text style={[styles.cardTitle, soon ? styles.cardTitleSoon : null]}>{title}</Text>
-        <Text style={[styles.cardStatus, soon ? styles.cardStatusSoon : null]}>{status}</Text>
+function StableCard({ title, status, selected, soon, onSelect }: StableCardProps) {
+  if (soon) {
+    return (
+      <View style={[styles.card, styles.cardSoon]} accessibilityState={{ disabled: true }}>
+        <View style={styles.cardRow}>
+          <Text style={[styles.cardTitle, styles.cardTitleSoon]}>{title}</Text>
+          <Text style={[styles.cardStatus, styles.cardStatusSoon]}>{status}</Text>
+        </View>
       </View>
-      {!soon && actionLabel && onPress ? (
-        <Pressable
-          style={styles.cardAction}
-          onPress={onPress}
-          disabled={disabled}
-          accessibilityRole="button"
-          accessibilityLabel={actionLabel}
-        >
-          <Text style={styles.cardActionLabel}>{actionLabel}</Text>
-        </Pressable>
-      ) : null}
-    </View>
+    );
+  }
+
+  return (
+    <Pressable
+      style={[styles.card, selected ? styles.cardSelected : null]}
+      onPress={onSelect}
+      accessibilityRole="button"
+      accessibilityState={{ selected: Boolean(selected) }}
+      accessibilityLabel={`${title}, ${status}`}
+    >
+      <View style={styles.cardRow}>
+        <Text style={styles.cardTitle}>{title}</Text>
+        <Text style={styles.cardStatus}>{status}</Text>
+      </View>
+    </Pressable>
   );
 }
 
@@ -56,13 +56,20 @@ export function FiatModeSettingsScreen() {
     converting,
     convertingMessage,
     depixDisplay,
-    requestEnter,
-    requestExit,
+    confirmEnter,
+    confirmExit,
     feeBps,
     minEnterSats,
   } = useFiatMode();
 
   const arkade = selectedWallet?.kind === "arkade";
+  const [selected, setSelected] = useState<StableId | null>(null);
+
+  // If already in Fiat Mode, keep BRL selected so Exit is one tap away.
+  useEffect(() => {
+    if (fiatMode) setSelected("brl");
+  }, [fiatMode]);
+
   const feePct = (feeBps / 100).toFixed(1);
   const minSats = minEnterSats.toLocaleString("en-US");
 
@@ -73,8 +80,8 @@ export function FiatModeSettingsScreen() {
         ? `On${depixDisplay != null ? ` · ${formatBrlDisplay(depixDisplay)}` : ""}`
         : "Off";
 
-  const brlAction =
-    !arkade || converting ? undefined : fiatMode ? "Exit" : "Enter";
+  const canConfirm = arkade && selected === "brl" && !converting;
+  const confirmLabel = fiatMode ? "Exit Fiat Mode" : "Enter Fiat Mode";
 
   return (
     <ScreenChrome logoScale={0.77}>
@@ -90,27 +97,43 @@ export function FiatModeSettingsScreen() {
         to sats.
       </Text>
       <Text style={[styles.caption, styles.captionLast]}>
-        Turning a stable on or off has a conversion cost (about {feePct}%,
-        minimum {minSats} sats). Pick a card below.
+        Select a stable below, then confirm on this page. Back cancels without
+        changing mode. Conversion cost is about {feePct}%, minimum {minSats} sats.
       </Text>
 
       <StableCard
         title="BRL (DePix)"
         status={brlStatus}
-        active={fiatMode || converting}
-        onPress={
-          brlAction
-            ? fiatMode
-              ? requestExit
-              : requestEnter
-            : undefined
-        }
-        actionLabel={brlAction}
+        selected={selected === "brl"}
+        onSelect={() => setSelected("brl")}
       />
 
       <StableCard title="USDT" status="Soon" soon />
 
       <StableCard title="Other stablecoin" status="Soon" soon />
+
+      {selected === "brl" ? (
+        <View style={styles.feeCard}>
+          <Text style={styles.feeTitle}>What it costs to switch</Text>
+          <Text style={styles.feeLine}>
+            About {(DEPIX_FEE_BPS / 100).toFixed(1)}% conversion fee
+          </Text>
+          <Text style={styles.feeLine}>
+            Minimum {DEPIX_MIN_BASE_SATS.toLocaleString("en-US")} sats
+          </Text>
+        </View>
+      ) : null}
+
+      {canConfirm ? (
+        <Pressable
+          style={styles.primary}
+          onPress={fiatMode ? confirmExit : confirmEnter}
+          accessibilityRole="button"
+          accessibilityLabel={confirmLabel}
+        >
+          <Text style={styles.primaryLabel}>{confirmLabel}</Text>
+        </Pressable>
+      ) : null}
 
       {!arkade ? (
         <Text style={styles.footnote}>
@@ -119,7 +142,7 @@ export function FiatModeSettingsScreen() {
       ) : (
         <Text style={styles.footnote}>
           Cards will let you choose which stable to use. For now only BRL is
-          active.
+          active. Selection does not leave this page.
         </Text>
       )}
     </ScreenChrome>
@@ -153,8 +176,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     marginBottom: 10,
   },
-  cardActive: {
+  cardSelected: {
     borderColor: colors.fg,
+    borderWidth: 2,
+    paddingVertical: 11,
+    paddingHorizontal: 13,
   },
   cardSoon: {
     opacity: 0.55,
@@ -184,17 +210,39 @@ const styles = StyleSheet.create({
   cardStatusSoon: {
     color: colors.hint,
   },
-  cardAction: {
-    marginTop: 10,
-    alignSelf: "stretch",
-    backgroundColor: colors.fg,
-    borderRadius: 8,
-    paddingVertical: 10,
-    alignItems: "center",
+  feeCard: {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    marginTop: 6,
+    marginBottom: 16,
   },
-  cardActionLabel: {
+  feeTitle: {
     fontFamily: "JetBrainsMono_700Bold",
     fontSize: 13,
+    color: colors.fg,
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  feeLine: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.caption,
+    textAlign: "center",
+    lineHeight: 18,
+  },
+  primary: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  primaryLabel: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 14,
     color: "#000",
   },
   footnote: {

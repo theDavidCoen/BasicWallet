@@ -629,6 +629,7 @@ export function HomeScreen() {
             <View style={styles.headerRightStack}>
               {selectedWallet?.kind === "arkade" ? (
                 <Pressable
+                  // Overlay dialog only (never navigate to Settings Fiat Mode).
                   onPress={fiatMode ? requestExit : requestEnter}
                   hitSlop={8}
                   accessibilityRole="button"

@@ -54,8 +54,14 @@ type FiatModeContextValue = {
   satsEstimate: number | null;
   feeBps: number;
   minEnterSats: number;
+  /** Home: open FundsReceived-style enter overlay (does not navigate). */
   requestEnter: () => void;
+  /** Home: open exit overlay (does not navigate). */
   requestExit: () => void;
+  /** Settings page: run enter without overlay (caller already confirmed on-page). */
+  confirmEnter: () => void;
+  /** Settings page: run exit without overlay. */
+  confirmExit: () => void;
   cancelConverting: () => void;
   /** Refresh DePix balance from live wallet.getBalance().assets. */
   refreshDepixBalance: () => Promise<void>;
@@ -264,7 +270,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     setEnterDialogOpen(false);
   }, []);
 
-  const confirmEnterDialog = useCallback(() => {
+  const confirmEnter = useCallback(() => {
     const sats = balanceSats ?? 0;
     setEnterDialogOpen(false);
     if (sats < DEPIX_MIN_BASE_SATS) {
@@ -287,7 +293,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     setExitDialogOpen(false);
   }, []);
 
-  const confirmExitDialog = useCallback(() => {
+  const confirmExit = useCallback(() => {
     const display = depixDisplay ?? 0;
     setExitDialogOpen(false);
     if (!(display > 0)) {
@@ -370,6 +376,8 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       minEnterSats: DEPIX_MIN_BASE_SATS,
       requestEnter,
       requestExit,
+      confirmEnter,
+      confirmExit,
       cancelConverting,
       refreshDepixBalance,
       maybeAutoSwapInboundSats,
@@ -383,6 +391,8 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       depixDisplay,
       requestEnter,
       requestExit,
+      confirmEnter,
+      confirmExit,
       cancelConverting,
       refreshDepixBalance,
       maybeAutoSwapInboundSats,
@@ -396,14 +406,14 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       {enterDialogOpen ? (
         <FiatModeEnterDialog
           availableSats={balanceSats ?? 0}
-          onConfirm={confirmEnterDialog}
+          onConfirm={confirmEnter}
           onCancel={dismissEnterDialog}
         />
       ) : null}
       {exitDialogOpen ? (
         <FiatModeExitDialog
           brlDisplay={depixDisplay ?? 0}
-          onConfirm={confirmExitDialog}
+          onConfirm={confirmExit}
           onCancel={dismissExitDialog}
         />
       ) : null}
