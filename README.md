@@ -40,19 +40,19 @@ This is **not** an AKRLabs / arkade.money product. It depends on the Arkade SDK 
 
 Capabilities evolve quickly; check Settings → About for the build version and git commit. In recent alphas you can typically:
 
-- Create or restore an Arkade seed wallet (HD)
+- Create or restore an **Arkade seed wallet (HD)**
 - Receive Arkade funds and send to addresses / contacts
-- Multisend — one Arkade send to several `ark…` recipients (amounts per line; activity shows all destinations)
-- **Fiat Mode** — hold a stable unit on the selected Arkade wallet; enter/exit via Home **R$** / **₿**; inbound auto-swap while on
+- **Multisend** — one Arkade send to several `ark…` recipients (amounts per line; activity shows all destinations)
+- **Fiat Mode** — hold a stable unit on the selected Arkade wallet; enter/exit via Home R$ / ₿; inbound auto-swap while on
 - **Bitcoin Maxi Mode** — quietly convert inbound designated stables to sats when Fiat Mode is off (default ON)
-- Browse activity and manage multiple wallets
-- Connect a Lightning node (BTCPay LND REST, LNDHub) for node balance / LN flows
-- Collaborative offboard and unilateral exit related settings (escape hatches)
+- Browse activity and manage **multiple wallets**
+- **Connect a Lightning node** (BTCPay LND REST, LNDHub) for node balance / LN flows
+- Collaborative offboard and **unilateral exit** related settings (escape hatches)
 - Set app PIN / biometrics gates for sensitive actions
 - Export recovery phrase only after presence checks (screen capture blocked where wired)
-- Continue with passkey (WebAuthn / Credential Manager PRF → Personal seed + Nostr identity)
-- Manage a Nostr identity; Advanced Backup (Nostr relays and/or home server), including Fiat/Maxi prefs in the Path C package
-- Maintain contacts (npub, NIP-05, BIP-353, etc.) and share a contact over Nostr
+- **Continue with passkey** (WebAuthn / Credential Manager PRF → Personal seed + Nostr identity)
+- **Manage a Nostr identity**; Advanced Backup (Nostr relays and/or home server), including Fiat/Maxi prefs in the Path C package
+- Maintain **contacts** (npub, NIP-05, BIP-353, etc.) and share a contact over Nostr
 - Prefer mainnet or Mutinynet (and optional custom ASP) from Settings
 
 Expect bugs, incomplete screens, and breaking changes between `0.x` alphas.
