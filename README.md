@@ -1,8 +1,8 @@
 # Basic Wallet
 
-**Experimental Bitcoin / Arkade wallet.** Not a finished product.
+> **Experimental Bitcoin / Arkade wallet.** Not a finished product. You may lose funds!
 
-Basic is a personal playground: an Expo Android app used to prototype wallet UX and features that would be useful in a real Bitcoin wallet (Arkade VTXOs, Lightning via intents, contacts, Nostr backup, and related flows). It is developed in the open so ideas can be tried quickly, not so you should trust it with savings.
+Basic is a personal vibe-coded playground: an Expo Android app used to prototype wallet UX and features that would be useful in a real Bitcoin wallet (Arkade VTXOs, Lightning via intents, contacts, Nostr backup, and related flows). It is developed in the open so ideas can be tried quickly, not so you should trust it with savings.
 
 ## Warning: do not use in production
 
