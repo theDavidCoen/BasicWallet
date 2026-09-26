@@ -140,6 +140,20 @@ export function brlToSatsEstimate(display: number, btcFiat: number): number | nu
   return Math.max(0, Math.round((display / btcFiat) * 100_000_000));
 }
 
+/** Sats → approx fiat display via spot, after Fiat Mode fee bps. */
+export function satsToFiatEstimate(
+  sats: number,
+  btcFiat: number,
+  networkId: ArkadeNetworkId,
+): number | null {
+  if (!(sats > 0) || !(btcFiat > 0)) return null;
+  const feeBps = fiatFeeBps(networkId);
+  const netSats = sats * (1 - feeBps / 10_000);
+  const display = (netSats / 100_000_000) * btcFiat;
+  if (!(display > 0)) return null;
+  return Math.round(display * 100) / 100;
+}
+
 export function isDesignatedDepixId(assetId: string, networkId: ArkadeNetworkId): boolean {
   return assetId.trim().toLowerCase() === depixAssetIdForNetwork(networkId).toLowerCase();
 }

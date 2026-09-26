@@ -113,7 +113,7 @@ export async function runDepixExchange(opts: {
   amount: bigint;
   onProgress?: (p: DepixSwapProgress) => void;
   signal?: AbortSignal;
-}): Promise<{ swapId: string; outcome: string }> {
+}): Promise<{ swapId: string; outcome: string; takeAmount?: bigint; giveAmount?: bigint }> {
   if (inflight) {
     throw new Error("A conversion is already in progress");
   }
@@ -207,12 +207,22 @@ export async function runDepixExchange(opts: {
       unsub();
     }
 
-    return { swapId: swap.id, outcome: finalOutcome };
+    return {
+      swapId: swap.id,
+      outcome: finalOutcome,
+      takeAmount: swap.take?.amount,
+      giveAmount: swap.give?.amount,
+    };
   })();
 
   inflight = run;
   try {
-    return (await run) as { swapId: string; outcome: string };
+    return (await run) as {
+      swapId: string;
+      outcome: string;
+      takeAmount?: bigint;
+      giveAmount?: bigint;
+    };
   } finally {
     inflight = null;
   }

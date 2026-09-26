@@ -35,6 +35,7 @@ import {
   fiatMinBaseSats,
   fiatStableForNetwork,
   isFiatModeSwapAvailable,
+  satsToFiatEstimate,
   stripFiatModeLabelSuffix,
 } from "./depixAssets";
 import {
@@ -71,6 +72,11 @@ type FiatModeContextValue = {
    * Cleared when balanceSats catches up (or timeout).
    */
   pendingExitSats: number | null;
+  /**
+   * After Enter conversion: expected fiat display not yet in live depixDisplay.
+   * Home shows `+ $ x pending` instead of `…` until live settles.
+   */
+  pendingEnterFiat: number | null;
   feeBps: number;
   minEnterSats: number;
   /**
@@ -134,6 +140,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const [depixDisplay, setDepixDisplay] = useState<number | null>(null);
   const [btcBrl, setBtcBrl] = useState<number | null>(null);
   const [pendingExitSats, setPendingExitSats] = useState<number | null>(null);
+  const [pendingEnterFiat, setPendingEnterFiat] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const activeSwapIdRef = useRef<string | null>(null);
   const walletIdRef = useRef<string | null>(null);
@@ -147,6 +154,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   /** Sats expected on Home after Exit fill (pre-exit sats + swap proceeds). */
   const pendingExitTargetRef = useRef<number | null>(null);
   const pendingExitClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingEnterClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** True while any enter/exit/auto/pay job runs (incl. quiet auto-inbound). */
   const jobBusyRef = useRef(false);
 
@@ -453,6 +461,30 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
             // No BRL Funds Received for the enter swap itself.
             quietFiatEnterNotices(60_000);
             clearOptimisticDepix();
+            // Prefer swap take amount; fallback to spot estimate of give sats.
+            let pendingDisplay: number | null = null;
+            if (result.takeAmount != null && result.takeAmount > 0n) {
+              pendingDisplay = depixAtomicToDisplay(result.takeAmount, networkId);
+            } else {
+              const giveSats = Number(amount);
+              let spot = btcBrl;
+              if (spot == null || !(spot > 0)) {
+                spot = await fetchFiatSpot(networkId);
+              }
+              if (giveSats > 0 && spot != null && spot > 0) {
+                pendingDisplay = satsToFiatEstimate(giveSats, spot, networkId);
+              }
+            }
+            if (pendingDisplay != null && pendingDisplay >= 0.01) {
+              setPendingEnterFiat(pendingDisplay);
+              if (pendingEnterClearTimerRef.current) {
+                clearTimeout(pendingEnterClearTimerRef.current);
+              }
+              pendingEnterClearTimerRef.current = setTimeout(() => {
+                setPendingEnterFiat(null);
+              }, 90_000);
+              console.warn("[basic] enter pending fiat", { pendingDisplay });
+            }
             await patchState({
               fiatMode: true,
               pendingJob: null,
@@ -491,6 +523,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
             clearOptimisticDepix();
             lastGoodDepixRef.current = null;
             setDepixDisplay(null);
+            setPendingEnterFiat(null);
             await patchState({
               fiatMode: false,
               pendingJob: null,
@@ -759,10 +792,24 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     setPendingExitSats(pending > 10 ? pending : null);
   }, [balanceSats]);
 
+  // Clear enter pending once live fiat balance settles (Home shows live amount).
+  useEffect(() => {
+    if (pendingEnterFiat == null) return;
+    if (depixDisplay == null || !(depixDisplay >= 0.01)) return;
+    setPendingEnterFiat(null);
+    if (pendingEnterClearTimerRef.current) {
+      clearTimeout(pendingEnterClearTimerRef.current);
+      pendingEnterClearTimerRef.current = null;
+    }
+  }, [depixDisplay, pendingEnterFiat]);
+
   useEffect(() => {
     return () => {
       if (pendingExitClearTimerRef.current) {
         clearTimeout(pendingExitClearTimerRef.current);
+      }
+      if (pendingEnterClearTimerRef.current) {
+        clearTimeout(pendingEnterClearTimerRef.current);
       }
     };
   }, []);
@@ -818,6 +865,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       depixDisplay: fiatMode ? depixDisplay : null,
       satsEstimate: fiatMode ? satsEstimate : null,
       pendingExitSats: fiatMode ? null : pendingExitSats,
+      pendingEnterFiat: fiatMode ? pendingEnterFiat : null,
       feeBps: fiatFeeBps(networkId),
       minEnterSats: fiatMinBaseSats(networkId),
       confirmEnter,
@@ -837,6 +885,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       depixDisplay,
       satsEstimate,
       pendingExitSats,
+      pendingEnterFiat,
       confirmEnter,
       confirmExit,
       cancelConverting,

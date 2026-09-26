@@ -43,6 +43,8 @@ const MAX_POS_SATS = 21_000_000 * 100_000_000;
 
 type Unit = "fiat" | "sats";
 type Phase = "keypad" | "receive";
+/** Fiat Mode Request URI mode — keypad always types fiat; chip picks URI shape. */
+type FiatRequestKind = "fiat" | "bitcoin";
 type PosFiatCode = DisplayCurrencyCode | "BRL" | "USD";
 
 function fiatMinorFactor(code: PosFiatCode): number {
@@ -125,6 +127,7 @@ export function ReceivePosPanel({
   const stableCode = stable.displayCode;
 
   const [unit, setUnit] = useState<Unit>("fiat");
+  const [fiatRequestKind, setFiatRequestKind] = useState<FiatRequestKind>("fiat");
   const [digits, setDigits] = useState(""); // fiat: minor units; sats: sats
   const [phase, setPhase] = useState<Phase>("keypad");
   const [requestUri, setRequestUri] = useState<string | null>(null);
@@ -140,12 +143,14 @@ export function ReceivePosPanel({
     setDigits("");
     setRequestUri(null);
     setCopied(false);
+    setFiatRequestKind("fiat");
   }, [active]);
 
   useEffect(() => {
     if (fiatMode) {
       setFiatCode(stableCode);
       setUnit("fiat");
+      setFiatRequestKind("fiat");
     }
   }, [fiatMode, stableCode]);
 
@@ -267,7 +272,8 @@ export function ReceivePosPanel({
   }, [fiatCode, rate, unit]);
 
   const onRequest = useCallback(() => {
-    if (fiatMode && onRequestBrlUri) {
+    if (fiatMode) {
+      // Keypad stays in fiat denomination; chip picks URI shape.
       const d =
         unit === "fiat"
           ? raw / 100
@@ -275,7 +281,20 @@ export function ReceivePosPanel({
             ? (raw / 100_000_000) * rate
             : 0;
       if (!(d > 0)) return;
-      const uri = onRequestBrlUri(d);
+      if (fiatRequestKind === "fiat" && onRequestBrlUri) {
+        const uri = onRequestBrlUri(d);
+        if (!uri) return;
+        setRequestUri(uri);
+        setPhase("receive");
+        return;
+      }
+      // Bitcoin chip: Universal BIP21 sats, no assetid (inbound auto-converts).
+      const sats =
+        amountSats > 0
+          ? amountSats
+          : satsFromFiatMinor(Math.round(d * 100), fiatCode, rate) ?? 0;
+      if (!(sats > 0) || sats > MAX_POS_SATS) return;
+      const uri = onRequestUri(sats);
       if (!uri) return;
       setRequestUri(uri);
       setPhase("receive");
@@ -286,7 +305,17 @@ export function ReceivePosPanel({
     if (!uri) return;
     setRequestUri(uri);
     setPhase("receive");
-  }, [amountSats, fiatMode, onRequestBrlUri, onRequestUri, raw, rate, unit]);
+  }, [
+    amountSats,
+    fiatCode,
+    fiatMode,
+    fiatRequestKind,
+    onRequestBrlUri,
+    onRequestUri,
+    raw,
+    rate,
+    unit,
+  ]);
 
   const onEditAmount = useCallback(() => {
     setPhase("keypad");
@@ -305,7 +334,10 @@ export function ReceivePosPanel({
   const padBottom = insets.bottom + 16;
 
   const canRequest = fiatMode
-    ? (fiatDisplay ?? 0) > 0 || (unit === "fiat" && raw > 0)
+    ? ((fiatDisplay ?? 0) > 0 || (unit === "fiat" && raw > 0)) &&
+      (fiatRequestKind === "fiat"
+        ? Boolean(onRequestBrlUri)
+        : Boolean(bip21Uri) && (amountSats > 0 || rate != null))
     : amountSats > 0 && amountSats <= MAX_POS_SATS && Boolean(bip21Uri);
 
   if (phase === "receive" && requestUri) {
@@ -349,7 +381,50 @@ export function ReceivePosPanel({
       </View>
 
       <Text style={styles.title}>RECEIVE</Text>
-      <Text style={styles.ccy}>{primaryLabel}</Text>
+      {fiatMode ? (
+        <View style={styles.modeRow}>
+          <Pressable
+            style={[
+              styles.modeBtn,
+              fiatRequestKind === "fiat" && styles.modeBtnOn,
+            ]}
+            onPress={() => setFiatRequestKind("fiat")}
+            accessibilityRole="button"
+            accessibilityState={{ selected: fiatRequestKind === "fiat" }}
+            accessibilityLabel={`${stableCode} receive`}
+          >
+            <Text
+              style={[
+                styles.modeLabel,
+                fiatRequestKind === "fiat" && styles.modeLabelOn,
+              ]}
+            >
+              {stableCode}
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[
+              styles.modeBtn,
+              fiatRequestKind === "bitcoin" && styles.modeBtnOn,
+            ]}
+            onPress={() => setFiatRequestKind("bitcoin")}
+            accessibilityRole="button"
+            accessibilityState={{ selected: fiatRequestKind === "bitcoin" }}
+            accessibilityLabel="Bitcoin receive"
+          >
+            <Text
+              style={[
+                styles.modeLabel,
+                fiatRequestKind === "bitcoin" && styles.modeLabelOn,
+              ]}
+            >
+              Bitcoin
+            </Text>
+          </Pressable>
+        </View>
+      ) : (
+        <Text style={styles.ccy}>{primaryLabel}</Text>
+      )}
 
       <View style={styles.amtRow}>
         <Text
@@ -360,18 +435,16 @@ export function ReceivePosPanel({
         >
           {primaryValue || "0"}
         </Text>
-        <Pressable
-          onPress={toggleUnit}
-          style={styles.swapBtn}
-          hitSlop={12}
-          accessibilityLabel={
-            fiatMode
-              ? `Switch ${stableCode} and sats`
-              : "Switch fiat and sats"
-          }
-        >
-          <Text style={styles.swapIco}>⇅</Text>
-        </Pressable>
+        {!fiatMode ? (
+          <Pressable
+            onPress={toggleUnit}
+            style={styles.swapBtn}
+            hitSlop={12}
+            accessibilityLabel="Switch fiat and sats"
+          >
+            <Text style={styles.swapIco}>⇅</Text>
+          </Pressable>
+        ) : null}
       </View>
       {secondaryLine ? <Text style={styles.secondaryLine}>{secondaryLine}</Text> : null}
 
@@ -408,7 +481,7 @@ export function ReceivePosPanel({
             <ActivityIndicator color="#000" />
             <Text style={styles.ctaPreparing}>Preparing receive…</Text>
           </View>
-        ) : fiatMode && rate == null && unit === "fiat" ? (
+        ) : fiatMode && rate == null ? (
           <ActivityIndicator color="#000" />
         ) : (
           <Text style={styles.ctaText}>Request</Text>
@@ -439,6 +512,33 @@ const styles = StyleSheet.create({
     color: colors.fg,
     textAlign: "center",
     marginTop: 4,
+  },
+  modeRow: {
+    flexDirection: "row",
+    gap: 6,
+    justifyContent: "center",
+    marginTop: 16,
+    marginBottom: 4,
+    paddingHorizontal: 4,
+  },
+  modeBtn: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+  },
+  modeBtnOn: {
+    backgroundColor: colors.fg,
+    borderColor: colors.fg,
+  },
+  modeLabel: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 12,
+    color: colors.fg,
+  },
+  modeLabelOn: {
+    color: colors.bg,
   },
   ccy: {
     fontFamily: "JetBrainsMono_700Bold",

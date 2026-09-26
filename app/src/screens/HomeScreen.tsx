@@ -86,6 +86,7 @@ export function HomeScreen() {
     depixDisplay,
     satsEstimate,
     pendingExitSats,
+    pendingEnterFiat,
   } = useFiatMode();
   const { activeCount, pendingSweep, refreshPendingSweep } = useExitJobs();
   const {
@@ -168,7 +169,14 @@ export function HomeScreen() {
   const primaryBalance = useMemo(() => {
     if (fiatMode) {
       if (depixDisplay == null) {
-        // Never flash $0 while assets are still loading / briefly empty.
+        // After Enter: show expected fill instead of bare "…".
+        if (pendingEnterFiat != null && pendingEnterFiat >= 0.01) {
+          const amt = formatBrlDisplay(pendingEnterFiat, {
+            hidden: balanceHidden,
+            networkId: network.id,
+          });
+          return balanceHidden ? amt : `+ ${amt} pending`;
+        }
         return "…";
       }
       return formatBrlDisplay(depixDisplay, { hidden: balanceHidden, networkId: network.id });
@@ -185,6 +193,7 @@ export function HomeScreen() {
   }, [
     fiatMode,
     depixDisplay,
+    pendingEnterFiat,
     bal,
     balanceHidden,
     balanceSats,
