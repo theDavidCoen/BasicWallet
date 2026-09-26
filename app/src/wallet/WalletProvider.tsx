@@ -167,6 +167,16 @@ type WalletContextValue = {
   endOutboundSend: () => void;
   /** Optimistic UI after a successful outbound send (before live getBalance catches up). */
   applyLocalSpend: (amountSats: number) => void;
+  /**
+   * Optimistic UI after inbound sats (notify / Exit swap fill) before live getBalance.
+   * Advances display + ack so ASP timeouts cannot flash dust or re-toast catch-up.
+   */
+  applyLocalReceive: (amountSats: number) => void;
+  /**
+   * Raise displayed (+ack) to at least `totalSats` without double-adding.
+   * Used after Exit fill estimate + exit-swap notify.
+   */
+  ensureBalanceAtLeast: (totalSats: number) => void;
   refresh: () => Promise<void>;
   /** Cheap getBalance only — no activity materialize (Receive boarding poll). */
   refreshBalanceOnly: () => Promise<void>;
@@ -781,10 +791,62 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       };
       prevBalanceRef.current = next;
       prevBoardingRef.current = next.boarding;
+      // Keep ack ≥ display so failed getBalance cannot regress and re-toast.
+      const ack = lastAckRef.current;
+      if (!ack || next.total > ack.total) {
+        lastAckRef.current = next;
+        if (walletId) {
+          void writeLastAckBalance(networkId, walletId, next);
+        }
+      }
       if (walletId) {
         void writeCachedBalance(networkId, walletId, next);
       }
       console.warn("[basic] applyLocalReceive", { add, total: next.total });
+      return next;
+    });
+    setBalanceStatus("ready");
+  }, []);
+
+  /** Floor Home balance at totalSats (no double-add when estimate + notify both fire). */
+  const ensureBalanceAtLeast = useCallback((totalSats: number) => {
+    const target = Math.max(0, Math.floor(totalSats));
+    if (!(target > 0)) return;
+    const networkId = getNetworkConfig().id;
+    const walletId = selectedIdRef.current;
+    preSendTotalRef.current = null;
+    setBalance((prev) => {
+      const base = prev ?? { available: 0, boarding: 0, total: 0 };
+      if (base.total >= target - 2) {
+        // Still raise ack if notify advanced past a stale ack.
+        const ack = lastAckRef.current;
+        if (!ack || target > ack.total) {
+          const nextAck = {
+            available: Math.max(base.available, target - base.boarding),
+            boarding: base.boarding,
+            total: Math.max(base.total, target),
+          };
+          lastAckRef.current = nextAck;
+          if (walletId) void writeLastAckBalance(networkId, walletId, nextAck);
+        }
+        return prev;
+      }
+      const next = {
+        available: Math.max(0, target - base.boarding),
+        boarding: base.boarding,
+        total: target,
+      };
+      prevBalanceRef.current = next;
+      prevBoardingRef.current = next.boarding;
+      lastAckRef.current = next;
+      if (walletId) {
+        void writeLastAckBalance(networkId, walletId, next);
+        void writeCachedBalance(networkId, walletId, next);
+      }
+      console.warn("[basic] ensureBalanceAtLeast", {
+        from: base.total,
+        to: target,
+      });
       return next;
     });
     setBalanceStatus("ready");
@@ -824,6 +886,24 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         ack.available === bal.available &&
         ack.boarding === bal.boarding
       ) {
+        setBalanceStatus("ready");
+        return;
+      }
+
+      // ASP timeouts / partial vtxo views often return dust (330) or a stale low
+      // total after Exit fill while ack already includes notifyIncoming proceeds.
+      // Never regress ack or flash dust — that caused FUNDS RECEIVED on reopen.
+      const floor = Math.max(ack?.total ?? 0, displayed?.total ?? 0);
+      if (
+        !suppressed &&
+        floor > DEFAULT_MIN_VTXO_SATS * 2 &&
+        bal.total + DEFAULT_MIN_VTXO_SATS * 2 < floor
+      ) {
+        console.warn("[basic] persistBalance ignore suspicious drop", {
+          live: bal.total,
+          ackTotal: ack?.total ?? null,
+          displayed: displayed?.total ?? null,
+        });
         setBalanceStatus("ready");
         return;
       }
@@ -2427,6 +2507,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                     amount,
                   });
                   acknowledgeIncomingAmount(amount);
+                  // Floor Home at ack — getBalance often times out after Exit.
+                  // ensure (not add) so Exit estimate + notify do not double.
+                  const floor = lastAckRef.current?.total ?? amount;
+                  ensureBalanceAtLeast(floor);
                 } else if (isFiatModeActiveGate()) {
                   // Fiat Mode: sats pushes are carriers / swap dust — never toast;
                   // always ack so idle poll cannot replay +330/+660.
@@ -2489,6 +2573,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     emitFundsNotice,
     acknowledgeIncomingAmount,
     applyLocalReceive,
+    ensureBalanceAtLeast,
   ]);
 
   const balanceSats = balance?.total ?? null;
@@ -2549,6 +2634,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       beginOutboundSend,
       endOutboundSend,
       applyLocalSpend,
+      applyLocalReceive,
+      ensureBalanceAtLeast,
       refresh,
       refreshBalanceOnly,
       refreshActivity,
@@ -2598,6 +2685,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       beginOutboundSend,
       endOutboundSend,
       applyLocalSpend,
+      applyLocalReceive,
+      ensureBalanceAtLeast,
       refresh,
       refreshBalanceOnly,
       refreshActivity,

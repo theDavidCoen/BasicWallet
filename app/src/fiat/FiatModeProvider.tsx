@@ -125,6 +125,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     beginOutboundSend,
     endOutboundSend,
     reopenWithWalletMode,
+    ensureBalanceAtLeast,
   } = useWallet();
 
   const [state, setState] = useState<FiatModeState | null>(null);
@@ -304,6 +305,30 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     }
   }, [wallet, walletId, networkId, clearOptimisticDepix]);
 
+  /**
+   * Live spendable stable atomic only — never lastGood / optimistic.
+   * Exit funding must not race an empty ASP asset view.
+   */
+  const readLiveSpendableAtomic = useCallback(async (): Promise<bigint> => {
+    if (!wallet) return 0n;
+    const assetId = depixAssetIdForNetwork(networkId);
+    const attempts = 3;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        const raw = await wallet.getBalance();
+        const atomic = readDepixAtomicFromBalance(raw, assetId);
+        if (atomic > 0n) return atomic;
+        console.warn("[basic] exit live asset empty", { attempt: i + 1 });
+      } catch (e) {
+        console.warn("[basic] exit live asset read failed", e);
+      }
+      if (i < attempts - 1) {
+        await new Promise((r) => setTimeout(r, 800 * (i + 1)));
+      }
+    }
+    return 0n;
+  }, [wallet, networkId]);
+
   useEffect(() => {
     if (!state?.fiatMode || !wallet) return;
     void refreshDepixBalance();
@@ -374,7 +399,9 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         console.warn("[basic] fiat job skip enter (already in fiat mode)");
         return false;
       }
-      if (converting || jobBusyRef.current) {
+      // Mutex is jobBusyRef only — `converting` is UI and can lag a frame after
+      // confirmExit's spendable-balance check clears the overlay.
+      if (jobBusyRef.current) {
         if (!opts?.quiet) {
           Alert.alert("Busy", "A conversion is already in progress.");
         } else {
@@ -416,6 +443,12 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         });
         activeSwapIdRef.current = result.swapId;
         if (result.outcome === "filled") {
+          // Dismiss CONVERTING immediately — refresh() often hangs on Mutinynet
+          // ASP timeouts and left "Conversion complete" + spinner forever.
+          if (!quiet) {
+            setConverting(false);
+            setConvertingMessage("");
+          }
           if (kind === "enter") {
             // No BRL Funds Received for the enter swap itself.
             quietFiatEnterNotices(60_000);
@@ -427,7 +460,8 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
             });
           } else if (kind === "exit") {
             // No sats Funds Received for the exit swap itself (incl. 330 dust).
-            quietFiatExitNotices(90_000);
+            // Long quiet: Mutinynet getBalance often fails for minutes after fill.
+            quietFiatExitNotices(5 * 60_000);
             const preExitSats = balanceSats ?? 0;
             const exitBrl = depixDisplay ?? 0;
             const spot = btcBrl;
@@ -436,6 +470,11 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
                 ? brlToSatsEstimate(exitBrl, spot)
                 : null;
             const estimatedProceeds = estimatedRaw ?? 0;
+            // Optimistic Home sats so ASP timeout cannot leave dust (660/330).
+            // ensureBalanceAtLeast (not add) — notifyIncoming may floor to the same total.
+            if (estimatedProceeds > preExitSats + 10) {
+              ensureBalanceAtLeast(estimatedProceeds);
+            }
             // Show pending until live Home balance catches up (avoid 990→4606 flash confusion).
             const target = Math.max(preExitSats, estimatedProceeds);
             if (target > preExitSats + 10) {
@@ -464,8 +503,15 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
           } else {
             await patchState({ pendingJob: null, lastSwapId: result.swapId });
           }
-          await refresh();
-          await refreshDepixBalance();
+          // Background catch-up — never block overlay dismiss.
+          void (async () => {
+            try {
+              await refresh();
+              await refreshDepixBalance();
+            } catch (e) {
+              console.warn("[basic] post-swap refresh failed", e);
+            }
+          })();
           // Re-baseline sats tracker so dust settle cannot re-fire auto-inbound.
           lastSatsRef.current = null;
           // Baseline DePix after enter so the first poll is not a "receive".
@@ -483,7 +529,17 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         const msg = e instanceof Error ? e.message : String(e);
         console.warn("[basic] fiat swap failed", e);
         await patchState({ pendingJob: null });
-        if (!quiet) Alert.alert("Conversion failed", msg);
+        if (!quiet) {
+          const fundingEmpty =
+            /funding needs .+wallet holds 0/i.test(msg) ||
+            /funding needs .+,\s*wallet holds 0/i.test(msg);
+          Alert.alert(
+            "Conversion failed",
+            fundingEmpty
+              ? `Stable balance is not spendable yet (ASP still settling). Wait a few seconds and try Exit again.\n\n${msg}`
+              : msg,
+          );
+        }
         return false;
       } finally {
         endOutboundSend();
@@ -499,7 +555,6 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     [
       wallet,
       walletId,
-      converting,
       patchState,
       beginOutboundSend,
       endOutboundSend,
@@ -511,6 +566,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       depixDisplay,
       btcBrl,
       state?.fiatMode,
+      ensureBalanceAtLeast,
     ],
   );
 
@@ -553,15 +609,61 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   ]);
 
   const confirmExit = useCallback(async (): Promise<boolean> => {
-    if (!walletId || !state?.fiatMode || converting) return false;
-    const display = depixDisplay ?? 0;
-    if (!(display > 0)) {
-      await patchState({ fiatMode: false, pendingJob: null });
-      return true;
+    if (!walletId || !state?.fiatMode || converting || jobBusyRef.current) {
+      return false;
     }
-    const atomic = depixDisplayToAtomic(display, networkId);
-    return runJob("exit", "depix-to-btc", atomic);
-  }, [walletId, state?.fiatMode, converting, depixDisplay, runJob, patchState, networkId]);
+    const code = fiatStableForNetwork(networkId).displayCode;
+    // Never fund from lastGood / optimistic display alone — ASP often returns
+    // empty assets while UI still shows $59.xx → "funding needs N, wallet holds 0".
+    setConverting(true);
+    setConvertingMessage("Checking spendable balance…");
+    try {
+      const liveAtomic = await readLiveSpendableAtomic();
+      if (!(liveAtomic > 0n)) {
+        const shown = depixDisplay ?? lastGoodDepixRef.current ?? 0;
+        setConverting(false);
+        setConvertingMessage("");
+        if (!(shown > 0.005)) {
+          // Truly empty — just leave Fiat Mode.
+          await patchState({ fiatMode: false, pendingJob: null });
+          return true;
+        }
+        Alert.alert(
+          "Balance not ready",
+          `${code} is not spendable yet (network still settling). Wait a few seconds and try Exit again.`,
+        );
+        return false;
+      }
+      const liveDisplay = depixAtomicToDisplay(liveAtomic, networkId);
+      clearOptimisticDepix();
+      lastGoodDepixRef.current = liveDisplay;
+      setDepixDisplay(liveDisplay);
+      console.warn("[basic] exit funding with live asset", {
+        atomic: String(liveAtomic),
+        display: liveDisplay,
+      });
+      // Clear overlay flag so runJob can own CONVERTING (it checks `converting`).
+      setConverting(false);
+      setConvertingMessage("");
+      return runJob("exit", "depix-to-btc", liveAtomic);
+    } catch (e) {
+      setConverting(false);
+      setConvertingMessage("");
+      const msg = e instanceof Error ? e.message : String(e);
+      Alert.alert("Conversion failed", msg);
+      return false;
+    }
+  }, [
+    walletId,
+    state?.fiatMode,
+    converting,
+    runJob,
+    networkId,
+    readLiveSpendableAtomic,
+    clearOptimisticDepix,
+    depixDisplay,
+    patchState,
+  ]);
 
   const cancelConverting = useCallback(() => {
     // Cancel UI removed — keep no-op for API stability.
