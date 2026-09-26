@@ -11,7 +11,7 @@ export const APP_VERSION = "0.7.0-alpha.22";
  * On a real release (David: crea release / release reale): set to `git rev-parse --short HEAD`.
  * See `.cursor/rules/basic-wallet-release-buildinfo.mdc` and Mind `basic-wallet`.
  */
-export const APP_GIT_COMMIT = "40aa7ec";
+export const APP_GIT_COMMIT = "e5636df";
 
 export const APP_GITHUB_URL = "https://github.com/theDavidCoen/BasicWallet";
 export const APP_GITHUB_LABEL = "theDavidCoen/BasicWallet";
