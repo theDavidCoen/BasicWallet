@@ -115,6 +115,10 @@ export function FiatModeSettingsScreen() {
         const ok = await confirmExit();
         if (ok) navigation.navigate("Home");
       } else {
+        const auth = await requireUserPresence("Confirm Enter Fiat Mode");
+        if (!auth.ok) {
+          return;
+        }
         const ok = await confirmEnter();
         if (ok) navigation.navigate("Home");
       }

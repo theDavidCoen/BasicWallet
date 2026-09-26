@@ -1262,7 +1262,11 @@ export function SheetHost({ children }: { children: ReactNode }) {
               availableSats={balanceSats ?? 0}
               onConfirm={() => {
                 dismissFiatModeSheet();
-                void confirmEnter();
+                void (async () => {
+                  const auth = await requireUserPresence("Confirm Enter Fiat Mode");
+                  if (!auth.ok) return;
+                  void confirmEnter();
+                })();
               }}
               onCancel={dismissFiatModeSheet}
             />
