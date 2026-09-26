@@ -2,7 +2,7 @@
   "expo": {
     "name": "Basic",
     "slug": "basic-wallet",
-    "version": "0.6.0-alpha.9",
+    "version": "0.7.0-alpha.24",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "splash": {
@@ -88,5 +88,5 @@
       "passkeyRpId": "basic.davidcoen.it"
     }
   },
-  "version": "0.6.0-alpha.5"
+  "version": "0.7.0-alpha.24"
 }

@@ -32,6 +32,10 @@ export type RootStackParamList = {
   ArkadeNetwork: undefined;
   /** Penpot 05b */
   DisplayCurrencies: undefined;
+  /** Bitcoin Maxi Mode (auto-swap inbound assets → sats) */
+  BitcoinMaxiSettings: undefined;
+  /** Fiat Mode (DePix / BRL) for selected Arkade wallet */
+  FiatModeSettings: undefined;
   /** Arkade VTXO delegates */
   Delegates: undefined;
   /** Status for selected wallet (Arkade operator / Lightning node). Not the connect hub. */
@@ -102,7 +106,7 @@ export type RootStackParamList = {
   Activity: undefined;
   ActivityDetail: { activityId: string; walletId?: string };
   /** @deprecated Sheet host — do not navigate. */
-  FundsReceived: { amount: number; kind: "boarding" | "arkade" | "lightning" };
+  FundsReceived: { amount: number; kind: "boarding" | "arkade" | "lightning" | "brl" };
   /** @deprecated Sheet host — do not navigate. */
   FundsSent: {
     amount: number;

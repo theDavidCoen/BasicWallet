@@ -45,6 +45,8 @@ import {
 import { useWallet } from "../wallet/WalletProvider";
 import { formatSatsAmount, formatSatsLabel } from "../wallet/formatSats";
 import { colors } from "../theme/colors";
+import { useFiatMode } from "../fiat/FiatModeProvider";
+import { formatBrlDisplay, stripFiatModeLabelSuffix } from "../fiat/depixAssets";
 
 const MUTINYNET_OK = "#7DCEA0";
 const MUTINYNET_DOWN = "#E07070";
@@ -79,10 +81,20 @@ export function HomeScreen() {
     avatarLabel,
     bumpActivity,
   } = useWallet();
+  const {
+    fiatMode,
+    depixDisplay,
+    satsEstimate,
+    pendingExitSats,
+    pendingEnterFiat,
+  } = useFiatMode();
   const { activeCount, pendingSweep, refreshPendingSweep } = useExitJobs();
   const {
     openActivity,
     openWalletSwitcher,
+    openFiatModeEnter,
+    openFiatModeExit,
+    fiatModeSheetOpen,
     beginActivityDrag,
     beginPosDrag,
     beginScanDrag,
@@ -146,14 +158,33 @@ export function HomeScreen() {
   }, [balanceUnit, fiatCodes]);
 
   const cycleBalanceUnit = useCallback(() => {
+    if (fiatMode) return;
     setBalanceUnit((prev) => {
       const i = unitCycle.indexOf(prev);
       const next = unitCycle[(i < 0 ? 0 : i + 1) % unitCycle.length];
       return next ?? "sats";
     });
-  }, [unitCycle]);
+  }, [unitCycle, fiatMode]);
 
   const primaryBalance = useMemo(() => {
+    if (fiatMode) {
+      const pending =
+        pendingEnterFiat != null && pendingEnterFiat >= 0.01
+          ? pendingEnterFiat
+          : null;
+      // Prefer pending while live is missing or still zero after Enter.
+      if (pending != null && (depixDisplay == null || !(depixDisplay >= 0.01))) {
+        const amt = formatBrlDisplay(pending, {
+          hidden: balanceHidden,
+          networkId: network.id,
+        });
+        return balanceHidden ? amt : `+ ${amt} pending`;
+      }
+      if (depixDisplay == null || !(depixDisplay >= 0.01)) {
+        return "…";
+      }
+      return formatBrlDisplay(depixDisplay, { hidden: balanceHidden, networkId: network.id });
+    }
     if (balanceUnit === "sats") return bal;
     if (balanceSats === null) {
       return balanceStatus === "loading" ? "…" : `0 ${balanceUnit}`;
@@ -164,21 +195,31 @@ export function HomeScreen() {
       }) ?? (balanceHidden ? `****** ${balanceUnit}` : `… ${balanceUnit}`)
     );
   }, [
+    fiatMode,
+    depixDisplay,
+    pendingEnterFiat,
     bal,
     balanceHidden,
     balanceSats,
     balanceStatus,
     balanceUnit,
     fiatRates,
+    network.id,
   ]);
 
   const secondaryBalance = useMemo(() => {
-    if (balanceHidden || balanceSats === null) return null;
+    if (balanceHidden) return null;
+    if (fiatMode) {
+      // Sats-equivalent of DePix/BRL, not leftover carrier dust on the VTXO.
+      if (satsEstimate == null) return null;
+      return `≈ ${formatSatsAmount(satsEstimate, false)} sats`;
+    }
+    if (balanceSats === null) return null;
     if (balanceUnit === "sats") {
       return formatHomeFiatLine(balanceSats, fiatCodes, fiatRates);
     }
     return `≈ ${formatSatsAmount(balanceSats, false)} sats`;
-  }, [balanceHidden, balanceSats, balanceUnit, fiatCodes, fiatRates]);
+  }, [balanceHidden, balanceSats, balanceUnit, fiatCodes, fiatRates, fiatMode, satsEstimate]);
 
   const mutinynetColor = mutinynetOnline ? MUTINYNET_OK : MUTINYNET_DOWN;
 
@@ -604,10 +645,19 @@ export function HomeScreen() {
             <WalletAvatar label={avatarLabel} onPress={openWalletSwitcher} />
           }
           headerRight={
-            activeCount > 0 ||
-            pendingSweep.count > 0 ||
-            network.id === "mutinynet" ? (
             <View style={styles.headerRightStack}>
+              {selectedWallet?.kind === "arkade" ? (
+                <Pressable
+                  // InteractiveBottomSheet via SheetHost (same pattern as Wallets).
+                  onPress={fiatMode ? openFiatModeExit : openFiatModeEnter}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel={fiatMode ? "Exit Fiat Mode" : "Enter Fiat Mode"}
+                  style={styles.fiatModeBtn}
+                >
+                  <Text style={styles.fiatModeBtnLabel}>{fiatMode ? "₿" : "R$"}</Text>
+                </Pressable>
+              ) : null}
               {activeCount > 0 ? (
                 <Pressable
                   onPress={() => navigation.navigate("UnilateralExitHub")}
@@ -656,15 +706,21 @@ export function HomeScreen() {
                 </Pressable>
               ) : null}
             </View>
-            ) : null
           }
           onLongPressEmpty={openSettings}
         >
           <View style={styles.flex}>
             <View style={styles.center}>
-              <Text style={styles.walletTag}>
-                {selectedWallet?.label ?? "Personal"}
-              </Text>
+              <View style={styles.walletTagRow}>
+                <Text style={styles.walletTag}>
+                  {stripFiatModeLabelSuffix(selectedWallet?.label ?? "Personal")}
+                </Text>
+                {fiatMode ? (
+                  <View style={styles.fiatModeBadge} accessibilityLabel="Fiat Mode on">
+                    <Text style={styles.fiatModeBadgeLabel}>FIAT MODE</Text>
+                  </View>
+                ) : null}
+              </View>
               <View style={styles.balanceRow}>
                 <Pressable onPress={toggleBalanceHidden} style={styles.balancePress}>
                   <Text
@@ -676,17 +732,27 @@ export function HomeScreen() {
                     {primaryBalance}
                   </Text>
                 </Pressable>
-                <Pressable
-                  onPress={cycleBalanceUnit}
-                  style={styles.swapBtn}
-                  hitSlop={12}
-                  accessibilityLabel="Switch balance unit"
-                >
-                  <Text style={styles.swapIco}>⇅</Text>
-                </Pressable>
+                {!fiatMode ? (
+                  <Pressable
+                    onPress={cycleBalanceUnit}
+                    style={styles.swapBtn}
+                    hitSlop={12}
+                    accessibilityLabel="Switch balance unit"
+                  >
+                    <Text style={styles.swapIco}>⇅</Text>
+                  </Pressable>
+                ) : null}
               </View>
               {secondaryBalance ? (
                 <Text style={styles.fiatHint}>{secondaryBalance}</Text>
+              ) : null}
+              {!fiatMode && pendingExitSats != null && pendingExitSats > 0 ? (
+                <Text
+                  style={styles.pendingExitHint}
+                  accessibilityLabel={`${pendingExitSats} sats pending`}
+                >
+                  {`+ ${pendingExitSats.toLocaleString("en-US")} sats pending`}
+                </Text>
               ) : null}
               {statusHint ? <Text style={styles.statusHint}>{statusHint}</Text> : null}
 
@@ -712,10 +778,14 @@ export function HomeScreen() {
                 onLayout={onHandleLayout}
                 style={[
                   styles.histHit,
-                  activityOpen && !homeDragging && styles.histHitHidden,
+                  (activityOpen && !homeDragging) || fiatModeSheetOpen
+                    ? styles.histHitHidden
+                    : null,
                 ]}
                 collapsable={false}
-                pointerEvents={activityOpen && !homeDragging ? "none" : "auto"}
+                pointerEvents={
+                  (activityOpen && !homeDragging) || fiatModeSheetOpen ? "none" : "auto"
+                }
               >
                 <Pressable onPress={() => openActivity()} hitSlop={16}>
                   <View style={styles.histHandle} />
@@ -743,7 +813,22 @@ const styles = StyleSheet.create({
   headerRightStack: {
     alignItems: "flex-end",
     gap: 6,
-    maxWidth: 120,
+    maxWidth: 140,
+  },
+  /** Match WalletAvatar (top-left) size/style. */
+  fiatModeBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.fg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fiatModeBtnLabel: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 12,
+    color: colors.fg,
   },
   exitBadgeRow: {
     flexDirection: "row",
@@ -818,12 +903,32 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: colors.fg,
   },
+  walletTagRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginBottom: 8,
+    flexWrap: "wrap",
+  },
   walletTag: {
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 14,
     color: colors.caption,
     textAlign: "center",
-    marginBottom: 8,
+  },
+  fiatModeBadge: {
+    borderWidth: 1,
+    borderColor: colors.fg,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  fiatModeBadgeLabel: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 10,
+    color: colors.fg,
+    letterSpacing: 0.5,
   },
   fiatHint: {
     fontFamily: "JetBrainsMono_400Regular",
@@ -832,6 +937,13 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 6,
     minHeight: 18,
+  },
+  pendingExitHint: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.caption,
+    textAlign: "center",
+    marginTop: 4,
   },
   statusHint: {
     fontFamily: "JetBrainsMono_400Regular",

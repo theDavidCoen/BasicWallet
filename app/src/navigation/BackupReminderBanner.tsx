@@ -28,6 +28,7 @@ export function BackupReminderBanner({
     fundsSentOpen,
     posOpen,
     scanOpen,
+    fiatModeSheetOpen,
   } = useSheets();
   const [showNoBackup, setShowNoBackup] = useState(false);
   const [routeName, setRouteName] = useState<string | undefined>();
@@ -38,7 +39,8 @@ export function BackupReminderBanner({
     fundsReceivedOpen ||
     fundsSentOpen ||
     posOpen ||
-    scanOpen;
+    scanOpen ||
+    fiatModeSheetOpen;
 
   const refresh = useCallback(() => {
     void (async () => {

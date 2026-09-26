@@ -5,7 +5,9 @@
  */
 
 import {
+  Children,
   forwardRef,
+  isValidElement,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -36,6 +38,16 @@ import {
   translateForVisibleFraction,
   type SheetSnapIndex,
 } from "./sheetMotion";
+
+/** True when children include at least one real element (not null/false placeholders). */
+function hasRenderableChildren(children: ReactNode): boolean {
+  return Children.toArray(children).some((child) => {
+    if (child == null || typeof child === "boolean") return false;
+    if (typeof child === "string") return child.trim().length > 0;
+    if (typeof child === "number") return true;
+    return isValidElement(child);
+  });
+}
 
 export type SheetMotionShared = {
   translateY: SharedValue<number>;
@@ -70,6 +82,11 @@ type Props = {
    * Default ~0.92 (Activity / Wallets). Pass 0.5 for compact Send sheets.
    */
   visibleFraction?: number;
+  /**
+   * Shrink sheet height to measured content (capped at visibleFraction).
+   * Use for short confirm sheets (Exit Fiat Mode) to avoid a tall empty void.
+   */
+  fitContent?: boolean;
   /**
    * When true, lift the sheet above the system keyboard so content stays visible
    * (Send Enter). Caps at visibleFraction when the keyboard is hidden.
@@ -119,6 +136,7 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
       skipEnterSnap = false,
       anchorY = null,
       visibleFraction = SNAP_OPEN,
+      fitContent = false,
       avoidKeyboard = false,
       motion: motionProp,
       portal = false,
@@ -130,9 +148,21 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
     const offscreenY = windowHeight;
     const clampedVisible = Math.max(0.2, Math.min(1, visibleFraction));
     const [keyboardHeight, setKeyboardHeight] = useState(0);
+    const [contentH, setContentH] = useState(0);
+    // Never present a grabber-only sheet (stale kind / race with null body).
+    const present = open && hasRenderableChildren(children);
 
     useEffect(() => {
-      if (!avoidKeyboard || !open) {
+      if (!present) setContentH(0);
+    }, [present]);
+
+    // Remeasure when toggling fitContent / fraction (Enter ↔ Exit share one sheet).
+    useEffect(() => {
+      if (present && fitContent) setContentH(0);
+    }, [present, fitContent, clampedVisible]);
+
+    useEffect(() => {
+      if (!avoidKeyboard || !present) {
         setKeyboardHeight(0);
         return;
       }
@@ -150,7 +180,7 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
         onShow.remove();
         onHide.remove();
       };
-    }, [avoidKeyboard, open]);
+    }, [avoidKeyboard, present]);
 
     // Edge-to-edge: system nav overlays the bottom of the window. Sheet height
     // must end at the screen bottom; paddingBottom clears the overlay. (Previously
@@ -161,8 +191,10 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
       initialWindowMetrics?.insets.bottom ?? 0,
       Platform.OS === "android" ? 48 : 12,
     );
-    const kb = avoidKeyboard && open ? keyboardHeight : 0;
+    const kb = avoidKeyboard && present ? keyboardHeight : 0;
     const maxVisibleH = windowHeight * clampedVisible;
+    // Handle (~22) + top padding (~8) + bottomPad — keep content from clipping.
+    const chromeExtra = 22 + 8 + bottomPad;
 
     let resolvedOpenY: number;
     let sheetHeight: number;
@@ -174,6 +206,18 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
       resolvedOpenY = Math.max(insets.top + 12, windowHeight - kb - visibleH);
       sheetHeight = visibleH;
       sheetPaddingBottom = 8;
+    } else if (fitContent && contentH > 0) {
+      const fitted = Math.min(maxVisibleH, contentH + chromeExtra);
+      // No artificial 180 floor — short confirm sheets should hug content.
+      sheetHeight = Math.max(120, fitted);
+      resolvedOpenY = Math.max(insets.top + 12, windowHeight - sheetHeight);
+      sheetPaddingBottom = bottomPad;
+    } else if (fitContent) {
+      // Before first layout: stay compact (not 0.55 max) so Exit does not flash tall.
+      const provisional = Math.min(maxVisibleH, Math.max(200, windowHeight * 0.28));
+      sheetHeight = provisional;
+      resolvedOpenY = Math.max(insets.top + 12, windowHeight - provisional);
+      sheetPaddingBottom = bottomPad;
     } else {
       resolvedOpenY = Math.max(
         translateForVisibleFraction(windowHeight, clampedVisible),
@@ -188,16 +232,24 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
 
     const motion = useMotion(motionProp, offscreenY, resolvedOpenY);
     const { translateY, openY, revealY, offY, windowH, dragStartY } = motion;
+    // Parent left open with no body (stale kind / race) — clear so we do not
+    // block Home or stack a grabber-only sheet under Activity.
+    useEffect(() => {
+      if (!open) return;
+      if (hasRenderableChildren(children)) return;
+      onDismiss();
+    }, [open, children, onDismiss]);
+
     const wasOpen = useSharedValue(false);
-    const openSV = useSharedValue(open ? 1 : 0);
+    const openSV = useSharedValue(present ? 1 : 0);
 
     useEffect(() => {
       windowH.value = windowHeight;
       offY.value = offscreenY;
       openY.value = resolvedOpenY;
       revealY.value = revealFallback;
-      openSV.value = open ? 1 : 0;
-      if (!open) {
+      openSV.value = present ? 1 : 0;
+      if (!present) {
         cancelAnimation(translateY);
         translateY.value = offscreenY;
       } else if (wasOpen.value) {
@@ -208,7 +260,7 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
     }, [
       offY,
       offscreenY,
-      open,
+      present,
       openSV,
       openY,
       resolvedOpenY,
@@ -251,7 +303,7 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
     }, [finishDismiss, offY, springTo]);
 
     useEffect(() => {
-      if (open) {
+      if (present) {
         if (!wasOpen.value) {
           wasOpen.value = true;
           if (!skipEnterSnap) {
@@ -267,7 +319,7 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
         translateY.value = withSpring(offY.value, SHEET_SPRING);
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [open, skipEnterSnap]);
+    }, [present, skipEnterSnap]);
 
     useImperativeHandle(
       ref,
@@ -372,7 +424,7 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
 
     const sheetTree = (
       <View style={[StyleSheet.absoluteFill, styles.host]} pointerEvents="box-none">
-        {open ? (
+        {present ? (
           <Animated.View style={[styles.scrim, scrimStyle]} pointerEvents="auto">
             <Pressable style={StyleSheet.absoluteFill} onPress={dismissAnimated} />
           </Animated.View>
@@ -387,14 +439,26 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
             },
             sheetStyle,
           ]}
-          pointerEvents={open ? "auto" : "none"}
+          pointerEvents={present ? "auto" : "none"}
         >
           <GestureDetector gesture={pan}>
             <View style={styles.grabberHit}>
               <View style={styles.grabber} />
             </View>
           </GestureDetector>
-          <View style={styles.body}>{children}</View>
+          <View
+            style={[styles.body, fitContent ? styles.bodyFit : null]}
+            onLayout={
+              fitContent
+                ? (e) => {
+                    const h = e.nativeEvent.layout.height;
+                    if (h > 0 && Math.abs(h - contentH) > 1) setContentH(h);
+                  }
+                : undefined
+            }
+          >
+            {children}
+          </View>
         </Animated.View>
       </View>
     );
@@ -404,7 +468,7 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
       // the primary button sits under the Android nav bar.
       return (
         <Modal
-          visible={open}
+          visible={present}
           transparent
           animationType="none"
           statusBarTranslucent
@@ -467,5 +531,10 @@ const styles = StyleSheet.create({
   body: {
     flex: 1,
     paddingHorizontal: 16,
+  },
+  /** fitContent must measure intrinsic height — flex:1 would report the sheet slot. */
+  bodyFit: {
+    flex: 0,
+    flexGrow: 0,
   },
 });

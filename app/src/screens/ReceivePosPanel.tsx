@@ -1,5 +1,7 @@
 /**
  * Receive POS — keypad → simplified receive (amount, QR, URI, Edit amount).
+ * Layout/behavior matches main; Fiat Mode only changes the currency label/unit
+ * to the network stable (BRL on mainnet, USD on Mutinynet).
  */
 
 import * as Clipboard from "expo-clipboard";
@@ -15,6 +17,12 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ExpandableQrCode } from "../components/ExpandableQrCode";
 import { BasicLogo } from "../components/BasicLogo";
+import { getNetworkConfig } from "../config/network";
+import {
+  fetchFiatSpot,
+  fiatStableForNetwork,
+  formatBrlDisplay,
+} from "../fiat/depixAssets";
 import {
   fetchSpotRates,
   readDisplayCurrencies,
@@ -35,16 +43,31 @@ const MAX_POS_SATS = 21_000_000 * 100_000_000;
 
 type Unit = "fiat" | "sats";
 type Phase = "keypad" | "receive";
+/** Fiat Mode Request URI mode — keypad always types fiat; chip picks URI shape. */
+type FiatRequestKind = "fiat" | "bitcoin";
+type PosFiatCode = DisplayCurrencyCode | "BRL" | "USD";
 
-function fiatMinorFactor(code: DisplayCurrencyCode): number {
+function fiatMinorFactor(code: PosFiatCode): number {
   return code === "JPY" ? 1 : 100;
 }
 
-function formatFiatMinor(minor: number, code: DisplayCurrencyCode): string {
+function formatFiatMinor(minor: number, code: PosFiatCode): string {
   if (code === "JPY") {
     return minor.toLocaleString("it-IT");
   }
   const major = minor / 100;
+  if (code === "BRL") {
+    return major.toLocaleString("pt-BR", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  }
+  if (code === "USD") {
+    return major.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  }
   return major.toLocaleString("it-IT", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -57,7 +80,7 @@ function formatSats(sats: number): string {
 
 function satsFromFiatMinor(
   minor: number,
-  code: DisplayCurrencyCode,
+  code: PosFiatCode,
   rateBtc: number | undefined,
 ): number | null {
   if (rateBtc == null || rateBtc <= 0 || minor <= 0) return null;
@@ -67,7 +90,7 @@ function satsFromFiatMinor(
 
 function fiatMinorFromSats(
   sats: number,
-  code: DisplayCurrencyCode,
+  code: PosFiatCode,
   rateBtc: number | undefined,
 ): number | null {
   if (rateBtc == null || rateBtc <= 0 || sats <= 0) return null;
@@ -79,23 +102,39 @@ export function ReceivePosPanel({
   bip21Uri,
   onClose,
   onRequestUri,
+  onRequestBrlUri,
   active = true,
+  fiatMode = false,
 }: {
   /** Base BIP21 (boarding + ark) without amount — used when enabling Request. */
   bip21Uri: string | null;
   onClose: () => void;
   /** Build BIP21 with amount (sats) → full URI for QR. */
   onRequestUri: (amountSats: number) => string | null;
+  /**
+   * Fiat Mode: build stable-asset receive URI from display units.
+   * When set, Request prefers this over padded sats BIP21.
+   */
+  onRequestBrlUri?: (fiatDisplay: number) => string | null;
   /** When false (sheet dismissed), return to keypad so the next open is fresh. */
   active?: boolean;
+  /** When true, primary unit is the network stable (BRL / USD), not EUR. */
+  fiatMode?: boolean;
 }) {
   const insets = useSafeAreaInsets();
+  const networkId = getNetworkConfig().id;
+  const stable = fiatStableForNetwork(networkId);
+  const stableCode = stable.displayCode;
+
   const [unit, setUnit] = useState<Unit>("fiat");
+  const [fiatRequestKind, setFiatRequestKind] = useState<FiatRequestKind>("fiat");
   const [digits, setDigits] = useState(""); // fiat: minor units; sats: sats
   const [phase, setPhase] = useState<Phase>("keypad");
   const [requestUri, setRequestUri] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [fiatCode, setFiatCode] = useState<DisplayCurrencyCode>("EUR");
+  const [fiatCode, setFiatCode] = useState<PosFiatCode>(
+    fiatMode ? stableCode : "EUR",
+  );
   const [rate, setRate] = useState<number | undefined>();
 
   useEffect(() => {
@@ -104,12 +143,29 @@ export function ReceivePosPanel({
     setDigits("");
     setRequestUri(null);
     setCopied(false);
+    setFiatRequestKind("fiat");
   }, [active]);
+
+  useEffect(() => {
+    if (fiatMode) {
+      setFiatCode(stableCode);
+      setUnit("fiat");
+      setFiatRequestKind("fiat");
+    }
+  }, [fiatMode, stableCode]);
 
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | null = null;
     const pull = async () => {
+      if (fiatMode) {
+        const spot = await fetchFiatSpot(networkId);
+        if (!cancelled && spot != null) {
+          setFiatCode(stableCode);
+          setRate(spot);
+        }
+        return;
+      }
       const s = await readDisplayCurrencies();
       if (cancelled) return;
       const code = s.enabled[0] ?? "EUR";
@@ -123,9 +179,16 @@ export function ReceivePosPanel({
       cancelled = true;
       if (timer) clearInterval(timer);
     };
-  }, []);
+  }, [fiatMode, networkId, stableCode]);
 
   const raw = digits === "" ? 0 : Number.parseInt(digits, 10) || 0;
+
+  const fiatDisplay = useMemo(() => {
+    if (!fiatMode) return null;
+    if (unit === "fiat") return raw / 100;
+    if (rate == null || raw <= 0) return 0;
+    return (raw / 100_000_000) * rate;
+  }, [fiatMode, raw, rate, unit]);
 
   const amountSats = useMemo(() => {
     if (raw <= 0) return 0;
@@ -133,7 +196,7 @@ export function ReceivePosPanel({
     return Math.min(sats, MAX_POS_SATS);
   }, [fiatCode, raw, rate, unit]);
 
-  const primaryLabel = unit === "fiat" ? fiatCode : "SATS";
+  const primaryLabel = unit === "fiat" ? (fiatMode ? stableCode : fiatCode) : "SATS";
   const primaryValue =
     unit === "fiat" ? formatFiatMinor(raw, fiatCode) : formatSats(raw);
 
@@ -143,17 +206,30 @@ export function ReceivePosPanel({
       if (amountSats <= 0) return rate == null ? "Rate unavailable" : null;
       return `≈ ${formatSats(amountSats)} sats`;
     }
+    if (fiatMode) {
+      const d = fiatDisplay ?? 0;
+      if (!(d > 0)) return rate == null ? "Rate unavailable" : null;
+      return `≈ ${formatBrlDisplay(d, { networkId })}`;
+    }
     const minor = fiatMinorFromSats(raw, fiatCode, rate);
     if (minor == null) return rate == null ? "Rate unavailable" : null;
     return `≈ ${fiatCode} ${formatFiatMinor(minor, fiatCode)}`;
-  }, [amountSats, fiatCode, raw, rate, unit]);
+  }, [amountSats, fiatCode, fiatDisplay, fiatMode, networkId, raw, rate, unit]);
 
   const requestAmountLabel = useMemo(() => {
+    if (fiatMode) {
+      const d =
+        unit === "fiat" ? raw / 100 : fiatDisplay ?? 0;
+      if (!(d > 0)) return formatBrlDisplay(0, { networkId });
+      const primary = formatBrlDisplay(d, { networkId });
+      if (amountSats > 0) return `${primary} · ≈ ${formatSats(amountSats)} sats`;
+      return primary;
+    }
     const satsPart = `${formatSats(amountSats)} sats`;
     const fiatMinor = fiatMinorFromSats(amountSats, fiatCode, rate);
     if (fiatMinor == null || rate == null) return satsPart;
     return `${satsPart} · ${fiatCode} ${formatFiatMinor(fiatMinor, fiatCode)}`;
-  }, [amountSats, fiatCode, rate]);
+  }, [amountSats, fiatCode, fiatDisplay, fiatMode, networkId, raw, rate, unit]);
 
   const onKey = useCallback(
     (key: string) => {
@@ -196,12 +272,50 @@ export function ReceivePosPanel({
   }, [fiatCode, rate, unit]);
 
   const onRequest = useCallback(() => {
+    if (fiatMode) {
+      // Keypad stays in fiat denomination; chip picks URI shape.
+      const d =
+        unit === "fiat"
+          ? raw / 100
+          : rate != null && raw > 0
+            ? (raw / 100_000_000) * rate
+            : 0;
+      if (!(d > 0)) return;
+      if (fiatRequestKind === "fiat" && onRequestBrlUri) {
+        const uri = onRequestBrlUri(d);
+        if (!uri) return;
+        setRequestUri(uri);
+        setPhase("receive");
+        return;
+      }
+      // Bitcoin chip: Universal BIP21 sats, no assetid (inbound auto-converts).
+      const sats =
+        amountSats > 0
+          ? amountSats
+          : satsFromFiatMinor(Math.round(d * 100), fiatCode, rate) ?? 0;
+      if (!(sats > 0) || sats > MAX_POS_SATS) return;
+      const uri = onRequestUri(sats);
+      if (!uri) return;
+      setRequestUri(uri);
+      setPhase("receive");
+      return;
+    }
     if (amountSats <= 0 || amountSats > MAX_POS_SATS) return;
     const uri = onRequestUri(amountSats);
     if (!uri) return;
     setRequestUri(uri);
     setPhase("receive");
-  }, [amountSats, onRequestUri]);
+  }, [
+    amountSats,
+    fiatCode,
+    fiatMode,
+    fiatRequestKind,
+    onRequestBrlUri,
+    onRequestUri,
+    raw,
+    rate,
+    unit,
+  ]);
 
   const onEditAmount = useCallback(() => {
     setPhase("keypad");
@@ -218,6 +332,13 @@ export function ReceivePosPanel({
 
   const padTop = Math.max(insets.top, 12) + 8;
   const padBottom = insets.bottom + 16;
+
+  const canRequest = fiatMode
+    ? ((fiatDisplay ?? 0) > 0 || (unit === "fiat" && raw > 0)) &&
+      (fiatRequestKind === "fiat"
+        ? Boolean(onRequestBrlUri)
+        : Boolean(bip21Uri) && (amountSats > 0 || rate != null))
+    : amountSats > 0 && amountSats <= MAX_POS_SATS && Boolean(bip21Uri);
 
   if (phase === "receive" && requestUri) {
     return (
@@ -260,7 +381,50 @@ export function ReceivePosPanel({
       </View>
 
       <Text style={styles.title}>RECEIVE</Text>
-      <Text style={styles.ccy}>{primaryLabel}</Text>
+      {fiatMode ? (
+        <View style={styles.modeRow}>
+          <Pressable
+            style={[
+              styles.modeBtn,
+              fiatRequestKind === "fiat" && styles.modeBtnOn,
+            ]}
+            onPress={() => setFiatRequestKind("fiat")}
+            accessibilityRole="button"
+            accessibilityState={{ selected: fiatRequestKind === "fiat" }}
+            accessibilityLabel={`${stableCode} receive`}
+          >
+            <Text
+              style={[
+                styles.modeLabel,
+                fiatRequestKind === "fiat" && styles.modeLabelOn,
+              ]}
+            >
+              {stableCode}
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[
+              styles.modeBtn,
+              fiatRequestKind === "bitcoin" && styles.modeBtnOn,
+            ]}
+            onPress={() => setFiatRequestKind("bitcoin")}
+            accessibilityRole="button"
+            accessibilityState={{ selected: fiatRequestKind === "bitcoin" }}
+            accessibilityLabel="Bitcoin receive"
+          >
+            <Text
+              style={[
+                styles.modeLabel,
+                fiatRequestKind === "bitcoin" && styles.modeLabelOn,
+              ]}
+            >
+              Bitcoin
+            </Text>
+          </Pressable>
+        </View>
+      ) : (
+        <Text style={styles.ccy}>{primaryLabel}</Text>
+      )}
 
       <View style={styles.amtRow}>
         <Text
@@ -271,14 +435,16 @@ export function ReceivePosPanel({
         >
           {primaryValue || "0"}
         </Text>
-        <Pressable
-          onPress={toggleUnit}
-          style={styles.swapBtn}
-          hitSlop={12}
-          accessibilityLabel="Switch fiat and sats"
-        >
-          <Text style={styles.swapIco}>⇅</Text>
-        </Pressable>
+        {!fiatMode ? (
+          <Pressable
+            onPress={toggleUnit}
+            style={styles.swapBtn}
+            hitSlop={12}
+            accessibilityLabel="Switch fiat and sats"
+          >
+            <Text style={styles.swapIco}>⇅</Text>
+          </Pressable>
+        ) : null}
       </View>
       {secondaryLine ? <Text style={styles.secondaryLine}>{secondaryLine}</Text> : null}
 
@@ -306,15 +472,17 @@ export function ReceivePosPanel({
       </View>
 
       <Pressable
-        style={[styles.cta, (amountSats <= 0 || !bip21Uri) && styles.ctaDisabled]}
-        disabled={amountSats <= 0 || !bip21Uri}
+        style={[styles.cta, !canRequest && styles.ctaDisabled]}
+        disabled={!canRequest}
         onPress={onRequest}
       >
-        {!bip21Uri ? (
+        {!fiatMode && !bip21Uri ? (
           <View style={styles.ctaBusy}>
             <ActivityIndicator color="#000" />
             <Text style={styles.ctaPreparing}>Preparing receive…</Text>
           </View>
+        ) : fiatMode && rate == null ? (
+          <ActivityIndicator color="#000" />
         ) : (
           <Text style={styles.ctaText}>Request</Text>
         )}
@@ -344,6 +512,33 @@ const styles = StyleSheet.create({
     color: colors.fg,
     textAlign: "center",
     marginTop: 4,
+  },
+  modeRow: {
+    flexDirection: "row",
+    gap: 6,
+    justifyContent: "center",
+    marginTop: 16,
+    marginBottom: 4,
+    paddingHorizontal: 4,
+  },
+  modeBtn: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+  },
+  modeBtnOn: {
+    backgroundColor: colors.fg,
+    borderColor: colors.fg,
+  },
+  modeLabel: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 12,
+    color: colors.fg,
+  },
+  modeLabelOn: {
+    color: colors.bg,
   },
   ccy: {
     fontFamily: "JetBrainsMono_700Bold",

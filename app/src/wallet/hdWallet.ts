@@ -18,7 +18,7 @@ import {
 } from "../arkade/delegateSettings";
 import { loadMnemonicForCrypto, storeMnemonic } from "../security/mnemonicStore";
 import { MUTINYNET_ARK_INFO_SNAPSHOT } from "./mutinynetArkInfoSeed";
-import { getPersistentStorage } from "./persistentStorage";
+import { ensurePersistentStorageReady } from "./persistentStorage";
 
 export type BasicWallet = Awaited<ReturnType<typeof Wallet.create>>;
 
@@ -143,14 +143,26 @@ export async function seedMnemonicOnly(walletId: string, mnemonic: string): Prom
   markRestorePending(walletId);
 }
 
+export type WalletMode = "hd" | "static";
+
 export type OpenWalletOpts = {
   runRestore?: boolean;
+  /** Default hd. Fiat Mode uses static to avoid multi-address reopen noise. */
+  walletMode?: WalletMode;
 };
 
 type CreateEngineOpts = {
   /** When true, skip gap restore (peek / address-only). Default false for open path. */
   runRestore?: boolean;
+  walletMode?: WalletMode;
 };
+
+/** Active engine mode (for Fiat Mode HD↔static switch). */
+let openWalletMode: WalletMode = "hd";
+
+export function getOpenWalletMode(): WalletMode {
+  return openWalletMode;
+}
 
 /**
  * Build an HD Wallet engine without touching walletSingleton.
@@ -166,7 +178,7 @@ async function createHdWalletEngine(
   }
 
   const network = getNetworkConfig();
-  const storage = getPersistentStorage(network.id, walletId);
+  const storage = await ensurePersistentStorageReady(network.id, walletId);
 
   await Promise.all([
     storage.walletRepository.getWalletState().catch(() => null),
@@ -183,11 +195,12 @@ async function createHdWalletEngine(
     ? new RestDelegateProvider(delegateUrl)
     : undefined;
 
+  const mode: WalletMode = opts.walletMode ?? "hd";
+
   const wallet = await withTimeout(
     Wallet.create({
       identity,
-      walletMode: "hd",
-      esploraUrl: network.esploraUrl,
+      walletMode: mode,
       arkProvider: new TimedExpoArkProvider(network.arkServerUrl),
       indexerProvider: new ExpoIndexerProvider(network.arkServerUrl),
       onchainProvider: new NoWatchEsploraProvider(network.esploraUrl),
@@ -205,7 +218,7 @@ async function createHdWalletEngine(
     "Wallet.create",
   );
 
-  if (opts.runRestore) {
+  if (opts.runRestore && mode === "hd") {
     await runWalletRestore(walletId, wallet);
   }
 
@@ -234,8 +247,11 @@ export async function openHdWalletFromKeystore(
   walletId: string,
   opts: OpenWalletOpts = {},
 ): Promise<BasicWallet> {
-  if (walletSingleton && openWalletId === walletId) {
-    if (opts.runRestore) await runWalletRestore(walletId, walletSingleton);
+  const wantMode: WalletMode = opts.walletMode ?? "hd";
+  if (walletSingleton && openWalletId === walletId && openWalletMode === wantMode) {
+    if (opts.runRestore && wantMode === "hd") {
+      await runWalletRestore(walletId, walletSingleton);
+    }
     return walletSingleton;
   }
 
@@ -244,10 +260,12 @@ export async function openHdWalletFromKeystore(
 
   const wallet = await createHdWalletEngine(walletId, {
     runRestore: opts.runRestore,
+    walletMode: wantMode,
   });
 
   walletSingleton = wallet;
   openWalletId = walletId;
+  openWalletMode = wantMode;
 
   return wallet;
 }
@@ -319,4 +337,5 @@ export function getOpenWalletId(): string | null {
 export function clearOpenWallet(): void {
   walletSingleton = null;
   openWalletId = null;
+  openWalletMode = "hd";
 }

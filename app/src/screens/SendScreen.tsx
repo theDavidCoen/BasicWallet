@@ -58,6 +58,13 @@ import {
 import { useWallet } from "../wallet/WalletProvider";
 import { formatSatsLabel } from "../wallet/formatSats";
 import { ScanQrModal, extractLightningPayFromScan, extractArkAddressFromScan } from "./ScanQrModal";
+import { useFiatMode } from "../fiat/FiatModeProvider";
+import {
+  depixAssetIdForNetwork,
+  fiatStableForNetwork,
+  formatBrlDisplay,
+  parseBrlDisplay,
+} from "../fiat/depixAssets";
 import { resolvePayIntent } from "../wallet/bip21Pay";
 import type { WalletRecord } from "../account/walletRegistry";
 
@@ -71,6 +78,9 @@ type SendLine = {
   address: string;
   amountStr: string;
   walletLabel: string | null;
+  /** When set, amountStr is DePix display units and send uses assets[]. */
+  assetId?: string | null;
+  assetAmountDisplay?: string | null;
 };
 
 function newSendLine(partial?: Partial<SendLine>): SendLine {
@@ -222,7 +232,9 @@ export function SendScreen() {
     wallets,
     bumpActivity,
   } = useWallet();
+  const { fiatMode, convertDepixToSatsForPay, depixDisplay, applyLocalDepixSpend } = useFiatMode();
   const network = getNetworkConfig();
+  const depixAssetId = depixAssetIdForNetwork(network.id);
   /** Lightning path still uses flat address/amount. */
   const [address, setAddress] = useState("");
   const [amountStr, setAmountStr] = useState("");
@@ -343,7 +355,24 @@ export function SendScreen() {
   const [lnProbeError, setLnProbeError] = useState<string | null>(null);
 
   const spendable = balance?.available ?? null;
-  const bal = formatSatsLabel(spendable, balanceHidden);
+  const fiatUnit = fiatStableForNetwork(network.id).displayCode;
+  const bal = fiatMode
+    ? formatBrlDisplay(depixDisplay ?? 0, { hidden: balanceHidden, networkId: network.id })
+    : formatSatsLabel(spendable, balanceHidden);
+
+  // Fiat Mode: amount fields are BRL; stamp DePix asset id on lines.
+  useEffect(() => {
+    if (!fiatMode || isLightning) return;
+    setLines((prev) => {
+      let changed = false;
+      const next = prev.map((l) => {
+        if (l.assetId) return l;
+        changed = true;
+        return { ...l, assetId: depixAssetId };
+      });
+      return changed ? next : prev;
+    });
+  }, [fiatMode, isLightning, depixAssetId]);
 
   useEffect(() => {
     if (!isLightning || !selectedWallet?.id) {
@@ -403,9 +432,16 @@ export function SendScreen() {
         ? intent.destination
         : text;
     const amt =
-      intent && (text.includes("?") || /^bitcoin:/i.test(text.trim())) && intent.amountSats != null
-        ? String(intent.amountSats)
-        : null;
+      intent?.assetId && intent.assetAmountDisplay
+        ? intent.assetAmountDisplay
+        : intent &&
+            (text.includes("?") || /^bitcoin:/i.test(text.trim())) &&
+            intent.amountSats != null
+          ? String(intent.amountSats)
+          : null;
+    const assetId =
+      intent?.assetId ??
+      (fiatMode && !isLightning ? depixAssetId : null);
 
     if (isLightning) {
       setAddress(dest);
@@ -430,6 +466,8 @@ export function SendScreen() {
               address: dest,
               walletLabel,
               ...(amt ? { amountStr: amt } : {}),
+              assetId,
+              assetAmountDisplay: intent?.assetAmountDisplay ?? null,
             }
           : l,
       ),
@@ -672,11 +710,31 @@ export function SendScreen() {
 
   function confirmAddRecipient() {
     const addr = addDraftAddress.trim();
-    const amt = parseAmountSats(addDraftAmount);
     if (!isValidArkAddress(addr)) {
       Alert.alert("Invalid address", "Paste a valid Arkade (ark…) address.");
       return;
     }
+    if (fiatMode) {
+      const brl = parseBrlDisplay(addDraftAmount);
+      if (brl == null) {
+        Alert.alert("Amount required", `Enter how many ${fiatUnit} for this recipient.`);
+        return;
+      }
+      if (lines.length >= MAX_SEND_RECIPIENTS) {
+        Alert.alert("Limit reached", `You can send to at most ${MAX_SEND_RECIPIENTS} recipients.`);
+        return;
+      }
+      const line = newSendLine({
+        address: addr,
+        amountStr: String(brl),
+        walletLabel: addDraftLabel,
+        assetId: depixAssetId,
+      });
+      setLines((prev) => [...prev, line]);
+      closeAddRecipientSheet();
+      return;
+    }
+    const amt = parseAmountSats(addDraftAmount);
     if (amt == null) {
       Alert.alert("Amount required", "Enter how many sats for this recipient.");
       return;
@@ -695,6 +753,19 @@ export function SendScreen() {
   }
 
   function fillMaxSend(target: "primary" | "add" | string = "primary") {
+    if (fiatMode && !isLightning) {
+      const maxBrl = depixDisplay ?? 0;
+      if (!(maxBrl > 0)) return;
+      const formatted = maxBrl.toFixed(2);
+      if (target === "add") {
+        setAddDraftAmount(formatted);
+        return;
+      }
+      const targetId = target === "primary" ? lines[0]?.id : target;
+      if (!targetId) return;
+      patchLine(targetId, { amountStr: formatted, assetId: depixAssetId });
+      return;
+    }
     if (spendable == null || spendable <= 0) return;
     if (isLightning) {
       let max = Math.floor(spendable);
@@ -849,6 +920,39 @@ export function SendScreen() {
     const built: SendRecipient[] = [];
     for (const line of lines) {
       const trimmed = line.address.trim();
+      const assetIdForLine =
+        line.assetId ||
+        (fiatMode && trimmed && !isBtcAddress(trimmed) && isValidArkAddress(trimmed)
+          ? depixAssetId
+          : null);
+      if (assetIdForLine) {
+        const display = parseBrlDisplay(line.amountStr);
+        if (!trimmed || display == null) {
+          Alert.alert(
+            "Incomplete recipient",
+            "Each recipient needs an ark… address and a positive fiat amount.",
+          );
+          return;
+        }
+        if (!isValidArkAddress(trimmed)) {
+          Alert.alert("Invalid address", "Paste a valid Arkade (ark…) address.");
+          return;
+        }
+        const { depixDisplayToAtomic: toAtomic } = await import("../fiat/depixAssets");
+        built.push({
+          address: trimmed,
+          // Official arkade.money sendAssets uses amount: 0 for pure asset transfers
+          // (no carrier dust). Users in Fiat Mode may have zero sats.
+          amount: 0,
+          assets: [
+            {
+              assetId: assetIdForLine,
+              amount: toAtomic(display, network.id),
+            },
+          ],
+        });
+        continue;
+      }
       const amount = parseAmountSats(line.amountStr);
       if (!trimmed && amount == null) continue;
       if (!trimmed || amount == null) {
@@ -878,6 +982,48 @@ export function SendScreen() {
     }
 
     const recipients = mergeRecipientsByAddress(built);
+    const wantsAsset = recipients.some((r) => (r.assets?.length ?? 0) > 0);
+    if (fiatMode && !wantsAsset) {
+      try {
+        const need = recipients.reduce((s, r) => s + r.amount, 0);
+        const brl = depixDisplay ?? 0;
+        if (!(brl > 0)) {
+          Alert.alert(
+            `Insufficient ${fiatUnit}`,
+            "Convert or receive the stable asset before sending sats.",
+          );
+          return;
+        }
+        Alert.alert(
+          "Convert to sats",
+          `This payment needs sats. Convert your ${fiatUnit} balance (~${brl.toFixed(2)}) to sats first? Fee applies.`,
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Convert & send",
+              onPress: () => {
+                void (async () => {
+                  try {
+                    await convertDepixToSatsForPay(need);
+                    // User can tap Send again after conversion settles.
+                    Alert.alert("Converted", "Tap Send again to pay the sats invoice.");
+                  } catch (e) {
+                    Alert.alert(
+                      "Conversion failed",
+                      e instanceof Error ? e.message : "Unknown error",
+                    );
+                  }
+                })();
+              },
+            },
+          ],
+        );
+        return;
+      } catch (e) {
+        Alert.alert("Conversion failed", e instanceof Error ? e.message : "Unknown error");
+        return;
+      }
+    }
     if (!wallet) {
       Alert.alert("Wallet closed", "Re-open the wallet and try again.");
       return;
@@ -888,6 +1034,9 @@ export function SendScreen() {
     try {
       dust = await readMinVtxoSats(wallet);
       for (const r of recipients) {
+        // Asset-only recipients (amount 0 + assets) skip the sats dust floor —
+        // matches arkade.money sendAssets / Network fees $0.00.
+        if ((r.assets?.length ?? 0) > 0 && r.amount === 0) continue;
         if (r.amount < dust) {
           Alert.alert(
             "Amount too low",
@@ -899,12 +1048,60 @@ export function SendScreen() {
 
       let working = recipients.map((r) => ({ ...r }));
       let paymentSum = working.reduce((s, r) => s + r.amount, 0);
-      if (spendable !== null && paymentSum > spendable) {
+      if (wantsAsset) {
+        const needBrl = lines.reduce((s, l) => {
+          const d = parseBrlDisplay(l.amountStr);
+          return s + (d ?? 0);
+        }, 0);
+        const have = depixDisplay ?? 0;
+        if (needBrl > have + 1e-8) {
+          Alert.alert("Insufficient balance", `Available: ${bal}`);
+          return;
+        }
+        // Partial asset sends need a second dust carrier for asset change.
+        // Enter reserves DEFAULT_MIN_VTXO_SATS; if spendable is still too low,
+        // ask to send the full balance instead of failing in the SDK.
+        const partial = needBrl + 1e-8 < have;
+        const availableSats = spendable ?? 0;
+        if (partial && availableSats < DEFAULT_MIN_VTXO_SATS) {
+          Alert.alert(
+            "Not enough sats for change",
+            `Sending part of your ${fiatUnit} needs about ${DEFAULT_MIN_VTXO_SATS} spare sats for the change output. Send the full balance, or receive a little more first.`,
+            [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: `Send all ${formatBrlDisplay(have, { networkId: network.id })}`,
+                onPress: () => {
+                  setLines((prev) => {
+                    if (!prev[0]) return prev;
+                    const copy = [...prev];
+                    copy[0] = {
+                      ...copy[0]!,
+                      amountStr: have.toFixed(2).replace(".", ","),
+                    };
+                    return copy.slice(0, 1);
+                  });
+                },
+              },
+            ],
+          );
+          return;
+        }
+      } else if (spendable !== null && paymentSum > spendable) {
         Alert.alert("Insufficient balance", `Available: ${bal}`);
         return;
       }
 
-      const plan = await prepareDustSafeSend(wallet, paymentSum, dust);
+      // Pure asset multi-send: no sats dust bump / change planning.
+      let plan: Awaited<ReturnType<typeof prepareDustSafeSend>> = {
+        amount: paymentSum,
+        amountBumped: false,
+        originalAmount: paymentSum,
+        selectedVtxos: undefined,
+      };
+      if (!wantsAsset || paymentSum > 0) {
+        plan = await prepareDustSafeSend(wallet, paymentSum, dust);
+      }
       if (plan.amountBumped) {
         const last = working[working.length - 1]!;
         const lastOriginal = last.amount;
@@ -981,6 +1178,18 @@ export function SendScreen() {
 
         applyLocalSpend(paymentSum);
 
+        const assetLegs = working.flatMap((r) => r.assets ?? []);
+        const assetDisplaySum = wantsAsset
+          ? lines.reduce((s, l) => s + (parseBrlDisplay(l.amountStr) ?? 0), 0)
+          : 0;
+        if (wantsAsset && assetDisplaySum > 0) {
+          applyLocalDepixSpend(assetDisplaySum);
+        }
+        const amountLabel =
+          wantsAsset && assetDisplaySum > 0
+            ? `−${formatBrlDisplay(assetDisplaySum, { networkId: network.id })}`
+            : undefined;
+
         let activityIdForNotice = txid;
         if (walletId) {
           try {
@@ -991,6 +1200,12 @@ export function SendScreen() {
               txid,
               address: primaryAddr,
               recipients: working,
+              assets: assetLegs.length
+                ? assetLegs.map((a) => ({
+                    assetId: a.assetId,
+                    amount: a.amount,
+                  }))
+                : undefined,
             });
             // Spend-drop may have returned pending:… while send already resolved.
             if (
@@ -1017,6 +1232,7 @@ export function SendScreen() {
         setBusy(false);
         openFundsSent({
           amount: paymentSum,
+          amountLabel,
           txid: activityIdForNotice,
           address: primaryAddr,
           recipientCount: working.length,
@@ -1264,7 +1480,11 @@ export function SendScreen() {
                       {truncateDest(line.address.trim() || "—", 12, 8)}
                     </Text>
                     <Text style={styles.compactAmt}>
-                      {(parseAmountSats(line.amountStr) ?? 0).toLocaleString("en-US")} sats
+                      {fiatMode || line.assetId
+                        ? formatBrlDisplay(
+                            Number(String(line.amountStr).replace(",", ".")) || 0,
+                          )
+                        : `${(parseAmountSats(line.amountStr) ?? 0).toLocaleString("en-US")} sats`}
                     </Text>
                   </View>
                   <Pressable
@@ -1281,17 +1501,25 @@ export function SendScreen() {
             <>
               {/* Penpot 16 — single recipient: classic Send (no card) */}
               <View style={styles.toRow}>
-                <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>Amount (sats)</Text>
+                <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>
+                  {fiatMode ? `Amount (${fiatUnit})` : "Amount (sats)"}
+                </Text>
                 <Pressable
                   onPress={() => fillMaxSend("primary")}
-                  disabled={spendable == null || spendable <= 0}
+                  disabled={
+                    fiatMode
+                      ? !(depixDisplay != null && depixDisplay > 0)
+                      : spendable == null || spendable <= 0
+                  }
                   hitSlop={8}
                   accessibilityLabel="Max send"
                 >
                   <Text
                     style={[
                       styles.maxLink,
-                      (spendable == null || spendable <= 0) && styles.maxLinkDisabled,
+                      (fiatMode
+                        ? !(depixDisplay != null && depixDisplay > 0)
+                        : spendable == null || spendable <= 0) && styles.maxLinkDisabled,
                     ]}
                   >
                     Max send
@@ -1302,14 +1530,19 @@ export function SendScreen() {
                 value={primaryLine?.amountStr ?? ""}
                 onChangeText={(v) => {
                   setPickerTarget("primary");
-                  if (primaryLine) patchLine(primaryLine.id, { amountStr: v });
+                  if (primaryLine) {
+                    patchLine(primaryLine.id, {
+                      amountStr: v,
+                      ...(fiatMode ? { assetId: depixAssetId } : {}),
+                    });
+                  }
                 }}
                 onFocus={() => {
                   setPickerTarget("primary");
                   if (primaryLine) setActiveLineId(primaryLine.id);
                 }}
-                keyboardType="number-pad"
-                placeholder="0"
+                keyboardType={fiatMode ? "decimal-pad" : "number-pad"}
+                placeholder={fiatMode ? "0.00" : "0"}
                 placeholderTextColor={colors.hint}
                 style={styles.input}
               />
@@ -1528,17 +1761,25 @@ export function SendScreen() {
           </View>
 
           <View style={styles.toRow}>
-            <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>Amount (sats)</Text>
+            <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>
+              {fiatMode ? `Amount (${fiatUnit})` : "Amount (sats)"}
+            </Text>
             <Pressable
               onPress={() => fillMaxSend("add")}
-              disabled={spendable == null || spendable <= 0}
+              disabled={
+                fiatMode
+                  ? !(depixDisplay != null && depixDisplay > 0)
+                  : spendable == null || spendable <= 0
+              }
               hitSlop={8}
               accessibilityLabel="Max send"
             >
               <Text
                 style={[
                   styles.maxLink,
-                  (spendable == null || spendable <= 0) && styles.maxLinkDisabled,
+                  (fiatMode
+                    ? !(depixDisplay != null && depixDisplay > 0)
+                    : spendable == null || spendable <= 0) && styles.maxLinkDisabled,
                 ]}
               >
                 Max
@@ -1548,8 +1789,8 @@ export function SendScreen() {
           <TextInput
             value={addDraftAmount}
             onChangeText={setAddDraftAmount}
-            keyboardType="number-pad"
-            placeholder="0"
+            keyboardType={fiatMode ? "decimal-pad" : "number-pad"}
+            placeholder={fiatMode ? "0.00" : "0"}
             placeholderTextColor={colors.hint}
             style={[styles.input, { marginBottom: 12 }]}
           />

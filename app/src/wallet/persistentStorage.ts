@@ -12,14 +12,20 @@ import {
   SQLiteVirtualTxRepository,
   type SQLExecutor,
 } from "@arkade-os/sdk/repositories/sqlite";
+import { SQLiteAssetSwapRepository } from "@arkade-os/swap/repositories/sqlite";
+import type { AssetSwapRepository } from "@arkade-os/swap";
 import { openNetworkDatabase } from "../account/sqliteCipher";
 import type { ArkadeNetworkId } from "../config/network";
+import { migrateLegacyVtxoVirtualStatus } from "./migrateLegacyVtxoSchema";
 
 type CacheKey = string;
 
 type Cached = {
   executor: SQLExecutor;
   storage: StorageConfig;
+  swapRepository: AssetSwapRepository;
+  /** One-shot legacy schema migrate (virtual_status_json → drop). */
+  legacyVtxoMigrate: Promise<void>;
 };
 
 const cache = new Map<CacheKey, Cached>();
@@ -60,22 +66,20 @@ function makeExecutor(db: SQLite.SQLiteDatabase): SQLExecutor {
   };
 }
 
-/**
- * Open (or reuse) SQLite-backed StorageConfig for network + wallet.
- * Includes full exit-data capture so unilateral exit can proceed without the indexer.
- */
-export function getPersistentStorage(
-  networkId: ArkadeNetworkId,
-  walletId: string,
-): StorageConfig {
+function ensureCached(networkId: ArkadeNetworkId, walletId: string): Cached {
   const key = cacheKey(networkId, walletId);
   const hit = cache.get(key);
-  if (hit) return hit.storage;
+  if (hit) return hit;
 
   const db = openNetworkDatabase(networkId, dbNameFor(networkId, walletId));
-
   const executor = makeExecutor(db);
   const prefix = tablePrefix(walletId);
+  const legacyVtxoMigrate = migrateLegacyVtxoVirtualStatus(executor, prefix).then(
+    () => undefined,
+    (e) => {
+      console.warn("[basic] legacy vtxo schema migrate failed", e);
+    },
+  );
   const storage: StorageConfig = {
     walletRepository: new SQLiteWalletRepository(executor, { prefix }),
     contractRepository: new SQLiteContractRepository(executor, { prefix }),
@@ -86,7 +90,40 @@ export function getPersistentStorage(
       minExitWorthSats: MIN_EXIT_WORTH_SATS,
     },
   };
+  const swapRepository = new SQLiteAssetSwapRepository(executor, {
+    prefix: `${prefix}swap_`,
+  });
 
-  cache.set(key, { executor, storage });
-  return storage;
+  const entry: Cached = { executor, storage, swapRepository, legacyVtxoMigrate };
+  cache.set(key, entry);
+  return entry;
+}
+
+/**
+ * Open (or reuse) SQLite-backed StorageConfig for network + wallet.
+ * Includes full exit-data capture so unilateral exit can proceed without the indexer.
+ */
+export function getPersistentStorage(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+): StorageConfig {
+  return ensureCached(networkId, walletId).storage;
+}
+
+/** Await SDK 0.5 vtxos schema fix (drop legacy virtual_status_json) before Wallet.create. */
+export async function ensurePersistentStorageReady(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+): Promise<StorageConfig> {
+  const cached = ensureCached(networkId, walletId);
+  await cached.legacyVtxoMigrate;
+  return cached.storage;
+}
+
+/** Expo-safe swap repository (same DB / executor as wallet storage). */
+export function getAssetSwapRepository(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+): AssetSwapRepository {
+  return ensureCached(networkId, walletId).swapRepository;
 }

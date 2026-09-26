@@ -19,7 +19,7 @@ import { syncLightningHistory } from "../account/lightningActivity";
 import { backfillMissingFiat } from "../account/fiatRate";
 import { getNetworkConfig } from "../config/network";
 import { useWallet } from "../wallet/WalletProvider";
-import { formatSatsSigned, formatWhen, statusLabel } from "../wallet/activity";
+import { activityDepixAtomic, formatActivityAmountSigned, formatWhen, statusLabel } from "../wallet/activity";
 import { colors } from "../theme/colors";
 
 export function ActivityScreen() {
@@ -199,10 +199,23 @@ export function ActivityScreen() {
                 <Text
                   style={[
                     styles.rowAmount,
-                    item.amount > 0 ? styles.pos : item.amount < 0 ? styles.neg : null,
+                    (() => {
+                      const depix = activityDepixAtomic(item, network.id);
+                      const signed =
+                        depix != null && depix !== 0n
+                          ? depix > 0n
+                            ? 1
+                            : -1
+                          : item.amount;
+                      return signed > 0
+                        ? styles.pos
+                        : signed < 0
+                          ? styles.neg
+                          : null;
+                    })(),
                   ]}
                 >
-                  {formatSatsSigned(item.amount)}
+                  {formatActivityAmountSigned(item, network.id)}
                 </Text>
               </View>
               <Text style={styles.rowSub}>{item.subtitle}</Text>

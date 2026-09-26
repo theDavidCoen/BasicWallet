@@ -22,7 +22,7 @@ import { syncLightningHistory } from "../account/lightningActivity";
 import { backfillMissingFiat } from "../account/fiatRate";
 import { getNetworkConfig } from "../config/network";
 import { useWallet } from "../wallet/WalletProvider";
-import { formatSatsSigned, formatWhen, statusLabel } from "../wallet/activity";
+import { activityDepixAtomic, formatActivityAmountSigned, formatWhen, statusLabel } from "../wallet/activity";
 import { colors } from "../theme/colors";
 
 type Props = {
@@ -217,11 +217,20 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
           }
           contentContainerStyle={rows.length === 0 ? styles.emptyWrap : styles.list}
           ListEmptyComponent={<Text style={styles.empty}>{error ?? emptyHint}</Text>}
-          renderItem={({ item }) => (
+          renderItem={({ item }) => {
+            const amountLabel = formatActivityAmountSigned(item, network.id);
+            const depix = activityDepixAtomic(item, network.id);
+            const signed =
+              depix != null && depix !== 0n
+                ? depix > 0n
+                  ? 1
+                  : -1
+                : item.amount;
+            return (
             <GHPressable
               onPress={() => onOpenDetail(item.id, item.walletId)}
               accessibilityRole="button"
-              accessibilityLabel={`${item.title}, ${formatSatsSigned(item.amount)}`}
+              accessibilityLabel={`${item.title}, ${amountLabel}`}
             >
               <View style={styles.row}>
                 <View style={styles.rowTop}>
@@ -229,27 +238,28 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
                   <Text
                     style={[
                       styles.rowAmount,
-                      item.amount > 0
+                      signed > 0
                         ? styles.pos
-                        : item.amount < 0
+                        : signed < 0
                           ? styles.neg
                           : null,
                     ]}
                   >
-                    {formatSatsSigned(item.amount)}
+                    {amountLabel}
                   </Text>
                 </View>
                 <Text style={styles.rowSub}>{item.subtitle}</Text>
                 <Text style={styles.rowMeta}>
                   {statusLabel(item.status)}
                   {` · ${formatWhen(item.createdAt)}`}
-                  {item.fiatAmount != null && item.fiatCode
+                  {item.fiatAmount != null && item.fiatCode && !(depix != null && depix !== 0n)
                     ? ` · ~${item.fiatAmount.toFixed(2)} ${item.fiatCode.toUpperCase()}`
                     : ""}
                 </Text>
               </View>
             </GHPressable>
-          )}
+            );
+          }}
         />
       )}
     </View>

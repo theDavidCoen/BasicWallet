@@ -63,6 +63,10 @@ import {
 import { getMnemonicSource } from "../wallet/mnemonicMeta";
 import { resolvePayIntent } from "../wallet/bip21Pay";
 import { useWallet } from "../wallet/WalletProvider";
+import { useFiatMode } from "../fiat/FiatModeProvider";
+import { FiatModeEnterSheetContent } from "../fiat/FiatModeEnterSheetContent";
+import { FiatModeExitSheetContent } from "../fiat/FiatModeExitSheetContent";
+import { requireUserPresence } from "../security/userPresence";
 
 export type FundsSentPayload = {
   amount: number;
@@ -71,11 +75,13 @@ export type FundsSentPayload = {
   /** Ark multi-send: number of payment outputs (one tx). */
   recipientCount?: number;
   rail?: "arkade" | "lightning";
+  /** When set, notice shows fiat (−R$ / −$) instead of sats. */
+  amountLabel?: string;
 };
 
 export type FundsReceivedPayload = {
   amount: number;
-  kind: "boarding" | "arkade" | "lightning";
+  kind: "boarding" | "arkade" | "lightning" | "brl";
 };
 
 type SheetsApi = {
@@ -89,6 +95,10 @@ type SheetsApi = {
   openNodeStatus: (payload: NodeStatusPayload) => void;
   openFundsSent: (payload: FundsSentPayload) => void;
   openFundsReceived: (payload: FundsReceivedPayload) => void;
+  /** Home: Enter Fiat Mode confirm as InteractiveBottomSheet (not a page). */
+  openFiatModeEnter: () => void;
+  /** Home: Exit Fiat Mode confirm as InteractiveBottomSheet. */
+  openFiatModeExit: () => void;
   /** Open Save to contacts sheet over current UI (Activity detail / Funds sent). */
   openSaveToContacts: (destination: string) => void;
   openPosSheet: () => void;
@@ -100,6 +110,7 @@ type SheetsApi = {
   dismissConnectNode: () => void;
   dismissFundsReceived: () => void;
   dismissFundsSent: () => void;
+  dismissFiatModeSheet: () => void;
   dismissPosSheet: () => void;
   dismissScanSheet: () => void;
   activitySheetRef: RefObject<InteractiveBottomSheetRef | null>;
@@ -123,6 +134,7 @@ type SheetsApi = {
   connectNodeOpen: boolean;
   fundsReceivedOpen: boolean;
   fundsSentOpen: boolean;
+  fiatModeSheetOpen: boolean;
   activityMotion: SheetMotionShared;
   posMotion: SideMotionShared;
   scanMotion: SideMotionShared;
@@ -178,11 +190,13 @@ function closeNoticeSheets(
 
 export function SheetHost({ children }: { children: ReactNode }) {
   const navigation = useNavigation<RootNav>();
-  const { fundsNotice, clearFundsNotice, selectedWallet, setPosUiHold, walletInteractive } =
+  const { fundsNotice, clearFundsNotice, selectedWallet, setPosUiHold, walletInteractive, balanceSats } =
     useWallet();
+  const { confirmEnter, confirmExit, fiatMode, converting, depixDisplay } = useFiatMode();
 
   const activityRef = useRef<InteractiveBottomSheetRef>(null);
   const walletRef = useRef<InteractiveBottomSheetRef>(null);
+  const fiatModeRef = useRef<InteractiveBottomSheetRef>(null);
   const posRef = useRef<InteractiveSideSheetRef>(null);
   const scanRef = useRef<InteractiveSideSheetRef>(null);
 
@@ -219,6 +233,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
   );
   const [saveContactOpen, setSaveContactOpen] = useState(false);
   const [saveContactDest, setSaveContactDest] = useState("");
+  const [fiatModeSheet, setFiatModeSheet] = useState<"enter" | "exit" | null>(null);
   const [activitySkipEnter, setActivitySkipEnter] = useState(false);
   const [activityAnchorY, setActivityAnchorYState] = useState<number | null>(null);
   const [, setHomeDragging] = useState(false);
@@ -288,7 +303,11 @@ export function SheetHost({ children }: { children: ReactNode }) {
   }, []);
 
   const dismissActivityAnimated = useCallback(() => {
-    activityRef.current?.dismiss() ?? dismissActivity();
+    if (activityRef.current) {
+      activityRef.current.dismiss();
+    } else {
+      dismissActivity();
+    }
   }, [dismissActivity]);
 
   /** Same idea as popWalletStep: walk Activity sheet steps before closing. */
@@ -305,11 +324,19 @@ export function SheetHost({ children }: { children: ReactNode }) {
   }, [activityOpen, activityStep, dismissActivityAnimated]);
 
   const dismissWalletAnimated = useCallback(() => {
-    walletRef.current?.dismiss() ?? dismissWalletSwitcher();
+    if (walletRef.current) {
+      walletRef.current.dismiss();
+    } else {
+      dismissWalletSwitcher();
+    }
   }, [dismissWalletSwitcher]);
 
   const dismissPosAnimated = useCallback(() => {
-    posRef.current?.dismiss() ?? dismissPosSheet();
+    if (posRef.current) {
+      posRef.current.dismiss();
+    } else {
+      dismissPosSheet();
+    }
   }, [dismissPosSheet]);
 
   const dismissScanAnimated = useCallback(() => {
@@ -325,6 +352,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
     setPosSkipEnter(false);
     setScanOpen(false);
     setScanSkipEnter(false);
+    setFiatModeSheet(null);
     closeNoticeSheets(
       setFundsSentOpen,
       setFundsSentPayload,
@@ -354,6 +382,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
     setPosSkipEnter(false);
     setScanOpen(false);
     setScanSkipEnter(false);
+    // Instant clear — never leave Fiat sheet mid-spring over Activity.
+    setFiatModeSheet(null);
     closeNoticeSheets(
       setFundsSentOpen,
       setFundsSentPayload,
@@ -411,6 +441,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
       setActivityOpen(false);
       setWalletOpen(false);
       resetWalletFlow();
+      setFiatModeSheet(null);
       setFundsReceivedOpen(false);
       setFundsReceivedPayload(null);
       clearFundsNotice();
@@ -429,6 +460,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
       setPosSkipEnter(false);
       setScanOpen(false);
       setScanSkipEnter(false);
+      setFiatModeSheet(null);
       setFundsSentOpen(false);
       setFundsSentPayload(null);
       clearFundsNotice();
@@ -445,6 +477,79 @@ export function SheetHost({ children }: { children: ReactNode }) {
     setSaveContactOpen(true);
   }, []);
 
+  /** Clear kind only after spring dismiss so the sheet never shows an empty body. */
+  const clearFiatModeSheet = useCallback(() => {
+    setFiatModeSheet(null);
+  }, []);
+
+  const dismissFiatModeSheet = useCallback(() => {
+    if (fiatModeSheet == null) return;
+    // Do NOT use `dismiss() ?? setNull` — dismiss returns void, so ?? always
+    // cleared kind immediately and left a grabber-only sheet mid-spring.
+    if (fiatModeRef.current) {
+      fiatModeRef.current.dismiss();
+    } else {
+      setFiatModeSheet(null);
+    }
+  }, [fiatModeSheet]);
+
+  const openFiatModeEnter = useCallback(() => {
+    if (selectedWallet?.kind !== "arkade" || fiatMode || converting) return;
+    setActivityOpen(false);
+    setActivitySkipEnter(false);
+    // Park Activity offscreen immediately — peek handle must not sit under Fiat sheet.
+    activityMotion.translateY.value = activityMotion.offY.value;
+    setWalletOpen(false);
+    resetWalletFlow();
+    setPosOpen(false);
+    setPosSkipEnter(false);
+    setScanOpen(false);
+    setScanSkipEnter(false);
+    closeNoticeSheets(
+      setFundsSentOpen,
+      setFundsSentPayload,
+      setFundsReceivedOpen,
+      setFundsReceivedPayload,
+      clearFundsNotice,
+    );
+    setFiatModeSheet("enter");
+  }, [
+    selectedWallet?.kind,
+    fiatMode,
+    converting,
+    resetWalletFlow,
+    clearFundsNotice,
+    activityMotion,
+  ]);
+
+  const openFiatModeExit = useCallback(() => {
+    if (selectedWallet?.kind !== "arkade" || !fiatMode || converting) return;
+    setActivityOpen(false);
+    setActivitySkipEnter(false);
+    activityMotion.translateY.value = activityMotion.offY.value;
+    setWalletOpen(false);
+    resetWalletFlow();
+    setPosOpen(false);
+    setPosSkipEnter(false);
+    setScanOpen(false);
+    setScanSkipEnter(false);
+    closeNoticeSheets(
+      setFundsSentOpen,
+      setFundsSentPayload,
+      setFundsReceivedOpen,
+      setFundsReceivedPayload,
+      clearFundsNotice,
+    );
+    setFiatModeSheet("exit");
+  }, [
+    selectedWallet?.kind,
+    fiatMode,
+    converting,
+    resetWalletFlow,
+    clearFundsNotice,
+    activityMotion,
+  ]);
+
   const beginActivityDrag = useCallback(() => {
     setWalletOpen(false);
     resetWalletFlow();
@@ -452,6 +557,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
     setPosSkipEnter(false);
     setScanOpen(false);
     setScanSkipEnter(false);
+    setFiatModeSheet(null);
     closeNoticeSheets(
       setFundsSentOpen,
       setFundsSentPayload,
@@ -712,7 +818,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
       walletOpen ||
       activityOpen ||
       posOpen ||
-      scanOpen;
+      scanOpen ||
+      fiatModeSheet != null;
     if (!anyOpen) return;
     const sub = BackHandler.addEventListener("hardwareBackPress", () => {
       if (fundsReceivedOpen) {
@@ -721,6 +828,10 @@ export function SheetHost({ children }: { children: ReactNode }) {
       }
       if (fundsSentOpen) {
         finishFundsSentHome();
+        return true;
+      }
+      if (fiatModeSheet != null) {
+        dismissFiatModeSheet();
         return true;
       }
       if (posOpen) {
@@ -742,8 +853,10 @@ export function SheetHost({ children }: { children: ReactNode }) {
     return () => sub.remove();
   }, [
     activityOpen,
+    dismissFiatModeSheet,
     dismissPosAnimated,
     dismissScanAnimated,
+    fiatModeSheet,
     finishFundsReceivedHome,
     finishFundsSentHome,
     fundsReceivedOpen,
@@ -787,6 +900,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
       openNodeStatus,
       openFundsSent,
       openFundsReceived,
+      openFiatModeEnter,
+      openFiatModeExit,
       openSaveToContacts,
       openPosSheet,
       openScanSheet,
@@ -797,6 +912,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
       dismissConnectNode,
       dismissFundsReceived,
       dismissFundsSent,
+      dismissFiatModeSheet,
+      clearFiatModeSheet,
       dismissPosSheet,
       dismissScanSheet,
       activitySheetRef: activityRef,
@@ -817,6 +934,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
       connectNodeOpen,
       fundsReceivedOpen,
       fundsSentOpen,
+      fiatModeSheetOpen: fiatModeSheet != null,
       activityMotion,
       posMotion,
       scanMotion,
@@ -835,12 +953,15 @@ export function SheetHost({ children }: { children: ReactNode }) {
       dismissActivity,
       dismissAddWallet,
       dismissConnectNode,
+      dismissFiatModeSheet,
+      clearFiatModeSheet,
       dismissFundsReceived,
       dismissFundsSent,
       dismissImportWallet,
       dismissPosSheet,
       dismissScanSheet,
       dismissWalletSwitcher,
+      fiatModeSheet,
       fundsReceivedOpen,
       fundsSentOpen,
       importWalletOpen,
@@ -849,6 +970,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
       openConnectBtcPay,
       openConnectLndHub,
       openConnectNode,
+      openFiatModeEnter,
+      openFiatModeExit,
       openFundsSent,
       openFundsReceived,
       openSaveToContacts,
@@ -895,10 +1018,13 @@ export function SheetHost({ children }: { children: ReactNode }) {
           motion={activityMotion}
           onDismiss={dismissActivity}
         >
-          {activityStep === "list" ? (
+          {activityStep === "list" ||
+          (activityStep === "detail" &&
+            !(activityDetailId && activityDetailWalletId)) ? (
             <ActivitySheetContent
               active={activityOpen && activityStep === "list"}
               onOpenDetail={(activityId, walletId) => {
+                if (!activityId || !walletId) return;
                 setActivityDetailId(activityId);
                 setActivityDetailWalletId(walletId);
                 setActivityStep("detail");
@@ -993,6 +1119,24 @@ export function SheetHost({ children }: { children: ReactNode }) {
             />
           ) : null}
 
+          {/* Stale step without payload — never leave a blank grabber sheet. */}
+          {walletStep === "edit" && !editWalletId ? (
+            <WalletSwitcherSheetContent
+              onClose={dismissWalletSwitcher}
+              onAddWallet={() => {
+                setWalletStep("add");
+              }}
+              onEditWallet={(walletId) => {
+                setEditWalletId(walletId);
+                setWalletStep("edit");
+              }}
+              onConnectNode={() => {
+                setNodeStatusPayload(null);
+                setWalletStep("connect-menu");
+              }}
+            />
+          ) : null}
+
           {walletStep === "add" ? (
             <AddWalletSheetContent
               open={addWalletOpen}
@@ -1064,12 +1208,23 @@ export function SheetHost({ children }: { children: ReactNode }) {
               }}
             />
           ) : null}
+
+          {walletStep === "connect-status" && !nodeStatusPayload ? (
+            <ConnectNodeSheetContent
+              onSelect={(dest) => {
+                setWalletStep(
+                  dest === "lndhub" ? "connect-lndhub" : "connect-btcpay",
+                );
+              }}
+            />
+          ) : null}
         </InteractiveBottomSheet>
 
         <FundsNoticeOverlay open={fundsSentOpen}>
           {fundsSentPayload ? (
             <FundsSentView
               amount={fundsSentPayload.amount}
+              amountLabel={fundsSentPayload.amountLabel}
               txid={fundsSentPayload.txid}
               address={fundsSentPayload.address}
               recipientCount={fundsSentPayload.recipientCount}
@@ -1118,6 +1273,46 @@ export function SheetHost({ children }: { children: ReactNode }) {
             setSaveContactDest("");
           }}
         />
+
+        <InteractiveBottomSheet
+          // Remount per kind so Enter's openY (~0.12H) cannot park Exit at the top.
+          key={`fiat-${fiatModeSheet ?? "closed"}`}
+          ref={fiatModeRef}
+          open={fiatModeSheet != null}
+          onDismiss={clearFiatModeSheet}
+          // Stable fixed fractions only — no fitContent (wrong measure → top-stuck).
+          visibleFraction={fiatModeSheet === "exit" ? 0.58 : 0.88}
+          fitContent={false}
+        >
+          {fiatModeSheet === "enter" ? (
+            <FiatModeEnterSheetContent
+              availableSats={balanceSats ?? 0}
+              onConfirm={() => {
+                dismissFiatModeSheet();
+                void (async () => {
+                  const auth = await requireUserPresence("Confirm Enter Fiat Mode");
+                  if (!auth.ok) return;
+                  void confirmEnter();
+                })();
+              }}
+              onCancel={dismissFiatModeSheet}
+            />
+          ) : null}
+          {fiatModeSheet === "exit" ? (
+            <FiatModeExitSheetContent
+              brlDisplay={depixDisplay ?? 0}
+              onConfirm={() => {
+                dismissFiatModeSheet();
+                void (async () => {
+                  const auth = await requireUserPresence("Confirm Exit Fiat Mode");
+                  if (!auth.ok) return;
+                  void confirmExit();
+                })();
+              }}
+              onCancel={dismissFiatModeSheet}
+            />
+          ) : null}
+        </InteractiveBottomSheet>
 
         <FundsNoticeOverlay open={fundsReceivedOpen}>
           {fundsReceivedPayload ? (

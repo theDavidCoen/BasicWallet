@@ -9,7 +9,12 @@ import type {
   ActivityStatus,
   SendRecipientSnapshot,
 } from "../wallet/activity";
-import { deriveActivityStatus, loadActivityRows } from "../wallet/activity";
+import {
+  activityDepixAtomic,
+  deriveActivityStatus,
+  loadActivityRows,
+} from "../wallet/activity";
+import { depixAtomicToDisplay } from "../fiat/depixAssets";
 import type { BasicWallet } from "../wallet/hdWallet";
 import { getAccountDb } from "./accountDb";
 import { enqueueFiatCoverage } from "./fiatRate";
@@ -240,6 +245,8 @@ export function recordOptimisticArkadeSend(
     address?: string;
     /** When length > 1, list subtitle becomes "N recipients"; details show addresses. */
     recipients?: Array<{ address: string; amount: number }>;
+    /** Designated fiat asset legs (DePix/USDT). */
+    assets?: Array<{ assetId: string; amount: bigint | number | string }>;
   },
 ): string {
   const amount = Math.abs(Math.floor(opts.amountSats));
@@ -261,15 +268,22 @@ export function recordOptimisticArkadeSend(
     nRecipients > 1
       ? `${nRecipients} recipients`
       : address || recipients[0]?.address || "Outgoing";
+  const assetRows =
+    opts.assets?.map((a) => ({
+      assetId: String(a.assetId),
+      amount: String(a.amount),
+    })) ?? undefined;
+  const hasFiatAsset = Boolean(assetRows?.length);
   const row: ActivityRow = {
     id,
     title: "Send",
     subtitle,
+    // Pure asset sends use amount 0 (carrier dust stays off the list fill).
     amount: amount > 0 ? -amount : 0,
     settled: !isPending,
     status: isPending ? "preconfirmed" : "preconfirmed",
     createdAt: now,
-    tags: ["offchain"],
+    tags: hasFiatAsset ? ["offchain", "brl"] : ["offchain"],
     txs: [
       {
         type: "SENT",
@@ -281,6 +295,7 @@ export function recordOptimisticArkadeSend(
         commitmentTxid: "",
         arkTxid,
         recipients: recipients.length > 0 ? recipients : undefined,
+        assets: assetRows,
       },
     ],
   };
@@ -396,7 +411,12 @@ export function upgradeLatestPendingSendTxid(
 export function recordOptimisticArkadeReceive(
   networkId: ArkadeNetworkId,
   walletId: string,
-  opts: { amountSats: number; txid?: string },
+  opts: {
+    amountSats: number;
+    txid?: string;
+    /** Designated fiat asset legs (DePix/USDT display → atomic). */
+    assets?: Array<{ assetId: string; amount: bigint | number | string }>;
+  },
 ): string {
   const amount = Math.abs(Math.floor(opts.amountSats));
   const raw = opts.txid?.trim() ?? "";
@@ -404,6 +424,12 @@ export function recordOptimisticArkadeReceive(
     raw && /^[0-9a-fA-F]{64}$/.test(raw) ? raw : `local-recv:${Date.now()}`;
   const arkTxid = id.startsWith("local-recv:") ? "" : id;
   const now = Date.now();
+  const assetRows =
+    opts.assets?.map((a) => ({
+      assetId: String(a.assetId),
+      amount: String(a.amount),
+    })) ?? undefined;
+  const hasFiatAsset = Boolean(assetRows?.length);
   const row: ActivityRow = {
     id,
     title: "Receive",
@@ -412,7 +438,7 @@ export function recordOptimisticArkadeReceive(
     settled: false,
     status: "preconfirmed",
     createdAt: now,
-    tags: ["offchain"],
+    tags: hasFiatAsset ? ["offchain", "brl"] : ["offchain"],
     txs: [
       {
         type: "RECEIVED",
@@ -423,6 +449,7 @@ export function recordOptimisticArkadeReceive(
         boardingTxid: "",
         commitmentTxid: "",
         arkTxid,
+        assets: assetRows,
       },
     ],
   };
@@ -972,11 +999,29 @@ export function getStoredActivity(
  * Best-effort match for FundsReceived "View details" — recent inbound row
  * whose amount matches the notice (then closest / most recent of that kind).
  */
+function activityRowHasDesignatedAsset(
+  row: ActivityRow,
+  networkId: ArkadeNetworkId,
+): boolean {
+  return activityDepixAtomic(row, networkId) != null;
+}
+
+function activityDepixSignedDisplay(
+  row: ActivityRow,
+  networkId: ArkadeNetworkId,
+): number | null {
+  const atomic = activityDepixAtomic(row, networkId);
+  if (atomic == null) return null;
+  const abs = atomic < 0n ? -atomic : atomic;
+  const display = depixAtomicToDisplay(abs, networkId);
+  return atomic < 0n ? -display : display;
+}
+
 export function findRecentReceiveActivityId(
   networkId: ArkadeNetworkId,
   walletId: string,
   amountSats: number,
-  kind?: "boarding" | "arkade" | "lightning",
+  kind?: "boarding" | "arkade" | "lightning" | "brl",
 ): string | null {
   const abs = Math.abs(amountSats);
   if (!(abs > 0)) return null;
@@ -985,8 +1030,18 @@ export function findRecentReceiveActivityId(
   const windowMs = 15 * 60_000;
 
   const inbound = rows.filter((r) => {
-    if (!(r.amount > 0)) return false;
     if (r.createdAt > 0 && now - r.createdAt > windowMs) return false;
+    if (kind === "brl") {
+      // BRL notice amount is display units (e.g. 2.00), not sats.
+      if (!r.tags.includes("brl") && !activityRowHasDesignatedAsset(r, networkId)) {
+        return false;
+      }
+      // Prefer positive / inbound rows (receive).
+      const depix = activityDepixSignedDisplay(r, networkId);
+      if (depix != null) return depix > 0;
+      return r.amount >= 0;
+    }
+    if (!(r.amount > 0)) return false;
     if (kind === "boarding") {
       if (!r.tags.includes("boarding") && !r.tags.includes("batch")) return false;
     } else if (kind === "lightning") {
@@ -994,10 +1049,20 @@ export function findRecentReceiveActivityId(
     } else if (kind === "arkade") {
       if (r.tags.includes("lightning") || r.tags.includes("ln")) return false;
       if (r.tags.includes("boarding") || r.tags.includes("batch")) return false;
+      if (r.tags.includes("brl")) return false;
     }
     return true;
   });
   if (!inbound.length) return null;
+
+  if (kind === "brl") {
+    const exact = inbound.find((r) => {
+      const d = activityDepixSignedDisplay(r, networkId);
+      return d != null && Math.abs(d - abs) < 0.005;
+    });
+    if (exact) return exact.id;
+    return inbound[0]?.id ?? null;
+  }
 
   const exact = inbound.find((r) => Math.abs(r.amount - abs) <= 1);
   if (exact) return exact.id;

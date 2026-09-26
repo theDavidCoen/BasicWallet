@@ -13,6 +13,8 @@ const DANGER = "#E07070";
 
 type NavTarget =
   | "DisplayCurrencies"
+  | "BitcoinMaxiSettings"
+  | "FiatModeSettings"
   | "AdvancedBackup"
   | "NostrIdentity"
   | "ArchivedWallets"
@@ -39,6 +41,8 @@ type Block =
 
 const BLOCKS: Block[] = [
   { kind: "row", row: { label: "Display currencies", on: "DisplayCurrencies" } },
+  { kind: "row", row: { label: "Bitcoin Maxi Mode", on: "BitcoinMaxiSettings" } },
+  { kind: "row", row: { label: "Fiat Mode", on: "FiatModeSettings" } },
 
   { kind: "section", title: "Account" },
   { kind: "row", row: { label: "Privacy", on: "Privacy" } },
