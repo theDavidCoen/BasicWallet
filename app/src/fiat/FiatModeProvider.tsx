@@ -155,11 +155,48 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const pendingExitTargetRef = useRef<number | null>(null);
   const pendingExitClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingEnterClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Mirror pendingEnterFiat for refreshDepixBalance (avoid stale closure). */
+  const pendingEnterFiatRef = useRef<number | null>(null);
   /** True while any enter/exit/auto/pay job runs (incl. quiet auto-inbound). */
   const jobBusyRef = useRef(false);
 
   const networkId = getNetworkConfig().id;
   const walletId = selectedWallet?.kind === "arkade" ? selectedWallet.id : null;
+
+  const setEnterPending = useCallback(
+    (display: number | null, persist = true) => {
+      const next =
+        display != null && display >= 0.01
+          ? Math.round(display * 100) / 100
+          : null;
+      pendingEnterFiatRef.current = next;
+      setPendingEnterFiat(next);
+      if (pendingEnterClearTimerRef.current) {
+        clearTimeout(pendingEnterClearTimerRef.current);
+        pendingEnterClearTimerRef.current = null;
+      }
+      if (next != null) {
+        pendingEnterClearTimerRef.current = setTimeout(() => {
+          pendingEnterFiatRef.current = null;
+          setPendingEnterFiat(null);
+          if (walletId) {
+            void writeFiatModeState(networkId, walletId, {
+              pendingEnterDisplay: null,
+            });
+          }
+        }, 120_000);
+      }
+      if (persist && walletId) {
+        void writeFiatModeState(networkId, walletId, {
+          pendingEnterDisplay: next,
+        });
+      }
+      if (next != null) {
+        console.warn("[basic] enter pending fiat", { pendingDisplay: next });
+      }
+    },
+    [networkId, walletId],
+  );
 
   useEffect(() => {
     walletIdRef.current = walletId;
@@ -167,22 +204,39 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       setState(null);
       setDepixDisplay(null);
       lastGoodDepixRef.current = null;
+      pendingEnterFiatRef.current = null;
+      setPendingEnterFiat(null);
       disposeDepixSwapClient();
       return;
     }
     let cancelled = false;
     void (async () => {
       const s = await readFiatModeState(networkId, walletId);
-      if (!cancelled) {
-        // Stale pending enter/exit must not resume CONVERTING after reopen.
-        if (s.pendingJob && s.fiatMode && s.pendingJob === "enter") {
-          const cleared = await writeFiatModeState(networkId, walletId, {
-            pendingJob: null,
-          });
-          if (!cancelled) setState(cleared);
-          return;
-        }
-        if (!cancelled) setState(s);
+      if (cancelled) return;
+      // Stale pending enter/exit must not resume CONVERTING after reopen.
+      let next = s;
+      if (s.pendingJob === "enter" || s.pendingJob === "exit") {
+        next = await writeFiatModeState(networkId, walletId, {
+          pendingJob: null,
+        });
+      }
+      if (cancelled) return;
+      setState(next);
+      // Cold open: restore last-good so Home never flashes bare `…`.
+      if (next.fiatMode && next.lastGoodDisplay != null && next.lastGoodDisplay >= 0.01) {
+        lastGoodDepixRef.current = next.lastGoodDisplay;
+        setDepixDisplay(next.lastGoodDisplay);
+      } else if (!next.fiatMode) {
+        lastGoodDepixRef.current = null;
+        setDepixDisplay(null);
+      }
+      // Restore enter pending across CONVERTING dismiss / process restart.
+      if (next.fiatMode && next.pendingEnterDisplay != null) {
+        pendingEnterFiatRef.current = next.pendingEnterDisplay;
+        setPendingEnterFiat(next.pendingEnterDisplay);
+      } else {
+        pendingEnterFiatRef.current = null;
+        setPendingEnterFiat(null);
       }
     })();
     return () => {
@@ -260,14 +314,28 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         // Live caught up to optimistic (±0.02) — adopt and clear hold.
         if (Math.abs(live - opt) <= 0.02) {
           clearOptimisticDepix();
-          if (live >= 0.01) lastGoodDepixRef.current = live;
+          if (live >= 0.01) {
+            lastGoodDepixRef.current = live;
+            if (walletId) {
+              void writeFiatModeState(networkId, walletId, {
+                lastGoodDisplay: live,
+              });
+            }
+          }
           setDepixDisplay(live);
           return;
         }
         // Live slightly below optimistic (fee dust) — adopt when close.
         if (live >= opt - 0.05 && live <= opt) {
           clearOptimisticDepix();
-          if (live >= 0.01) lastGoodDepixRef.current = live;
+          if (live >= 0.01) {
+            lastGoodDepixRef.current = live;
+            if (walletId) {
+              void writeFiatModeState(networkId, walletId, {
+                lastGoodDisplay: live,
+              });
+            }
+          }
           setDepixDisplay(live);
           return;
         }
@@ -285,6 +353,17 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
           setDepixDisplay(good);
           return;
         }
+        // Fresh Enter settle: no last-good yet — leave display null so Home
+        // shows `+ $ x pending` instead of writing 0 / `…`.
+        if (pendingEnterFiatRef.current != null && pendingEnterFiatRef.current >= 0.01) {
+          console.warn("[basic] depix poll empty while enter pending", {
+            live,
+            pending: pendingEnterFiatRef.current,
+          });
+          return;
+        }
+        // Do not publish 0 — keeps Home on pending/last-good path.
+        return;
       }
       // Transient ~2× (old assets + unsettled swap fill) — hold last good.
       const good = lastGoodDepixRef.current;
@@ -303,7 +382,14 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         return;
       }
       clearOptimisticDepix();
-      if (live >= 0.01) lastGoodDepixRef.current = live;
+      if (live >= 0.01) {
+        lastGoodDepixRef.current = live;
+        if (walletId) {
+          void writeFiatModeState(networkId, walletId, {
+            lastGoodDisplay: live,
+          });
+        }
+      }
       setDepixDisplay(live);
     } catch (e) {
       console.warn("[basic] depix balance read failed", e);
@@ -434,6 +520,21 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       } else {
         console.warn("[basic] fiat quiet job start", kind, String(amount));
       }
+
+      // Seed Enter pending ASAP (before fill) so Home never lands on bare `…`.
+      if (kind === "enter" && !quiet) {
+        const giveSats = Number(amount);
+        let spot = btcBrl;
+        if (spot == null || !(spot > 0)) {
+          spot = await fetchFiatSpot(networkId);
+          if (spot != null && spot > 0) setBtcBrl(spot);
+        }
+        if (giveSats > 0 && spot != null && spot > 0) {
+          const est = satsToFiatEstimate(giveSats, spot, networkId);
+          if (est != null && est >= 0.01) setEnterPending(est);
+        }
+      }
+
       await patchState({ pendingJob: kind });
       beginOutboundSend();
       try {
@@ -461,11 +562,11 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
             // No BRL Funds Received for the enter swap itself.
             quietFiatEnterNotices(60_000);
             clearOptimisticDepix();
-            // Prefer swap take amount; fallback to spot estimate of give sats.
-            let pendingDisplay: number | null = null;
+            // Prefer swap take amount; keep pre-seeded estimate if take missing.
+            let pendingDisplay: number | null = pendingEnterFiatRef.current;
             if (result.takeAmount != null && result.takeAmount > 0n) {
               pendingDisplay = depixAtomicToDisplay(result.takeAmount, networkId);
-            } else {
+            } else if (pendingDisplay == null) {
               const giveSats = Number(amount);
               let spot = btcBrl;
               if (spot == null || !(spot > 0)) {
@@ -475,27 +576,28 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
                 pendingDisplay = satsToFiatEstimate(giveSats, spot, networkId);
               }
             }
+            // Do NOT clear lastGood on Enter — only seed pending. Live poll
+            // will write lastGood once assets are spendable.
             if (pendingDisplay != null && pendingDisplay >= 0.01) {
-              setPendingEnterFiat(pendingDisplay);
-              if (pendingEnterClearTimerRef.current) {
-                clearTimeout(pendingEnterClearTimerRef.current);
-              }
-              pendingEnterClearTimerRef.current = setTimeout(() => {
-                setPendingEnterFiat(null);
-              }, 90_000);
-              console.warn("[basic] enter pending fiat", { pendingDisplay });
+              setEnterPending(pendingDisplay);
             }
+            // Keep depixDisplay null while pending so Home shows `+ x pending`.
+            setDepixDisplay(null);
             await patchState({
               fiatMode: true,
               pendingJob: null,
               lastSwapId: result.swapId,
+              pendingEnterDisplay:
+                pendingDisplay != null && pendingDisplay >= 0.01
+                  ? pendingDisplay
+                  : null,
             });
           } else if (kind === "exit") {
             // No sats Funds Received for the exit swap itself (incl. 330 dust).
             // Long quiet: Mutinynet getBalance often fails for minutes after fill.
             quietFiatExitNotices(5 * 60_000);
             const preExitSats = balanceSats ?? 0;
-            const exitBrl = depixDisplay ?? 0;
+            const exitBrl = depixDisplay ?? lastGoodDepixRef.current ?? 0;
             const spot = btcBrl;
             const estimatedRaw =
               exitBrl > 0 && spot != null && spot > 0
@@ -521,13 +623,16 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
               }, 90_000);
             }
             clearOptimisticDepix();
+            // Exit: clear last-good + enter pending (correct tear-down).
             lastGoodDepixRef.current = null;
             setDepixDisplay(null);
-            setPendingEnterFiat(null);
+            setEnterPending(null);
             await patchState({
               fiatMode: false,
               pendingJob: null,
               lastSwapId: result.swapId,
+              lastGoodDisplay: null,
+              pendingEnterDisplay: null,
             });
           } else if (kind === "auto-inbound") {
             // Quiet fill — no Enter CONVERTING UI, no BRL toast for swap itself.
@@ -600,6 +705,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       btcBrl,
       state?.fiatMode,
       ensureBalanceAtLeast,
+      setEnterPending,
     ],
   );
 
@@ -796,12 +902,21 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (pendingEnterFiat == null) return;
     if (depixDisplay == null || !(depixDisplay >= 0.01)) return;
+    // Live arrived — promote to last-good and drop pending hint.
+    lastGoodDepixRef.current = depixDisplay;
+    pendingEnterFiatRef.current = null;
     setPendingEnterFiat(null);
     if (pendingEnterClearTimerRef.current) {
       clearTimeout(pendingEnterClearTimerRef.current);
       pendingEnterClearTimerRef.current = null;
     }
-  }, [depixDisplay, pendingEnterFiat]);
+    if (walletId) {
+      void writeFiatModeState(networkId, walletId, {
+        pendingEnterDisplay: null,
+        lastGoodDisplay: depixDisplay,
+      });
+    }
+  }, [depixDisplay, pendingEnterFiat, networkId, walletId]);
 
   useEffect(() => {
     return () => {

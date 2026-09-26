@@ -168,15 +168,19 @@ export function HomeScreen() {
 
   const primaryBalance = useMemo(() => {
     if (fiatMode) {
-      if (depixDisplay == null) {
-        // After Enter: show expected fill instead of bare "…".
-        if (pendingEnterFiat != null && pendingEnterFiat >= 0.01) {
-          const amt = formatBrlDisplay(pendingEnterFiat, {
-            hidden: balanceHidden,
-            networkId: network.id,
-          });
-          return balanceHidden ? amt : `+ ${amt} pending`;
-        }
+      const pending =
+        pendingEnterFiat != null && pendingEnterFiat >= 0.01
+          ? pendingEnterFiat
+          : null;
+      // Prefer pending while live is missing or still zero after Enter.
+      if (pending != null && (depixDisplay == null || !(depixDisplay >= 0.01))) {
+        const amt = formatBrlDisplay(pending, {
+          hidden: balanceHidden,
+          networkId: network.id,
+        });
+        return balanceHidden ? amt : `+ ${amt} pending`;
+      }
+      if (depixDisplay == null || !(depixDisplay >= 0.01)) {
         return "…";
       }
       return formatBrlDisplay(depixDisplay, { hidden: balanceHidden, networkId: network.id });

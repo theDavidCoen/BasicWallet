@@ -14,6 +14,16 @@ export type FiatModeState = {
   labelTouched: boolean;
   lastSwapId: string | null;
   pendingJob: FiatModeJobKind;
+  /**
+   * Last settled fiat display (BRL/USD) — restored on cold open so Home does not
+   * flash `…` while ASP assets load. Cleared on Exit.
+   */
+  lastGoodDisplay: number | null;
+  /**
+   * Expected Enter fill while assets settle — Home shows `+ $ x pending`.
+   * Cleared when live balance arrives or on Exit.
+   */
+  pendingEnterDisplay: number | null;
   updatedAt: number;
 };
 
@@ -22,11 +32,18 @@ const DEFAULT_STATE: FiatModeState = {
   labelTouched: false,
   lastSwapId: null,
   pendingJob: null,
+  lastGoodDisplay: null,
+  pendingEnterDisplay: null,
   updatedAt: 0,
 };
 
 function key(networkId: ArkadeNetworkId, walletId: string): string {
   return `basic.fiatMode.v1:${networkId}:${walletId}`;
+}
+
+function readDisplayField(v: unknown): number | null {
+  if (typeof v !== "number" || !Number.isFinite(v) || v < 0.01) return null;
+  return Math.round(v * 100) / 100;
 }
 
 export async function readFiatModeState(
@@ -48,6 +65,8 @@ export async function readFiatModeState(
         parsed.pendingJob === "pay-convert"
           ? parsed.pendingJob
           : null,
+      lastGoodDisplay: readDisplayField(parsed.lastGoodDisplay),
+      pendingEnterDisplay: readDisplayField(parsed.pendingEnterDisplay),
       updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : 0,
     };
   } catch {
