@@ -2,7 +2,9 @@
 
 > **Experimental Bitcoin / Arkade wallet.** Not a finished product. You may lose funds!
 
-Basic is a personal vibe-coded playground: an Expo Android app used to prototype wallet UX and features that would be useful in a real Bitcoin wallet (Arkade VTXOs, Lightning via intents, contacts, Nostr backup, and related flows). It is developed in the open so ideas can be tried quickly, not so you should trust it with savings.
+Basic is a personal vibe-coded playground: an Expo Android app used to prototype wallet UX and features that would be useful in a real Bitcoin wallet (Arkade VTXOs, Lightning via intents, contacts, Nostr backup, Fiat Mode, and related flows). It is developed in the open so ideas can be tried quickly, not so you should trust it with savings.
+
+**How to use:** see [`docs/how-to-use.md`](./docs/how-to-use.md) (basic + advanced features and Home/Send shortcuts).
 
 ## Warning: do not use in production
 
@@ -11,7 +13,7 @@ Basic is a personal vibe-coded playground: an Expo Android app used to prototype
 - This codebase has **not** gone through independent professional code review.
 - APIs, storage, and security assumptions change between alphas.
 
-If you run the app or study the repo, **verify the code yourself**. Read the sources you care about (wallet creation, mnemonic storage, send/receive, backup, Nostr identity). You are also encouraged to use **frontier LLMs** (and other tools) to review risky paths, but treat model output as a second opinion, not a substitute for your own judgment.
+If you run the app or study the repo, **verify the code yourself**. Read the sources you care about (wallet creation, mnemonic storage, send/receive, backup, Nostr identity, Fiat Mode swaps). You are also encouraged to use **frontier LLMs** (and other tools) to review risky paths, but treat model output as a second opinion, not a substitute for your own judgment.
 
 Use at your own risk. There is no warranty.
 
@@ -23,6 +25,8 @@ Basic (`app.basic.wallet`) is an experimental mobile wallet built with **Expo / 
 |------|------------------|
 | **Arkade** | Soft wallet over [Arkade](https://arkade.money) (VTXOs), always in **HD** mode |
 | **Bitcoin UX** | Receive / send, activity, multi-wallet switcher, recovery |
+| **Fiat Mode** | Per-wallet stable unit (DePix/BRL mainnet, USDT Mutinynet) via Arkade swaps |
+| **Bitcoin Maxi Mode** | Default ON: inbound alt-assets → sats when Fiat Mode is off |
 | **Lightning** | User-linked node (e.g. BTCPay / LNDHub) and Arkade↔Lightning **intents** (not Boltz) |
 | **Backup** | Passkey-oriented onboarding, Advanced Backup via Nostr and/or home server |
 | **Contacts** | Local encrypted contacts, share over Nostr gift wraps |
@@ -39,17 +43,21 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 - Create or restore an Arkade seed wallet (HD)
 - Receive Arkade funds and send to addresses / contacts
 - Multisend — one Arkade send to several `ark…` recipients (amounts per line; activity shows all destinations)
+- **Fiat Mode** — hold a stable unit on the selected Arkade wallet; enter/exit via Home **R$** / **₿**; inbound auto-swap while on
+- **Bitcoin Maxi Mode** — quietly convert inbound designated stables to sats when Fiat Mode is off (default ON)
 - Browse activity and manage multiple wallets
 - Connect a Lightning node (BTCPay LND REST, LNDHub) for node balance / LN flows
 - Collaborative offboard and unilateral exit related settings (escape hatches)
 - Set app PIN / biometrics gates for sensitive actions
 - Export recovery phrase only after presence checks (screen capture blocked where wired)
 - Continue with passkey (WebAuthn / Credential Manager PRF → Personal seed + Nostr identity)
-- Manage a Nostr identity; Advanced Backup (Nostr relays and/or home server)
+- Manage a Nostr identity; Advanced Backup (Nostr relays and/or home server), including Fiat/Maxi prefs in the Path C package
 - Maintain contacts (npub, NIP-05, BIP-353, etc.) and share a contact over Nostr
 - Prefer mainnet or Mutinynet (and optional custom ASP) from Settings
 
 Expect bugs, incomplete screens, and breaking changes between `0.x` alphas.
+
+Gestures (Activity pull, POS/Scan swipes, Send Enter/Paste/My wallets/Scan, Fiat Mode icon): [`docs/how-to-use.md`](./docs/how-to-use.md#shortcuts--gestures).
 
 ## Repository layout
 
@@ -57,7 +65,7 @@ Expect bugs, incomplete screens, and breaking changes between `0.x` alphas.
 |------|------|
 | [`app/`](./app/) | Expo client (TypeScript) |
 | [`prototype/docs/`](./prototype/docs/) | Product / UX / Arkade tech specs |
-| [`docs/`](./docs/) | Reproducible builds, passkey asset links, notes |
+| [`docs/`](./docs/) | How to use, reproducible builds, passkey asset links, notes |
 | [`scripts/`](./scripts/) | Release APK build helpers |
 | [`dist/`](./dist/) | Local release APKs + checksums (when built) |
 
@@ -81,9 +89,9 @@ Release checksums may be PGP-signed with fingerprint `5351632CBBF23EF29F1815ACD2
 Ideas on the roadmap (design, Penpot, or partial code; not commitments):
 
 - **Pay in Chat** — chat-adjacent payment UX (Penpot page; product TBD)
-- **Multi-asset** — USDT / EUR-linked stablecoin corridors when intents exist
+- **Multi-asset** — more stable corridors when intents exist (Fiat Mode already explores DePix/USDT)
 - **Hardware wallet & multisig** — colder signing paths beyond the soft wallet
-- **Passkey PRF hardening** — see [Passkey PRF](#passkey-prf--what-we-have-vs-hardening) above (PRF already ships; harden defaults and edge cases)
+- **Passkey PRF hardening** — PRF already ships; harden defaults and edge cases
 - **Richer Lightning** — smoother Arkade↔LN intents, clearer node vs Personal UX
 - **Contacts** — richer identifiers, better share/receive reliability across relays
 - **iOS** — first-class iOS build (Android is the current focus)
