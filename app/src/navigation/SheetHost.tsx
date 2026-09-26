@@ -1213,10 +1213,10 @@ export function SheetHost({ children }: { children: ReactNode }) {
           ref={fiatModeRef}
           open={fiatModeSheet != null}
           onDismiss={dismissFiatModeSheet}
-          // Enter: tall explainer (~screenshot). Exit: fitContent with intrinsic
-          // body measure (bodyFit) so Confirm/Cancel are never clipped.
-          visibleFraction={fiatModeSheet === "exit" ? 0.55 : 0.88}
-          fitContent={fiatModeSheet === "exit"}
+          // Enter: tall explainer. Exit: fixed compact height (fitContent was
+          // flaky — sometimes measured full flex slot → "tutto alto").
+          visibleFraction={fiatModeSheet === "exit" ? 0.42 : 0.88}
+          fitContent={false}
         >
           {fiatModeSheet === "enter" ? (
             <FiatModeEnterSheetContent

@@ -22,7 +22,7 @@ import {
 } from "../account/walletRegistry";
 import { getNetworkConfig } from "../config/network";
 import { DEFAULT_MIN_VTXO_SATS } from "./arkMultiSend";
-import { isFiatModeActiveGate } from "../fiat/fiatModeGate";
+import { isFiatModeActiveGate, shouldSuppressFiatEnterBrlNotice, shouldSuppressFiatExitSatsNotice } from "../fiat/fiatModeGate";
 import {
   depixAssetIdForNetwork,
   depixAtomicToDisplay,
@@ -448,6 +448,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [activityEpoch, setActivityEpoch] = useState(0);
   const [fundsNotice, setFundsNotice] = useState<FundsNotice | null>(null);
   const suppressIncomingUntilRef = useRef(0);
+  /** Outpoints already toasted / seen — skip subscribe replay of old receives. */
+  const seenVtxoKeysRef = useRef<Set<string>>(new Set());
   /** Total before local spend — used to detect stale pre-spend indexer reads. */
   const preSendTotalRef = useRef<number | null>(null);
   /** >0 while an outbound send holds the ASP — skip balance poll / reload. */
@@ -955,7 +957,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             // SDK ReceiveRotator advances on vtxo_received; clear pin so sync
             // (loadBalance → ensureBoardingRotatedAfterClear) shows the next addr.
             forcedArkAddressRef.current = null;
-            if (emitFundsNotice(totalDelta, "arkade") === "blocked") {
+            if (shouldSuppressFiatExitSatsNotice()) {
+              console.warn("[basic] persistBalance skip exit-swap sats", {
+                totalDelta,
+              });
+            } else if (emitFundsNotice(totalDelta, "arkade") === "blocked") {
               setBalance(bal);
               setBalanceStatus("ready");
               await writeCachedBalance(networkId, walletId, bal);
@@ -1355,8 +1361,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       openingRef.current = false;
       // Send-suppress is per active wallet session — never block catch-up on switch.
       suppressIncomingUntilRef.current = 0;
+      seenVtxoKeysRef.current = new Set();
       preSendTotalRef.current = null;
-      aspPollPausedRef.current = 0;
       aspPollPausedRef.current = 0;
       setSelectedWalletId(networkId, walletId);
       setSelectedWallet(record);
@@ -2242,10 +2248,35 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         const unsub = await w.notifyIncomingFunds((funds) => {
           if (cancelled) return;
           if (funds.type !== "utxo" && funds.spentVtxos.length === 0) {
-            const amount = funds.newVtxos.reduce((s, c) => s + (c.value ?? 0), 0);
+            const vtxos = funds.newVtxos ?? [];
+            const amount = vtxos.reduce((s, c) => s + (c.value ?? 0), 0);
+            const vtxoKeys = vtxos.map(
+              (c) => `${String(c.txid ?? "")}:${String(c.vout ?? "")}`,
+            );
+            const novelKeys = vtxoKeys.filter(
+              (k) => k !== ":" && !seenVtxoKeysRef.current.has(k),
+            );
+            for (const k of vtxoKeys) {
+              if (k !== ":") seenVtxoKeysRef.current.add(k);
+            }
+            // First notify after subscribe usually replays existing VTXOs — seed only.
+            if (!sawSubscribeReplay) {
+              sawSubscribeReplay = true;
+              console.warn("[basic] notifyIncomingFunds seed seen vtxos", {
+                n: vtxoKeys.length,
+              });
+              scheduleReload(w, walletId, { event: true });
+              return;
+            }
+            // Already-seen outpoints only (re-push / remount) — no toast.
+            if (novelKeys.length === 0) {
+              scheduleReload(w, walletId, { event: true });
+              return;
+            }
+
             const networkId = getNetworkConfig().id;
             // Pure asset receive (arkade.money DePix/USDT send uses amount: 0).
-            const assetAtomic = sumDesignatedAssetAtomic(funds.newVtxos, networkId);
+            const assetAtomic = sumDesignatedAssetAtomic(vtxos, networkId);
             if (
               isFiatModeActiveGate() &&
               assetAtomic > 0n &&
@@ -2254,32 +2285,53 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             ) {
               const display = depixAtomicToDisplay(assetAtomic, networkId);
               if (display >= 0.01) {
-                const postSend = Date.now() < suppressIncomingUntilRef.current;
-                const expectingReceive =
-                  posUiHoldRef.current > 0 || incomingWatchBoostRef.current > 0;
-                if (!postSend || expectingReceive) {
-                  const shown = emitFundsNotice(display, "brl", {
-                    bypassSendSuppress: expectingReceive,
+                if (shouldSuppressFiatEnterBrlNotice()) {
+                  console.warn("[basic] notifyIncomingFunds skip enter-swap BRL", {
+                    display,
                   });
-                  if (shown === "shown") {
-                    console.warn("[basic] notifyIncomingFunds fiat asset", {
-                      display,
-                      assetAtomic: String(assetAtomic),
-                      sats: amount,
+                } else {
+                  const postSend = Date.now() < suppressIncomingUntilRef.current;
+                  const expectingReceive =
+                    posUiHoldRef.current > 0 || incomingWatchBoostRef.current > 0;
+                  if (!postSend || expectingReceive) {
+                    const shown = emitFundsNotice(display, "brl", {
+                      bypassSendSuppress: expectingReceive,
                     });
-                    try {
-                      recordOptimisticArkadeReceive(getNetworkConfig().id, walletId, {
-                        amountSats: 0,
-                        assets: [
-                          {
-                            assetId: depixAssetIdForNetwork(networkId),
-                            amount: assetAtomic,
-                          },
-                        ],
+                    if (shown === "shown") {
+                      const assetVtxo = vtxos.find((c) =>
+                        (c.assets ?? []).some(
+                          (a) =>
+                            String(a.assetId ?? "").toLowerCase() ===
+                            depixAssetIdForNetwork(networkId).toLowerCase(),
+                        ),
+                      );
+                      const arkTxid = String(
+                        assetVtxo?.txid ||
+                          assetVtxo?.arkTxId ||
+                          vtxos[0]?.txid ||
+                          "",
+                      ).trim();
+                      console.warn("[basic] notifyIncomingFunds fiat asset", {
+                        display,
+                        assetAtomic: String(assetAtomic),
+                        sats: amount,
+                        txid: arkTxid.slice(0, 16),
                       });
-                      setActivityEpoch((n) => n + 1);
-                    } catch (e) {
-                      console.warn("[basic] optimistic fiat recv activity failed", e);
+                      try {
+                        recordOptimisticArkadeReceive(networkId, walletId, {
+                          amountSats: 0,
+                          txid: /^[0-9a-fA-F]{64}$/.test(arkTxid) ? arkTxid : undefined,
+                          assets: [
+                            {
+                              assetId: depixAssetIdForNetwork(networkId),
+                              amount: assetAtomic,
+                            },
+                          ],
+                        });
+                        setActivityEpoch((n) => n + 1);
+                      } catch (e) {
+                        console.warn("[basic] optimistic fiat recv activity failed", e);
+                      }
                     }
                   }
                 }
@@ -2335,6 +2387,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   console.warn("[basic] notifyIncomingFunds skip post-send change", {
                     amount,
                   });
+                } else if (shouldSuppressFiatExitSatsNotice()) {
+                  console.warn("[basic] notifyIncomingFunds skip exit-swap sats", {
+                    amount,
+                  });
+                  acknowledgeIncomingAmount(amount);
                 } else {
                   const shown = emitFundsNotice(amount, "arkade", {
                     bypassSendSuppress: expectingReceive,

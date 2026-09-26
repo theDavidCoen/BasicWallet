@@ -2,11 +2,11 @@
  * Fiat Mode (DePix / BRL) — per selected Arkade wallet.
  * Enter/exit swaps, Home chrome state, converting overlay.
  *
- * Address mode (bug #7): while Fiat Mode is on we reopen the engine as
- * `walletMode: "static"` (single receive address) to avoid HD gap-scan
- * replaying multi-address history as sats+BRL notices / balance spikes on
- * cold start. Exit restores `walletMode: "hd"`. Documented in
- * agent-store internal/fiat-mode-bugs-12.md.
+ * Stay on HD (`walletMode: "hd"`). A prior α10 experiment switched to
+ * `static` during Fiat Mode and broke asset sends
+ * ("Descriptor signing requested but no DescriptorProvider").
+ * Enter/exit swap fills suppress BRL/sats receive toasts via fiatModeGate;
+ * real inbound payments still notify.
  */
 
 import {
@@ -21,9 +21,9 @@ import {
 } from "react";
 import { Alert } from "react-native";
 import type { IWallet } from "@arkade-os/sdk";
-import { recordOptimisticArkadeReceive } from "../account/activityStore";
 import { getNetworkConfig } from "../config/network";
 import { DEFAULT_MIN_VTXO_SATS } from "../wallet/arkMultiSend";
+import { getOpenWalletMode } from "../wallet/hdWallet";
 import { useWallet } from "../wallet/WalletProvider";
 import {
   brlToSatsEstimate,
@@ -37,7 +37,11 @@ import {
   isFiatModeSwapAvailable,
   stripFiatModeLabelSuffix,
 } from "./depixAssets";
-import { setFiatModeActiveGate } from "./fiatModeGate";
+import {
+  quietFiatEnterNotices,
+  quietFiatExitNotices,
+  setFiatModeActiveGate,
+} from "./fiatModeGate";
 import {
   disposeDepixSwapClient,
   runDepixExchange,
@@ -110,7 +114,6 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     refresh,
     beginOutboundSend,
     endOutboundSend,
-    notifyFundsReceived,
     reopenWithWalletMode,
   } = useWallet();
 
@@ -124,7 +127,6 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const walletIdRef = useRef<string | null>(null);
   const lastSatsRef = useRef<number | null>(null);
   const lastDepixRef = useRef<number | null>(null);
-  const modeAppliedRef = useRef<boolean | null>(null);
 
   const networkId = getNetworkConfig().id;
   const walletId = selectedWallet?.kind === "arkade" ? selectedWallet.id : null;
@@ -210,14 +212,13 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     }
   }, [walletId, selectedWallet?.label, renameWallet, selectedWallet]);
 
-  // HD ↔ static with Fiat Mode status (see file header).
+  // α10 recovery: static mode broke DescriptorProvider signing — force HD.
   useEffect(() => {
-    if (state == null || !walletId) return;
-    const on = Boolean(state.fiatMode);
-    if (modeAppliedRef.current === on) return;
-    modeAppliedRef.current = on;
-    void reopenWithWalletMode(on ? "static" : "hd");
-  }, [state?.fiatMode, walletId, reopenWithWalletMode, state]);
+    if (!walletId) return;
+    if (getOpenWalletMode() !== "static") return;
+    console.warn("[basic] fiat mode: recovering HD from static engine");
+    void reopenWithWalletMode("hd");
+  }, [walletId, reopenWithWalletMode]);
 
   const runJob = useCallback(
     async (
@@ -256,12 +257,16 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         activeSwapIdRef.current = result.swapId;
         if (result.outcome === "filled") {
           if (kind === "enter") {
+            // No BRL Funds Received for the enter swap itself.
+            quietFiatEnterNotices(60_000);
             await patchState({
               fiatMode: true,
               pendingJob: null,
               lastSwapId: result.swapId,
             });
           } else if (kind === "exit") {
+            // No sats Funds Received for the exit swap itself.
+            quietFiatExitNotices(60_000);
             await patchState({
               fiatMode: false,
               pendingJob: null,
@@ -272,6 +277,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
           }
           await refresh();
           await refreshDepixBalance();
+          // Baseline DePix after enter so the first poll is not a "receive".
+          if (kind === "enter") {
+            lastDepixRef.current = null;
+          }
           return true;
         }
         await patchState({ pendingJob: null });
@@ -415,33 +424,22 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     return () => setFiatModeActiveGate(false);
   }, [fiatMode]);
 
-  // DePix balance up while in Fiat Mode → BRL Funds Received (not sats dust).
+  // Track DePix balance for Home; do NOT toast from poll deltas.
+  // BRL Funds Received comes only from notifyIncomingFunds (has vtxo txid).
+  // Enter/exit swap fills are quieted via fiatModeGate.
   useEffect(() => {
     if (!fiatMode || converting) {
       if (!fiatMode) lastDepixRef.current = null;
       return;
     }
     if (depixDisplay == null) return;
-    const prev = lastDepixRef.current;
-    lastDepixRef.current = depixDisplay;
-    // First observation after open/enter — baseline only (no notice).
-    if (prev == null) return;
-    const delta = depixDisplay - prev;
-    if (delta >= 0.01) {
-      const shown = notifyFundsReceived(delta, "brl");
-      if (shown === "shown" && walletId) {
-        try {
-          const atomic = depixDisplayToAtomic(delta, networkId);
-          recordOptimisticArkadeReceive(networkId, walletId, {
-            amountSats: 0,
-            assets: [{ assetId: depixAssetIdForNetwork(networkId), amount: atomic }],
-          });
-        } catch (e) {
-          console.warn("[basic] optimistic brl receive activity failed", e);
-        }
-      }
+    // Baseline only — never emit from here (avoids double notice + enter toast).
+    if (lastDepixRef.current == null) {
+      lastDepixRef.current = depixDisplay;
+    } else {
+      lastDepixRef.current = depixDisplay;
     }
-  }, [fiatMode, converting, depixDisplay, notifyFundsReceived, walletId, networkId]);
+  }, [fiatMode, converting, depixDisplay]);
 
   const satsEstimate = useMemo(() => {
     if (!fiatMode || depixDisplay == null || btcBrl == null) return null;
