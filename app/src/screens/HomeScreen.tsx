@@ -167,7 +167,8 @@ export function HomeScreen() {
   const primaryBalance = useMemo(() => {
     if (fiatMode) {
       if (depixDisplay == null) {
-        return balanceStatus === "loading" ? "…" : formatBrlDisplay(0, { hidden: balanceHidden, networkId: network.id });
+        // Never flash $0 while assets are still loading / briefly empty.
+        return "…";
       }
       return formatBrlDisplay(depixDisplay, { hidden: balanceHidden, networkId: network.id });
     }
