@@ -27,6 +27,7 @@ import {
   PASSPHRASE_LOSS_CAPTION,
   readCipherBlob,
   restoreContactsFromPackage,
+  restorePrefsFromPackage,
   restoreTxMetaFromPackage,
   storeCipherBlob,
 } from "../nostr/backupPackage";
@@ -213,6 +214,8 @@ export function RestoreWalletContent({
 
       const notesRestored = restoreTxMetaFromPackage(pkg);
       const contactsRestored = restoreContactsFromPackage(pkg);
+      // Flags only — no Enter/Exit swap. Enter stays HD (α10); prefs drive UI.
+      const prefsRestored = await restorePrefsFromPackage(pkg);
 
       const wallets = listWallets(networkId).filter((w) => restoredIds.has(w.id));
       if (!wallets.length) throw new Error("Package had no wallets");
@@ -235,6 +238,7 @@ export function RestoreWalletContent({
         `${pkg.wallets.length} wallet(s): ${labels}` +
           (notesRestored ? `\n${notesRestored} note(s)` : "") +
           (contactsRestored ? `\n${contactsRestored} contact(s)` : "") +
+          (prefsRestored ? `\n${prefsRestored} Fiat/Maxi pref(s)` : "") +
           ".",
       );
       onDone("Ready");
@@ -321,6 +325,7 @@ export function RestoreWalletContent({
 
       const notesRestored = restoreTxMetaFromPackage(pkg);
       const contactsRestored = restoreContactsFromPackage(pkg);
+      const prefsRestored = await restorePrefsFromPackage(pkg);
       const wallets = listWallets(networkId).filter((w) => restoredIds.has(w.id));
       if (!wallets.length) throw new Error("Package had no wallets");
 
@@ -342,6 +347,7 @@ export function RestoreWalletContent({
         `${pkg.wallets.length} wallet(s): ${labels}` +
           (notesRestored ? `\n${notesRestored} note(s)` : "") +
           (contactsRestored ? `\n${contactsRestored} contact(s)` : "") +
+          (prefsRestored ? `\n${prefsRestored} Fiat/Maxi pref(s)` : "") +
           ".",
       );
       onDone("Ready");

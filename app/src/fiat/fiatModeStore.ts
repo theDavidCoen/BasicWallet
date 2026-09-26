@@ -1,10 +1,19 @@
 /**
  * Per-wallet Fiat Mode persistence (selected Arkade wallet only).
- * Path C backup embed is out of v1 — local AsyncStorage only.
+ * Also embedded in Path C AEAD as optional `prefs[]` (see backupPackage).
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { ArkadeNetworkId } from "../config/network";
+
+function queueFiatPrefsBackupSync(reason: string): void {
+  void import("../nostr/backupSync")
+    .then(async (m) => {
+      await m.markBackupPackageDirty();
+      m.queueEncryptedBackupSync(reason);
+    })
+    .catch((e) => console.warn("[basic] fiat prefs backup dirty failed", e));
+}
 
 export type FiatModeJobKind =
   | "enter"
@@ -85,6 +94,7 @@ export async function writeFiatModeState(
   networkId: ArkadeNetworkId,
   walletId: string,
   patch: Partial<FiatModeState>,
+  opts?: { syncBackup?: boolean },
 ): Promise<FiatModeState> {
   const prev = await readFiatModeState(networkId, walletId);
   const next: FiatModeState = {
@@ -93,5 +103,13 @@ export async function writeFiatModeState(
     updatedAt: Date.now(),
   };
   await AsyncStorage.setItem(key(networkId, walletId), JSON.stringify(next));
+  // Path C: dirty only when the product flag changes (not lastGood / pending settle).
+  if (
+    opts?.syncBackup !== false &&
+    patch.fiatMode !== undefined &&
+    Boolean(patch.fiatMode) !== Boolean(prev.fiatMode)
+  ) {
+    queueFiatPrefsBackupSync(`fiatMode:${walletId.slice(0, 8)}`);
+  }
   return next;
 }

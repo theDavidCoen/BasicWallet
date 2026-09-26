@@ -17,9 +17,12 @@ import * as Crypto from "expo-crypto";
 import { applyTxMetaEntries, listAllTxMeta, type TxMeta } from "../account/txMeta";
 import { listContacts, replaceAllContacts } from "../contacts/contactStore";
 import type { Contact } from "../contacts/types";
+import { fiatStableForNetwork } from "../fiat/depixAssets";
+import { readBitcoinMaxiMode, writeBitcoinMaxiMode } from "../fiat/bitcoinMaxiStore";
+import { readFiatModeState, writeFiatModeState } from "../fiat/fiatModeStore";
 import { loadMnemonicForCrypto } from "../security/mnemonicStore";
 import { listWallets, type WalletRecord } from "../account/walletRegistry";
-import { getNetworkConfig } from "../config/network";
+import { getNetworkConfig, type ArkadeNetworkId } from "../config/network";
 import { loadNostrKeyPairForCrypto } from "./identityStore";
 import { validateBackupPassphrase } from "./passphrasePolicy";
 
@@ -95,6 +98,8 @@ export type BackupPackageMeta = {
   walletCount: number;
   txMetaCount?: number;
   contactsCount?: number;
+  /** Fiat / Maxi prefs rows packed into AEAD (optional). */
+  prefsCount?: number;
   lastPublishedAt?: number;
   lastPublishOk?: number;
   lastPublishFail?: number;
@@ -119,6 +124,17 @@ export type TxMetaPackageEntry = {
   updatedAt: number;
 };
 
+/** Per-wallet Fiat Mode / Bitcoin Maxi prefs (optional on older packages). */
+export type WalletPrefsPackageEntry = {
+  walletId: string;
+  networkId: string;
+  fiatMode: boolean;
+  bitcoinMaxiMode: boolean;
+  /** When multi-stable exists; network-pinned today (brl / usd). */
+  stableId?: string;
+  updatedAt: number;
+};
+
 export type DecryptedBackupPackage = {
   version: 1;
   createdAt: number;
@@ -128,6 +144,8 @@ export type DecryptedBackupPackage = {
   txMeta?: TxMetaPackageEntry[];
   /** Optional — older packages omit this. Private contacts directory. */
   contacts?: Contact[];
+  /** Optional — older packages omit this. Fiat Mode + Bitcoin Maxi flags. */
+  prefs?: WalletPrefsPackageEntry[];
 };
 
 export async function deriveWrapKey(
@@ -277,6 +295,76 @@ export function restoreContactsFromPackage(pkg: DecryptedBackupPackage): number 
   return pkg.contacts.length;
 }
 
+async function collectWalletPrefs(
+  networkId: ArkadeNetworkId,
+  walletIds: string[],
+): Promise<WalletPrefsPackageEntry[]> {
+  const stableId = fiatStableForNetwork(networkId).kind;
+  const out: WalletPrefsPackageEntry[] = [];
+  for (const walletId of walletIds) {
+    const [fiat, maxiOn] = await Promise.all([
+      readFiatModeState(networkId, walletId),
+      readBitcoinMaxiMode(networkId, walletId),
+    ]);
+    out.push({
+      walletId,
+      networkId,
+      fiatMode: Boolean(fiat.fiatMode),
+      bitcoinMaxiMode: maxiOn !== false,
+      stableId,
+      updatedAt: Math.max(fiat.updatedAt || 0, Date.now()),
+    });
+  }
+  return out;
+}
+
+/**
+ * Restore Fiat Mode + Bitcoin Maxi flags from Path C.
+ * Flags only — never auto Enter/Exit swap. Clears pending job/enter.
+ * Enter stays on HD (α10); no static walletMode reopen.
+ * Missing `prefs` (old packages) → no-op (defaults: fiat off, Maxi ON).
+ */
+export async function restorePrefsFromPackage(
+  pkg: DecryptedBackupPackage,
+): Promise<number> {
+  if (!Array.isArray(pkg.prefs) || !pkg.prefs.length) return 0;
+  const networkId = getNetworkConfig().id;
+  let n = 0;
+  for (const raw of pkg.prefs) {
+    if (!raw || typeof raw.walletId !== "string" || !raw.walletId.trim()) continue;
+    if (typeof raw.networkId === "string" && raw.networkId && raw.networkId !== networkId) {
+      continue;
+    }
+    const walletId = raw.walletId.trim();
+    const fiatMode = Boolean(raw.fiatMode);
+    const bitcoinMaxiMode =
+      typeof raw.bitcoinMaxiMode === "boolean" ? raw.bitcoinMaxiMode : true;
+    await writeFiatModeState(
+      networkId,
+      walletId,
+      {
+        fiatMode,
+        pendingJob: null,
+        pendingEnterDisplay: null,
+        lastSwapId: null,
+        lastGoodDisplay: null,
+      },
+      { syncBackup: false },
+    );
+    await writeBitcoinMaxiMode(networkId, walletId, bitcoinMaxiMode, {
+      syncBackup: false,
+    });
+    n += 1;
+    console.warn("[basic] restore prefs", {
+      walletId: walletId.slice(0, 8),
+      fiatMode,
+      bitcoinMaxiMode,
+      stableId: typeof raw.stableId === "string" ? raw.stableId : undefined,
+    });
+  }
+  return n;
+}
+
 export type EnableBackupInput = {
   channel: BackupChannel;
   passphrase: string;
@@ -313,6 +401,10 @@ export async function enableEncryptedBackup(input: EnableBackupInput): Promise<B
 
   const txMeta = collectTxMetaEntries();
   const contacts = listContacts();
+  const prefs = await collectWalletPrefs(
+    networkId,
+    entries.map((e) => e.id),
+  );
 
   const plaintext: DecryptedBackupPackage = {
     version: 1,
@@ -321,6 +413,7 @@ export async function enableEncryptedBackup(input: EnableBackupInput): Promise<B
     wallets: entries,
     txMeta,
     contacts,
+    prefs,
   };
 
   const blob = await encryptPackage(plaintext, pair.nsec, check.passphrase, {
@@ -340,6 +433,7 @@ export async function enableEncryptedBackup(input: EnableBackupInput): Promise<B
     walletCount: entries.length,
     txMetaCount: txMeta.length,
     contactsCount: contacts.length,
+    prefsCount: prefs.length,
   };
   await AsyncStorage.setItem(PACKAGE_META_KEY, JSON.stringify(meta));
 
