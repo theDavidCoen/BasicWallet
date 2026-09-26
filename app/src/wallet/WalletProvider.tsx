@@ -689,11 +689,20 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       console.warn("[basic] fundsNotice suppressed (exit-swap quiet)", kind, amount);
       return "busy";
     }
-    // Min-VTXO dust floor (330): Fiat Mode carriers, exit leftovers, login catch-up.
-    // Never toast as Funds Received — real inbound payments are above dust.
+    // While Fiat Mode is on: never toast sats/boarding receives — carriers are
+    // 330 (or 2×330=660 on idle sync). USD/USDT uses kind "brl" instead.
     if (
       (kind === "arkade" || kind === "boarding") &&
-      amount <= DEFAULT_MIN_VTXO_SATS
+      isFiatModeActiveGate()
+    ) {
+      console.warn("[basic] fundsNotice suppressed (fiat mode sats)", kind, amount);
+      return "busy";
+    }
+    // Dust floor even outside Fiat Mode (login/open catch-up of leftover carriers).
+    // Cap at 2× min VTXO — idle sync sometimes reports two carriers as one delta.
+    if (
+      (kind === "arkade" || kind === "boarding") &&
+      amount <= DEFAULT_MIN_VTXO_SATS * 2
     ) {
       console.warn("[basic] fundsNotice suppressed (dust floor)", kind, amount);
       return "busy";
@@ -833,10 +842,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
         const catchUpSats =
           ack && bal.total > ack.total + 1 ? bal.total - ack.total : 0;
-        // Dust-only "catch-up" (330 carrier after Fiat enter / login) is baseline,
+        // Dust-only "catch-up" (330/660 carriers after Fiat enter / login) is baseline,
         // not a real receive while away — never clear open quiet to toast it.
         const dustOnlyCatchUp =
-          catchUpSats > 0 && catchUpSats <= DEFAULT_MIN_VTXO_SATS;
+          catchUpSats > 0 && catchUpSats <= DEFAULT_MIN_VTXO_SATS * 2;
         const catchUpWhileAway =
           catchUpSats > 0 &&
           !dustOnlyCatchUp &&
@@ -946,16 +955,25 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
               ackTotal: ack.total,
             });
           } else if (
-            // Dust-only bump (min VTXO carrier / DePix leftover) — never toast.
-            // Covers cold start when displayed is still null/0 and ack lags live.
+            // Dust-only bump (min VTXO carrier ×1–2) — never toast.
+            // Idle sync often reports 660 (=2×330) as one delta.
             totalDelta > 0 &&
-            totalDelta <= DEFAULT_MIN_VTXO_SATS
+            totalDelta <= DEFAULT_MIN_VTXO_SATS * 2
           ) {
             console.warn("[basic] persistBalance skip dust delta", {
               totalDelta,
               live: bal.total,
               displayed: displayed?.total ?? null,
               ackTotal: ack.total,
+            });
+          } else if (
+            // Fiat Mode: any sats delta is carrier/swap leftover — BRL notice is separate.
+            isFiatModeActiveGate() &&
+            totalDelta > 0
+          ) {
+            console.warn("[basic] persistBalance skip sats delta (fiat mode)", {
+              totalDelta,
+              live: bal.total,
             });
           } else if (boardingDelta > 0) {
             // Drop any UI-pinned ark receive so BIP21/Arkade pick up HD rotation.
@@ -2409,25 +2427,34 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                     amount,
                   });
                   acknowledgeIncomingAmount(amount);
+                } else if (isFiatModeActiveGate()) {
+                  // Fiat Mode: sats pushes are carriers / swap dust — never toast;
+                  // always ack so idle poll cannot replay +330/+660.
+                  console.warn("[basic] notifyIncomingFunds skip fiat-mode sats", {
+                    amount,
+                  });
+                  acknowledgeIncomingAmount(amount);
+                } else if (amount <= DEFAULT_MIN_VTXO_SATS * 2) {
+                  console.warn("[basic] notifyIncomingFunds skip dust floor", {
+                    amount,
+                  });
+                  acknowledgeIncomingAmount(amount);
                 } else {
                   const shown = emitFundsNotice(amount, "arkade", {
                     bypassSendSuppress: expectingReceive,
                   });
-                  // Always ack dust carriers in Fiat Mode so resync does not re-toast.
-                  if (shown === "shown" || (isFiatModeActiveGate() && amount <= DEFAULT_MIN_VTXO_SATS)) {
+                  if (shown === "shown") {
                     acknowledgeIncomingAmount(amount);
-                    if (shown === "shown") {
-                      applyLocalReceive(amount);
-                      const wid = selectedIdRef.current;
-                      if (wid) {
-                        try {
-                          recordOptimisticArkadeReceive(getNetworkConfig().id, wid, {
-                            amountSats: amount,
-                          });
-                          setActivityEpoch((n) => n + 1);
-                        } catch (e) {
-                          console.warn("[basic] optimistic receive activity failed", e);
-                        }
+                    applyLocalReceive(amount);
+                    const wid = selectedIdRef.current;
+                    if (wid) {
+                      try {
+                        recordOptimisticArkadeReceive(getNetworkConfig().id, wid, {
+                          amountSats: amount,
+                        });
+                        setActivityEpoch((n) => n + 1);
+                      } catch (e) {
+                        console.warn("[basic] optimistic receive activity failed", e);
                       }
                     }
                   }

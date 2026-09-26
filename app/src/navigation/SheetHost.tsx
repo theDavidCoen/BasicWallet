@@ -1271,10 +1271,10 @@ export function SheetHost({ children }: { children: ReactNode }) {
           ref={fiatModeRef}
           open={fiatModeSheet != null}
           onDismiss={clearFiatModeSheet}
-          // Fixed fractions + ScrollView bodies (sticky Confirm/Cancel).
-          // fitContent was flaky: clipped fee card / empty mid gap on Mutinynet.
-          visibleFraction={fiatModeSheet === "exit" ? 0.55 : 0.88}
-          fitContent={false}
+          // Enter: tall fixed fraction + ScrollView. Exit: fitContent hugs copy
+          // (fixed 0.55 + flex:1 left a tall void until handle gesture remeasured).
+          visibleFraction={fiatModeSheet === "exit" ? 0.48 : 0.88}
+          fitContent={fiatModeSheet === "exit"}
         >
           {fiatModeSheet === "enter" ? (
             <FiatModeEnterSheetContent

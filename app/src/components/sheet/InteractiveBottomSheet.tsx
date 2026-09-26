@@ -156,6 +156,11 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
       if (!present) setContentH(0);
     }, [present]);
 
+    // Remeasure when toggling fitContent / fraction (Enter ↔ Exit share one sheet).
+    useEffect(() => {
+      if (present && fitContent) setContentH(0);
+    }, [present, fitContent, clampedVisible]);
+
     useEffect(() => {
       if (!avoidKeyboard || !present) {
         setKeyboardHeight(0);
@@ -208,9 +213,8 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
       resolvedOpenY = Math.max(insets.top + 12, windowHeight - sheetHeight);
       sheetPaddingBottom = bottomPad;
     } else if (fitContent) {
-      // Before first layout: park near bottom at a modest provisional height
-      // so we never flash a tall empty void (then shrink on measure).
-      const provisional = Math.min(maxVisibleH, Math.max(220, windowHeight * 0.35));
+      // Before first layout: stay compact (not 0.55 max) so Exit does not flash tall.
+      const provisional = Math.min(maxVisibleH, Math.max(200, windowHeight * 0.28));
       sheetHeight = provisional;
       resolvedOpenY = Math.max(insets.top + 12, windowHeight - provisional);
       sheetPaddingBottom = bottomPad;

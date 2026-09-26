@@ -1,9 +1,9 @@
 /**
  * Exit Fiat Mode body for InteractiveBottomSheet (Home).
- * Sticky Confirm/Cancel + scrollable copy — same reliable pattern as Enter.
+ * Intrinsic height (no flex:1) so fitContent hugs copy + buttons — no tall void.
  */
 
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { Pressable } from "react-native-gesture-handler";
 import { getNetworkConfig } from "../config/network";
 import { fiatFeeBps, fiatStableForNetwork, formatBrlDisplay } from "./depixAssets";
@@ -27,63 +27,46 @@ export function FiatModeExitSheetContent({
 
   return (
     <View style={styles.root}>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        bounces={false}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
+      <Text style={sheetUi.title}>Exit Fiat Mode</Text>
+
+      <Text style={styles.body}>
+        Leaving Fiat Mode converts your {unitLabel} balance back to sats.
+      </Text>
+      <Text style={styles.body}>
+        About {feePct}% conversion fee applies the same way as when you entered.
+      </Text>
+      <Text style={styles.body}>
+        Current balance: {formatBrlDisplay(brlDisplay, { networkId })}
+      </Text>
+      <Text style={[styles.body, styles.bodyLast]}>
+        You can turn Fiat Mode on again whenever you want.
+      </Text>
+
+      <Pressable
+        style={sheetUi.primaryBtn}
+        onPress={onConfirm}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel="Confirm Exit Fiat Mode"
       >
-        <Text style={sheetUi.title}>Exit Fiat Mode</Text>
-
-        <Text style={styles.body}>
-          Leaving Fiat Mode converts your {unitLabel} balance back to sats.
-        </Text>
-        <Text style={styles.body}>
-          About {feePct}% conversion fee applies the same way as when you entered.
-        </Text>
-        <Text style={styles.body}>
-          Current balance: {formatBrlDisplay(brlDisplay, { networkId })}
-        </Text>
-        <Text style={[styles.body, styles.bodyLast]}>
-          You can turn Fiat Mode on again whenever you want.
-        </Text>
-      </ScrollView>
-
-      <View style={styles.actions}>
-        <Pressable
-          style={sheetUi.primaryBtn}
-          onPress={onConfirm}
-          hitSlop={8}
-          accessibilityRole="button"
-          accessibilityLabel="Confirm Exit Fiat Mode"
-        >
-          <Text style={sheetUi.primaryBtnText}>Confirm</Text>
-        </Pressable>
-        <Pressable
-          style={styles.secondaryBtn}
-          onPress={onCancel}
-          hitSlop={8}
-          accessibilityRole="button"
-          accessibilityLabel="Cancel"
-        >
-          <Text style={sheetUi.secondaryBtnText}>Cancel</Text>
-        </Pressable>
-      </View>
+        <Text style={sheetUi.primaryBtnText}>Confirm</Text>
+      </Pressable>
+      <Pressable
+        style={styles.secondaryBtn}
+        onPress={onCancel}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel="Cancel"
+      >
+        <Text style={sheetUi.secondaryBtnText}>Cancel</Text>
+      </Pressable>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: {
-    flex: 1,
-  },
-  scroll: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingBottom: 12,
-    flexGrow: 1,
+    paddingBottom: 8,
   },
   body: {
     fontFamily: "JetBrainsMono_400Regular",
@@ -94,11 +77,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   bodyLast: {
-    marginBottom: 4,
-  },
-  actions: {
-    paddingTop: 4,
-    paddingBottom: 8,
+    marginBottom: 8,
   },
   secondaryBtn: {
     ...sheetUi.secondaryBtn,
