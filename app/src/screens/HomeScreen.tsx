@@ -93,6 +93,7 @@ export function HomeScreen() {
     openWalletSwitcher,
     openFiatModeEnter,
     openFiatModeExit,
+    fiatModeSheetOpen,
     beginActivityDrag,
     beginPosDrag,
     beginScanDrag,
@@ -764,10 +765,14 @@ export function HomeScreen() {
                 onLayout={onHandleLayout}
                 style={[
                   styles.histHit,
-                  activityOpen && !homeDragging && styles.histHitHidden,
+                  (activityOpen && !homeDragging) || fiatModeSheetOpen
+                    ? styles.histHitHidden
+                    : null,
                 ]}
                 collapsable={false}
-                pointerEvents={activityOpen && !homeDragging ? "none" : "auto"}
+                pointerEvents={
+                  (activityOpen && !homeDragging) || fiatModeSheetOpen ? "none" : "auto"
+                }
               >
                 <Pressable onPress={() => openActivity()} hitSlop={16}>
                   <View style={styles.histHandle} />

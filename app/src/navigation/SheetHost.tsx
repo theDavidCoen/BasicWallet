@@ -496,6 +496,9 @@ export function SheetHost({ children }: { children: ReactNode }) {
   const openFiatModeEnter = useCallback(() => {
     if (selectedWallet?.kind !== "arkade" || fiatMode || converting) return;
     setActivityOpen(false);
+    setActivitySkipEnter(false);
+    // Park Activity offscreen immediately — peek handle must not sit under Fiat sheet.
+    activityMotion.translateY.value = activityMotion.offY.value;
     setWalletOpen(false);
     resetWalletFlow();
     setPosOpen(false);
@@ -516,11 +519,14 @@ export function SheetHost({ children }: { children: ReactNode }) {
     converting,
     resetWalletFlow,
     clearFundsNotice,
+    activityMotion,
   ]);
 
   const openFiatModeExit = useCallback(() => {
     if (selectedWallet?.kind !== "arkade" || !fiatMode || converting) return;
     setActivityOpen(false);
+    setActivitySkipEnter(false);
+    activityMotion.translateY.value = activityMotion.offY.value;
     setWalletOpen(false);
     resetWalletFlow();
     setPosOpen(false);
@@ -541,6 +547,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
     converting,
     resetWalletFlow,
     clearFundsNotice,
+    activityMotion,
   ]);
 
   const beginActivityDrag = useCallback(() => {
@@ -1268,13 +1275,14 @@ export function SheetHost({ children }: { children: ReactNode }) {
         />
 
         <InteractiveBottomSheet
+          // Remount per kind so Enter's openY (~0.12H) cannot park Exit at the top.
+          key={`fiat-${fiatModeSheet ?? "closed"}`}
           ref={fiatModeRef}
           open={fiatModeSheet != null}
           onDismiss={clearFiatModeSheet}
-          // Enter: tall fixed fraction + ScrollView. Exit: fitContent hugs copy
-          // (fixed 0.55 + flex:1 left a tall void until handle gesture remeasured).
-          visibleFraction={fiatModeSheet === "exit" ? 0.48 : 0.88}
-          fitContent={fiatModeSheet === "exit"}
+          // Stable fixed fractions only — no fitContent (wrong measure → top-stuck).
+          visibleFraction={fiatModeSheet === "exit" ? 0.58 : 0.88}
+          fitContent={false}
         >
           {fiatModeSheet === "enter" ? (
             <FiatModeEnterSheetContent
