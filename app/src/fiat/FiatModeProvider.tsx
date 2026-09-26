@@ -1,6 +1,8 @@
 /**
  * Fiat Mode (DePix / BRL) — per selected Arkade wallet.
  * Enter/exit swaps, Home chrome state, converting overlay.
+ * Also hosts Bitcoin Maxi Mode (default ON): outside Fiat Mode, inbound
+ * designated stables auto-swap to sats.
  *
  * Stay on HD (`walletMode: "hd"`). A prior α10 experiment switched to
  * `static` during Fiat Mode and broke asset sends
@@ -55,6 +57,7 @@ import {
   type FiatModeJobKind,
   type FiatModeState,
 } from "./fiatModeStore";
+import { readBitcoinMaxiMode } from "./bitcoinMaxiStore";
 
 export type FiatModeStatus = "off" | "on" | "converting";
 
@@ -77,6 +80,11 @@ type FiatModeContextValue = {
    * Home shows `+ $ x pending` instead of `…` until live settles.
    */
   pendingEnterFiat: number | null;
+  /**
+   * Bitcoin Maxi Mode (default ON): outside Fiat Mode, inbound alt-assets
+   * auto-swap to sats. v1 UI is non-toggleable.
+   */
+  bitcoinMaxiMode: boolean;
   feeBps: number;
   minEnterSats: number;
   /**
@@ -141,6 +149,8 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const [btcBrl, setBtcBrl] = useState<number | null>(null);
   const [pendingExitSats, setPendingExitSats] = useState<number | null>(null);
   const [pendingEnterFiat, setPendingEnterFiat] = useState<number | null>(null);
+  /** Default ON until storage loads. */
+  const [bitcoinMaxiMode, setBitcoinMaxiMode] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
   const activeSwapIdRef = useRef<string | null>(null);
   const walletIdRef = useRef<string | null>(null);
@@ -157,6 +167,9 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const pendingEnterClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Mirror pendingEnterFiat for refreshDepixBalance (avoid stale closure). */
   const pendingEnterFiatRef = useRef<number | null>(null);
+  /** Baseline designated-asset atomic for Maxi Mode (swap only on increase). */
+  const maxiAssetBaselineRef = useRef<bigint | null>(null);
+  const maxiBaselineReadyRef = useRef(false);
   /** True while any enter/exit/auto/pay job runs (incl. quiet auto-inbound). */
   const jobBusyRef = useRef(false);
 
@@ -206,13 +219,20 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       lastGoodDepixRef.current = null;
       pendingEnterFiatRef.current = null;
       setPendingEnterFiat(null);
+      setBitcoinMaxiMode(true);
+      maxiAssetBaselineRef.current = null;
+      maxiBaselineReadyRef.current = false;
       disposeDepixSwapClient();
       return;
     }
     let cancelled = false;
     void (async () => {
-      const s = await readFiatModeState(networkId, walletId);
+      const [s, maxiOn] = await Promise.all([
+        readFiatModeState(networkId, walletId),
+        readBitcoinMaxiMode(networkId, walletId),
+      ]);
       if (cancelled) return;
+      setBitcoinMaxiMode(maxiOn);
       // Stale pending enter/exit must not resume CONVERTING after reopen.
       let next = s;
       if (s.pendingJob === "enter" || s.pendingJob === "exit") {
@@ -222,6 +242,8 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       }
       if (cancelled) return;
       setState(next);
+      maxiAssetBaselineRef.current = null;
+      maxiBaselineReadyRef.current = false;
       // Cold open: restore last-good so Home never flashes bare `…`.
       if (next.fiatMode && next.lastGoodDisplay != null && next.lastGoodDisplay >= 0.01) {
         lastGoodDepixRef.current = next.lastGoodDisplay;
@@ -505,7 +527,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       }
       if (!(amount > 0n)) return false;
 
-      const quiet = Boolean(opts?.quiet) || kind === "auto-inbound";
+      const quiet =
+        Boolean(opts?.quiet) ||
+        kind === "auto-inbound" ||
+        kind === "maxi-inbound";
       const ac = new AbortController();
       abortRef.current = ac;
       jobBusyRef.current = true;
@@ -638,6 +663,11 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
             // Quiet fill — no Enter CONVERTING UI, no BRL toast for swap itself.
             quietFiatEnterNotices(45_000);
             await patchState({ pendingJob: null, lastSwapId: result.swapId });
+          } else if (kind === "maxi-inbound") {
+            // Asset → sats: allow sats Funds Received after settle; no asset toast.
+            await patchState({ pendingJob: null, lastSwapId: result.swapId });
+            // Baseline will re-read after refresh (asset should be ~0).
+            maxiBaselineReadyRef.current = false;
           } else {
             await patchState({ pendingJob: null, lastSwapId: result.swapId });
           }
@@ -863,6 +893,85 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     }
   }, [balanceSats, state?.fiatMode, converting, maybeAutoSwapInboundSats, networkId]);
 
+  /**
+   * Bitcoin Maxi Mode: outside Fiat Mode, inbound designated stable assets
+   * (DePix / USDT) auto-swap to sats. Baseline first poll (no swap of stock);
+   * swap only when atomic increases.
+   */
+  useEffect(() => {
+    if (!wallet || !walletId) return;
+    if (state?.fiatMode || converting || !bitcoinMaxiMode) {
+      maxiAssetBaselineRef.current = null;
+      maxiBaselineReadyRef.current = false;
+      return;
+    }
+    if (!isFiatModeSwapAvailable(networkId)) return;
+
+    let cancelled = false;
+    const assetId = depixAssetIdForNetwork(networkId);
+
+    const tick = async () => {
+      if (cancelled || jobBusyRef.current) return;
+      if (walletIdRef.current !== walletId) return;
+      try {
+        const raw = await wallet.getBalance();
+        if (cancelled) return;
+        const atomic = readDepixAtomicFromBalance(raw, assetId);
+        if (!maxiBaselineReadyRef.current) {
+          maxiAssetBaselineRef.current = atomic;
+          maxiBaselineReadyRef.current = true;
+          console.warn("[basic] maxi baseline asset", {
+            atomic: String(atomic),
+          });
+          return;
+        }
+        const prev = maxiAssetBaselineRef.current ?? 0n;
+        if (atomic > prev && atomic > 0n) {
+          const display = depixAtomicToDisplay(atomic, networkId);
+          if (display < 0.01) {
+            maxiAssetBaselineRef.current = atomic;
+            return;
+          }
+          console.warn("[basic] maxi auto-swap asset→sats", {
+            atomic: String(atomic),
+            display,
+            prev: String(prev),
+          });
+          // Optimistically raise baseline so we do not stack jobs on the same bump.
+          maxiAssetBaselineRef.current = atomic;
+          const ok = await runJob("maxi-inbound", "depix-to-btc", atomic, {
+            quiet: true,
+          });
+          if (!ok) {
+            // Allow retry on next poll if swap failed.
+            maxiAssetBaselineRef.current = prev;
+            maxiBaselineReadyRef.current = true;
+          }
+          return;
+        }
+        // Asset decreased or flat (after swap / spend) — track live.
+        maxiAssetBaselineRef.current = atomic;
+      } catch (e) {
+        console.warn("[basic] maxi asset poll failed", e);
+      }
+    };
+
+    void tick();
+    const timer = setInterval(() => void tick(), 5_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [
+    wallet,
+    walletId,
+    state?.fiatMode,
+    converting,
+    bitcoinMaxiMode,
+    networkId,
+    runJob,
+  ]);
+
   const convertDepixToSatsForPay = useCallback(
     async (satsNeeded: number) => {
       if (!(satsNeeded > 0)) return;
@@ -981,6 +1090,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       satsEstimate: fiatMode ? satsEstimate : null,
       pendingExitSats: fiatMode ? null : pendingExitSats,
       pendingEnterFiat: fiatMode ? pendingEnterFiat : null,
+      bitcoinMaxiMode,
       feeBps: fiatFeeBps(networkId),
       minEnterSats: fiatMinBaseSats(networkId),
       confirmEnter,
@@ -1001,6 +1111,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       satsEstimate,
       pendingExitSats,
       pendingEnterFiat,
+      bitcoinMaxiMode,
       confirmEnter,
       confirmExit,
       cancelConverting,

@@ -32,6 +32,8 @@ export type RootStackParamList = {
   ArkadeNetwork: undefined;
   /** Penpot 05b */
   DisplayCurrencies: undefined;
+  /** Bitcoin Maxi Mode (auto-swap inbound assets → sats) */
+  BitcoinMaxiSettings: undefined;
   /** Fiat Mode (DePix / BRL) for selected Arkade wallet */
   FiatModeSettings: undefined;
   /** Arkade VTXO delegates */

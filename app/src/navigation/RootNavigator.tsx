@@ -21,6 +21,7 @@ import { ArkadeSettingsScreen } from "../screens/ArkadeSettingsScreen";
 import { ArkadeNetworkScreen } from "../screens/ArkadeNetworkScreen";
 import { DisplayCurrenciesScreen } from "../screens/DisplayCurrenciesScreen";
 import { FiatModeSettingsScreen } from "../screens/FiatModeSettingsScreen";
+import { BitcoinMaxiSettingsScreen } from "../screens/BitcoinMaxiSettingsScreen";
 import { DelegatesScreen } from "../screens/DelegatesScreen";
 import { ConnectNodeScreen } from "../screens/ConnectNodeScreen";
 import { ConnectedNodeScreen } from "../screens/ConnectedNodeScreen";
@@ -126,6 +127,7 @@ export function RootNavigator() {
             <Stack.Screen name="ArkadeSettings" component={ArkadeSettingsScreen} />
             <Stack.Screen name="ArkadeNetwork" component={ArkadeNetworkScreen} />
             <Stack.Screen name="DisplayCurrencies" component={DisplayCurrenciesScreen} />
+            <Stack.Screen name="BitcoinMaxiSettings" component={BitcoinMaxiSettingsScreen} />
             <Stack.Screen name="FiatModeSettings" component={FiatModeSettingsScreen} />
             <Stack.Screen name="Delegates" component={DelegatesScreen} />
             <Stack.Screen name="ConnectedNode" component={ConnectedNodeScreen} />

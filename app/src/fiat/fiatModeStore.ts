@@ -6,7 +6,13 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { ArkadeNetworkId } from "../config/network";
 
-export type FiatModeJobKind = "enter" | "exit" | "auto-inbound" | "pay-convert" | null;
+export type FiatModeJobKind =
+  | "enter"
+  | "exit"
+  | "auto-inbound"
+  | "maxi-inbound"
+  | "pay-convert"
+  | null;
 
 export type FiatModeState = {
   fiatMode: boolean;
@@ -62,6 +68,7 @@ export async function readFiatModeState(
         parsed.pendingJob === "enter" ||
         parsed.pendingJob === "exit" ||
         parsed.pendingJob === "auto-inbound" ||
+        parsed.pendingJob === "maxi-inbound" ||
         parsed.pendingJob === "pay-convert"
           ? parsed.pendingJob
           : null,
