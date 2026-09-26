@@ -689,14 +689,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       console.warn("[basic] fundsNotice suppressed (exit-swap quiet)", kind, amount);
       return "busy";
     }
-    // Fiat Mode: DePix arrives on a 330-sat carrier VTXO — never toast that dust
-    // as a sats receive (BRL notice is emitted from FiatModeProvider).
+    // Min-VTXO dust floor (330): Fiat Mode carriers, exit leftovers, login catch-up.
+    // Never toast as Funds Received — real inbound payments are above dust.
     if (
-      kind === "arkade" &&
-      isFiatModeActiveGate() &&
+      (kind === "arkade" || kind === "boarding") &&
       amount <= DEFAULT_MIN_VTXO_SATS
     ) {
-      console.warn("[basic] fundsNotice suppressed (fiat dust carrier)", amount);
+      console.warn("[basic] fundsNotice suppressed (dust floor)", kind, amount);
       return "busy";
     }
     // Enter Fiat Mode: suppress BRL toast for the enter swap fill itself.
@@ -834,8 +833,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
         const catchUpSats =
           ack && bal.total > ack.total + 1 ? bal.total - ack.total : 0;
+        // Dust-only "catch-up" (330 carrier after Fiat enter / login) is baseline,
+        // not a real receive while away — never clear open quiet to toast it.
+        const dustOnlyCatchUp =
+          catchUpSats > 0 && catchUpSats <= DEFAULT_MIN_VTXO_SATS;
         const catchUpWhileAway =
           catchUpSats > 0 &&
+          !dustOnlyCatchUp &&
           openSyncQuietRef.current &&
           !quietImportSyncRef.current;
 
@@ -942,18 +946,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
               ackTotal: ack.total,
             });
           } else if (
-            // Dust-only bump that equals min VTXO carrier (DePix leftover) while
-            // UI already shows a near-zero sats balance — never toast as receive.
+            // Dust-only bump (min VTXO carrier / DePix leftover) — never toast.
+            // Covers cold start when displayed is still null/0 and ack lags live.
             totalDelta > 0 &&
-            totalDelta <= DEFAULT_MIN_VTXO_SATS &&
-            bal.total <= DEFAULT_MIN_VTXO_SATS &&
-            !!displayed &&
-            displayed.total <= DEFAULT_MIN_VTXO_SATS
+            totalDelta <= DEFAULT_MIN_VTXO_SATS
           ) {
             console.warn("[basic] persistBalance skip dust delta", {
               totalDelta,
               live: bal.total,
-              displayed: displayed.total,
+              displayed: displayed?.total ?? null,
+              ackTotal: ack.total,
             });
           } else if (boardingDelta > 0) {
             // Drop any UI-pinned ark receive so BIP21/Arkade pick up HD rotation.
