@@ -66,6 +66,7 @@ import { useWallet } from "../wallet/WalletProvider";
 import { useFiatMode } from "../fiat/FiatModeProvider";
 import { FiatModeEnterSheetContent } from "../fiat/FiatModeEnterSheetContent";
 import { FiatModeExitSheetContent } from "../fiat/FiatModeExitSheetContent";
+import { requireUserPresence } from "../security/userPresence";
 
 export type FundsSentPayload = {
   amount: number;
@@ -74,6 +75,8 @@ export type FundsSentPayload = {
   /** Ark multi-send: number of payment outputs (one tx). */
   recipientCount?: number;
   rail?: "arkade" | "lightning";
+  /** When set, notice shows fiat (−R$ / −$) instead of sats. */
+  amountLabel?: string;
 };
 
 export type FundsReceivedPayload = {
@@ -1156,6 +1159,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
           {fundsSentPayload ? (
             <FundsSentView
               amount={fundsSentPayload.amount}
+              amountLabel={fundsSentPayload.amountLabel}
               txid={fundsSentPayload.txid}
               address={fundsSentPayload.address}
               recipientCount={fundsSentPayload.recipientCount}
@@ -1209,7 +1213,9 @@ export function SheetHost({ children }: { children: ReactNode }) {
           ref={fiatModeRef}
           open={fiatModeSheet != null}
           onDismiss={dismissFiatModeSheet}
-          visibleFraction={fiatModeSheet === "exit" ? 0.5 : 0.88}
+          // Enter: tall explainer (~screenshot). Exit: fitContent with intrinsic
+          // body measure (bodyFit) so Confirm/Cancel are never clipped.
+          visibleFraction={fiatModeSheet === "exit" ? 0.55 : 0.88}
           fitContent={fiatModeSheet === "exit"}
         >
           {fiatModeSheet === "enter" ? (
@@ -1217,7 +1223,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
               availableSats={balanceSats ?? 0}
               onConfirm={() => {
                 dismissFiatModeSheet();
-                confirmEnter();
+                void confirmEnter();
               }}
               onCancel={dismissFiatModeSheet}
             />
@@ -1227,7 +1233,11 @@ export function SheetHost({ children }: { children: ReactNode }) {
               brlDisplay={depixDisplay ?? 0}
               onConfirm={() => {
                 dismissFiatModeSheet();
-                confirmExit();
+                void (async () => {
+                  const auth = await requireUserPresence("Confirm Exit Fiat Mode");
+                  if (!auth.ok) return;
+                  void confirmExit();
+                })();
               }}
               onCancel={dismissFiatModeSheet}
             />
@@ -1249,15 +1259,12 @@ export function SheetHost({ children }: { children: ReactNode }) {
                   return;
                 }
                 const networkId = getNetworkConfig().id;
-                const activityId =
-                  kind === "brl"
-                    ? null
-                    : findRecentReceiveActivityId(
-                        networkId,
-                        walletId,
-                        amount,
-                        kind,
-                      );
+                const activityId = findRecentReceiveActivityId(
+                  networkId,
+                  walletId,
+                  amount,
+                  kind,
+                );
                 if (activityId) {
                   openActivityDetailFromHome(activityId, walletId);
                 } else {

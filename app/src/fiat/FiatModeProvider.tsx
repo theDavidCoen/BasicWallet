@@ -1,6 +1,12 @@
 /**
  * Fiat Mode (DePix / BRL) — per selected Arkade wallet.
  * Enter/exit swaps, Home chrome state, converting overlay.
+ *
+ * Address mode (bug #7): while Fiat Mode is on we reopen the engine as
+ * `walletMode: "static"` (single receive address) to avoid HD gap-scan
+ * replaying multi-address history as sats+BRL notices / balance spikes on
+ * cold start. Exit restores `walletMode: "hd"`. Documented in
+ * agent-store internal/fiat-mode-bugs-12.md.
  */
 
 import {
@@ -15,7 +21,9 @@ import {
 } from "react";
 import { Alert } from "react-native";
 import type { IWallet } from "@arkade-os/sdk";
+import { recordOptimisticArkadeReceive } from "../account/activityStore";
 import { getNetworkConfig } from "../config/network";
+import { DEFAULT_MIN_VTXO_SATS } from "../wallet/arkMultiSend";
 import { useWallet } from "../wallet/WalletProvider";
 import {
   brlToSatsEstimate,
@@ -26,14 +34,11 @@ import {
   fiatFeeBps,
   fiatMinBaseSats,
   fiatStableForNetwork,
-  isDefaultishWalletLabel,
   isFiatModeSwapAvailable,
   stripFiatModeLabelSuffix,
-  withFiatModeLabelSuffix,
 } from "./depixAssets";
 import { setFiatModeActiveGate } from "./fiatModeGate";
 import {
-  cancelDepixSwap,
   disposeDepixSwapClient,
   runDepixExchange,
   type DepixSwapProgress,
@@ -61,9 +66,10 @@ type FiatModeContextValue = {
   /**
    * Home enter/exit UI lives in SheetHost (`openFiatModeEnter` / `openFiatModeExit`).
    * Settings uses confirmEnter / confirmExit on-page.
+   * Resolves true when conversion filled (or exit with zero balance).
    */
-  confirmEnter: () => void;
-  confirmExit: () => void;
+  confirmEnter: () => Promise<boolean>;
+  confirmExit: () => Promise<boolean>;
   cancelConverting: () => void;
   /** Refresh DePix balance from live wallet.getBalance().assets. */
   refreshDepixBalance: () => Promise<void>;
@@ -105,6 +111,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     beginOutboundSend,
     endOutboundSend,
     notifyFundsReceived,
+    reopenWithWalletMode,
   } = useWallet();
 
   const [state, setState] = useState<FiatModeState | null>(null);
@@ -117,6 +124,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const walletIdRef = useRef<string | null>(null);
   const lastSatsRef = useRef<number | null>(null);
   const lastDepixRef = useRef<number | null>(null);
+  const modeAppliedRef = useRef<boolean | null>(null);
 
   const networkId = getNetworkConfig().id;
   const walletId = selectedWallet?.kind === "arkade" ? selectedWallet.id : null;
@@ -190,16 +198,37 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     [networkId, walletId],
   );
 
+  // Strip legacy " - FIAT MODE" label suffixes once (badge is separate UI now).
+  useEffect(() => {
+    if (!walletId || !selectedWallet) return;
+    const label = selectedWallet.label ?? "";
+    const cleaned = stripFiatModeLabelSuffix(label);
+    if (cleaned !== label) {
+      void renameWallet(walletId, cleaned).catch((e) =>
+        console.warn("[basic] strip fiat label failed", e),
+      );
+    }
+  }, [walletId, selectedWallet?.label, renameWallet, selectedWallet]);
+
+  // HD ↔ static with Fiat Mode status (see file header).
+  useEffect(() => {
+    if (state == null || !walletId) return;
+    const on = Boolean(state.fiatMode);
+    if (modeAppliedRef.current === on) return;
+    modeAppliedRef.current = on;
+    void reopenWithWalletMode(on ? "static" : "hd");
+  }, [state?.fiatMode, walletId, reopenWithWalletMode, state]);
+
   const runJob = useCallback(
     async (
       kind: FiatModeJobKind,
       direction: "btc-to-depix" | "depix-to-btc",
       amount: bigint,
-    ) => {
-      if (!wallet || !walletId || !kind) return;
+    ): Promise<boolean> => {
+      if (!wallet || !walletId || !kind) return false;
       if (converting) {
         Alert.alert("Busy", "A conversion is already in progress.");
-        return;
+        return false;
       }
       const ac = new AbortController();
       abortRef.current = ac;
@@ -232,17 +261,6 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
               pendingJob: null,
               lastSwapId: result.swapId,
             });
-            if (selectedWallet && isDefaultishWalletLabel(selectedWallet.label)) {
-              try {
-                await renameWallet(
-                  walletId,
-                  withFiatModeLabelSuffix(stripFiatModeLabelSuffix(selectedWallet.label)),
-                );
-                await patchState({ labelTouched: true });
-              } catch (e) {
-                console.warn("[basic] fiat label suffix failed", e);
-              }
-            }
           } else if (kind === "exit") {
             await patchState({
               fiatMode: false,
@@ -254,15 +272,17 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
           }
           await refresh();
           await refreshDepixBalance();
-        } else {
-          await patchState({ pendingJob: null });
-          Alert.alert("Conversion cancelled", "Your previous mode was kept.");
+          return true;
         }
+        await patchState({ pendingJob: null });
+        Alert.alert("Conversion incomplete", "Your previous mode was kept.");
+        return false;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.warn("[basic] fiat swap failed", e);
         await patchState({ pendingJob: null });
         Alert.alert("Conversion failed", msg);
+        return false;
       } finally {
         endOutboundSend();
         setConverting(false);
@@ -279,25 +299,23 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       beginOutboundSend,
       endOutboundSend,
       networkId,
-      selectedWallet,
-      renameWallet,
       refresh,
       refreshDepixBalance,
     ],
   );
 
-  const confirmEnter = useCallback(() => {
+  const confirmEnter = useCallback(async (): Promise<boolean> => {
     if (!walletId || selectedWallet?.kind !== "arkade") {
       Alert.alert("Fiat Mode", "Select an Arkade wallet first.");
-      return;
+      return false;
     }
-    if (state?.fiatMode || converting) return;
+    if (state?.fiatMode || converting) return false;
     if (!isFiatModeSwapAvailable(networkId)) {
       Alert.alert(
         "Fiat Mode unavailable",
         "No stable swap card is pinned for this network.",
       );
-      return;
+      return false;
     }
     const minBase = fiatMinBaseSats(networkId);
     const sats = balanceSats ?? 0;
@@ -306,9 +324,14 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         "Not enough sats",
         `Need at least ${minBase.toLocaleString("en-US")} sats to enter Fiat Mode.`,
       );
-      return;
+      return false;
     }
-    void runJob("enter", "btc-to-depix", BigInt(sats));
+    // Reserve dust so partial asset sends can fund the change output
+    // (SDK needs ≈dust carrier on the payment + ≈dust on asset change).
+    const reserve = DEFAULT_MIN_VTXO_SATS;
+    const swapSats =
+      sats - reserve >= minBase ? sats - reserve : sats;
+    return runJob("enter", "btc-to-depix", BigInt(swapSats));
   }, [
     walletId,
     selectedWallet,
@@ -319,36 +342,30 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     networkId,
   ]);
 
-  const confirmExit = useCallback(() => {
-    if (!walletId || !state?.fiatMode || converting) return;
+  const confirmExit = useCallback(async (): Promise<boolean> => {
+    if (!walletId || !state?.fiatMode || converting) return false;
     const display = depixDisplay ?? 0;
     if (!(display > 0)) {
-      void patchState({ fiatMode: false, pendingJob: null });
-      return;
+      await patchState({ fiatMode: false, pendingJob: null });
+      return true;
     }
     const atomic = depixDisplayToAtomic(display, networkId);
-    void runJob("exit", "depix-to-btc", atomic);
+    return runJob("exit", "depix-to-btc", atomic);
   }, [walletId, state?.fiatMode, converting, depixDisplay, runJob, patchState, networkId]);
 
   const cancelConverting = useCallback(() => {
-    abortRef.current?.abort();
-    const sid = activeSwapIdRef.current;
-    if (sid && wallet && walletId) {
-      void cancelDepixSwap({
-        wallet: wallet as unknown as IWallet,
-        networkId,
-        walletId,
-        swapId: sid,
-      }).catch((e) => console.warn("[basic] cancelDepixSwap", e));
-    }
-  }, [wallet, walletId, networkId]);
+    // Cancel UI removed — keep no-op for API stability.
+  }, []);
 
   const maybeAutoSwapInboundSats = useCallback(
     (sats: number) => {
       if (!state?.fiatMode || converting) return;
       const minBase = fiatMinBaseSats(networkId);
       if (!(sats >= minBase)) return;
-      void runJob("auto-inbound", "btc-to-depix", BigInt(Math.floor(sats)));
+      // Keep a dust reserve for later asset change when auto-swapping.
+      const reserve = DEFAULT_MIN_VTXO_SATS;
+      const swap = sats - reserve >= minBase ? sats - reserve : sats;
+      void runJob("auto-inbound", "btc-to-depix", BigInt(Math.floor(swap)));
     },
     [state?.fiatMode, converting, runJob, networkId],
   );
@@ -407,12 +424,24 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     if (depixDisplay == null) return;
     const prev = lastDepixRef.current;
     lastDepixRef.current = depixDisplay;
+    // First observation after open/enter — baseline only (no notice).
     if (prev == null) return;
     const delta = depixDisplay - prev;
     if (delta >= 0.01) {
-      notifyFundsReceived(delta, "brl");
+      const shown = notifyFundsReceived(delta, "brl");
+      if (shown === "shown" && walletId) {
+        try {
+          const atomic = depixDisplayToAtomic(delta, networkId);
+          recordOptimisticArkadeReceive(networkId, walletId, {
+            amountSats: 0,
+            assets: [{ assetId: depixAssetIdForNetwork(networkId), amount: atomic }],
+          });
+        } catch (e) {
+          console.warn("[basic] optimistic brl receive activity failed", e);
+        }
+      }
     }
-  }, [fiatMode, converting, depixDisplay, notifyFundsReceived]);
+  }, [fiatMode, converting, depixDisplay, notifyFundsReceived, walletId, networkId]);
 
   const satsEstimate = useMemo(() => {
     if (!fiatMode || depixDisplay == null || btcBrl == null) return null;

@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useNavigation } from "@react-navigation/native";
 import { ScreenChrome } from "../components/ScreenChrome";
 import { getNetworkConfig } from "../config/network";
 import { useFiatMode } from "../fiat/FiatModeProvider";
@@ -15,6 +16,8 @@ import {
   formatBrlDisplay,
   isFiatModeSwapAvailable,
 } from "../fiat/depixAssets";
+import type { RootNav } from "../navigation/types";
+import { requireUserPresence } from "../security/userPresence";
 import { useWallet } from "../wallet/WalletProvider";
 import { colors } from "../theme/colors";
 
@@ -57,6 +60,7 @@ function StableCard({ title, status, selected, soon, onSelect }: StableCardProps
 }
 
 export function FiatModeSettingsScreen() {
+  const navigation = useNavigation<RootNav>();
   const { selectedWallet } = useWallet();
   const network = getNetworkConfig();
   const swapOk = isFiatModeSwapAvailable(network.id);
@@ -66,7 +70,6 @@ export function FiatModeSettingsScreen() {
     fiatMode,
     status,
     converting,
-    convertingMessage,
     depixDisplay,
     confirmEnter,
     confirmExit,
@@ -76,6 +79,7 @@ export function FiatModeSettingsScreen() {
 
   const arkade = selectedWallet?.kind === "arkade";
   const [selected, setSelected] = useState<StableId | null>(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (fiatMode) setSelected(activeId);
@@ -86,7 +90,7 @@ export function FiatModeSettingsScreen() {
 
   const activeStatus =
     status === "converting"
-      ? `Converting…${convertingMessage ? ` ${convertingMessage}` : ""}`
+      ? "Converting…"
       : fiatMode
         ? `On${depixDisplay != null ? ` · ${formatBrlDisplay(depixDisplay, { networkId: network.id })}` : ""}`
         : !swapOk
@@ -94,10 +98,40 @@ export function FiatModeSettingsScreen() {
           : "Off";
 
   const canConfirm =
-    arkade && selected === activeId && !converting && (fiatMode || swapOk);
+    arkade && selected === activeId && !converting && !busy && (fiatMode || swapOk);
   const confirmLabel = fiatMode ? "Exit Fiat Mode" : "Enter Fiat Mode";
 
   const isMutiny = network.id === "mutinynet";
+
+  async function onConfirm() {
+    if (!canConfirm || busy) return;
+    setBusy(true);
+    try {
+      if (fiatMode) {
+        const auth = await requireUserPresence("Confirm Exit Fiat Mode");
+        if (!auth.ok) {
+          return;
+        }
+        const ok = await confirmExit();
+        if (ok) navigation.navigate("Home");
+      } else {
+        const ok = await confirmEnter();
+        if (ok) navigation.navigate("Home");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // While converting, hide cards under the overlay so no empty layer shows.
+  if (converting) {
+    return (
+      <ScreenChrome logoScale={0.77}>
+        <Text style={styles.title}>FIAT MODE</Text>
+        <Text style={styles.caption}>Converting… please wait.</Text>
+      </ScreenChrome>
+    );
+  }
 
   return (
     <ScreenChrome logoScale={0.77}>
@@ -157,7 +191,7 @@ export function FiatModeSettingsScreen() {
       {canConfirm ? (
         <Pressable
           style={styles.primary}
-          onPress={fiatMode ? confirmExit : confirmEnter}
+          onPress={() => void onConfirm()}
           accessibilityRole="button"
           accessibilityLabel={confirmLabel}
         >
@@ -173,8 +207,7 @@ export function FiatModeSettingsScreen() {
         <Text style={styles.footnote}>
           {isMutiny
             ? "USDT is the active Fiat Mode path on Mutinynet."
-            : "Cards will let you choose which stable to use. For now only BRL is active on mainnet."}{" "}
-          Selection does not leave this page.
+            : "Cards will let you choose which stable to use. For now only BRL is active on mainnet."}
         </Text>
       )}
     </ScreenChrome>

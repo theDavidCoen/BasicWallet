@@ -1058,6 +1058,35 @@ export function SendScreen() {
           Alert.alert("Insufficient balance", `Available: ${bal}`);
           return;
         }
+        // Partial asset sends need a second dust carrier for asset change.
+        // Enter reserves DEFAULT_MIN_VTXO_SATS; if spendable is still too low,
+        // ask to send the full balance instead of failing in the SDK.
+        const partial = needBrl + 1e-8 < have;
+        const availableSats = spendable ?? 0;
+        if (partial && availableSats < DEFAULT_MIN_VTXO_SATS) {
+          Alert.alert(
+            "Not enough sats for change",
+            `Sending part of your ${fiatUnit} needs about ${DEFAULT_MIN_VTXO_SATS} spare sats for the change output. Send the full balance, or receive a little more first.`,
+            [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: `Send all ${formatBrlDisplay(have, { networkId: network.id })}`,
+                onPress: () => {
+                  setLines((prev) => {
+                    if (!prev[0]) return prev;
+                    const copy = [...prev];
+                    copy[0] = {
+                      ...copy[0]!,
+                      amountStr: have.toFixed(2).replace(".", ","),
+                    };
+                    return copy.slice(0, 1);
+                  });
+                },
+              },
+            ],
+          );
+          return;
+        }
       } else if (spendable !== null && paymentSum > spendable) {
         Alert.alert("Insufficient balance", `Available: ${bal}`);
         return;
@@ -1149,6 +1178,15 @@ export function SendScreen() {
 
         applyLocalSpend(paymentSum);
 
+        const assetLegs = working.flatMap((r) => r.assets ?? []);
+        const assetDisplaySum = wantsAsset
+          ? lines.reduce((s, l) => s + (parseBrlDisplay(l.amountStr) ?? 0), 0)
+          : 0;
+        const amountLabel =
+          wantsAsset && assetDisplaySum > 0
+            ? `−${formatBrlDisplay(assetDisplaySum, { networkId: network.id })}`
+            : undefined;
+
         let activityIdForNotice = txid;
         if (walletId) {
           try {
@@ -1159,6 +1197,12 @@ export function SendScreen() {
               txid,
               address: primaryAddr,
               recipients: working,
+              assets: assetLegs.length
+                ? assetLegs.map((a) => ({
+                    assetId: a.assetId,
+                    amount: a.amount,
+                  }))
+                : undefined,
             });
             // Spend-drop may have returned pending:… while send already resolved.
             if (
@@ -1185,6 +1229,7 @@ export function SendScreen() {
         setBusy(false);
         openFundsSent({
           amount: paymentSum,
+          amountLabel,
           txid: activityIdForNotice,
           address: primaryAddr,
           recipientCount: working.length,

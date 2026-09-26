@@ -10,6 +10,7 @@ export type FundsSentRail = "arkade" | "lightning";
 
 export function FundsSentView({
   amount,
+  amountLabel,
   txid,
   address,
   recipientCount,
@@ -19,6 +20,8 @@ export function FundsSentView({
   onDone,
 }: {
   amount: number;
+  /** Prefers over sats (e.g. "−R$ 2,00"). */
+  amountLabel?: string;
   txid: string;
   address?: string;
   /** When > 1, show "to N addresses" instead of a single address. */
@@ -33,11 +36,14 @@ export function FundsSentView({
   const idLabel = rail === "lightning" ? "hash" : "tx";
   const n = recipientCount != null && recipientCount > 0 ? recipientCount : address ? 1 : 0;
   const showSaveToContacts = Boolean(onSaveToContacts && address && n <= 1);
+  const amountText =
+    amountLabel?.trim() ||
+    `−${Math.abs(amount).toLocaleString("en-US")} sats`;
 
   return (
     <View style={styles.root} collapsable={false}>
       <Text style={styles.title}>FUNDS SENT</Text>
-      <Text style={styles.amount}>−{amount.toLocaleString("en-US")} sats</Text>
+      <Text style={styles.amount}>{amountText}</Text>
       <Text style={styles.caption}>{caption}</Text>
       {n > 1 ? (
         <Text style={styles.meta}>to {n} addresses · one tx</Text>

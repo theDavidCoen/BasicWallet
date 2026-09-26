@@ -11,6 +11,7 @@ import { offchainTxUrl, onchainTxUrl } from "../config/explorers";
 import {
   depixAssetIdForNetwork,
   depixAtomicToDisplay,
+  formatBrlDisplay,
 } from "../fiat/depixAssets";
 import type { BasicWallet } from "./hdWallet";
 
@@ -215,12 +216,7 @@ export function formatActivityAmountSigned(
   if (atomic != null && atomic !== 0n) {
     const abs = atomic < 0n ? -atomic : atomic;
     const sign = atomic > 0n ? "+" : "−";
-    const display = depixAtomicToDisplay(abs);
-    const formatted = display.toLocaleString("pt-BR", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
-    return `${sign}R$ ${formatted}`;
+    return `${sign}${formatBrlDisplay(depixAtomicToDisplay(abs, networkId), { networkId })}`;
   }
   return formatSatsSigned(row.amount);
 }

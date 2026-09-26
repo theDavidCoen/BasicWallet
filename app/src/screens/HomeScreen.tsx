@@ -46,7 +46,7 @@ import { useWallet } from "../wallet/WalletProvider";
 import { formatSatsAmount, formatSatsLabel } from "../wallet/formatSats";
 import { colors } from "../theme/colors";
 import { useFiatMode } from "../fiat/FiatModeProvider";
-import { formatBrlDisplay } from "../fiat/depixAssets";
+import { formatBrlDisplay, stripFiatModeLabelSuffix } from "../fiat/depixAssets";
 
 const MUTINYNET_OK = "#7DCEA0";
 const MUTINYNET_DOWN = "#E07070";
@@ -695,9 +695,16 @@ export function HomeScreen() {
         >
           <View style={styles.flex}>
             <View style={styles.center}>
-              <Text style={styles.walletTag}>
-                {selectedWallet?.label ?? "Personal"}
-              </Text>
+              <View style={styles.walletTagRow}>
+                <Text style={styles.walletTag}>
+                  {stripFiatModeLabelSuffix(selectedWallet?.label ?? "Personal")}
+                </Text>
+                {fiatMode ? (
+                  <View style={styles.fiatModeBadge} accessibilityLabel="Fiat Mode on">
+                    <Text style={styles.fiatModeBadgeLabel}>FIAT MODE</Text>
+                  </View>
+                ) : null}
+              </View>
               <View style={styles.balanceRow}>
                 <Pressable onPress={toggleBalanceHidden} style={styles.balancePress}>
                   <Text
@@ -780,19 +787,19 @@ const styles = StyleSheet.create({
     gap: 6,
     maxWidth: 140,
   },
+  /** Match WalletAvatar (top-left) size/style. */
   fiatModeBtn: {
-    minWidth: 36,
-    minHeight: 36,
-    borderRadius: 18,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.fg,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 8,
   },
   fiatModeBtnLabel: {
     fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 13,
+    fontSize: 12,
     color: colors.fg,
   },
   exitBadgeRow: {
@@ -868,12 +875,32 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: colors.fg,
   },
+  walletTagRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginBottom: 8,
+    flexWrap: "wrap",
+  },
   walletTag: {
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 14,
     color: colors.caption,
     textAlign: "center",
-    marginBottom: 8,
+  },
+  fiatModeBadge: {
+    borderWidth: 1,
+    borderColor: colors.fg,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  fiatModeBadgeLabel: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 10,
+    color: colors.fg,
+    letterSpacing: 0.5,
   },
   fiatHint: {
     fontFamily: "JetBrainsMono_400Regular",

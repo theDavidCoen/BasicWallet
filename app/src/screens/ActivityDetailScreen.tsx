@@ -397,8 +397,13 @@ export function ActivityDetailView({
 
   const isLn = row?.kind === "lightning";
   const isExit = isExitRow(row);
-  const isReceive = (row?.amount ?? 0) > 0;
-  const isSend = (row?.amount ?? 0) < 0;
+  const depixAtomic = row ? activityDepixAtomic(row, network.id) : null;
+  const isReceive =
+    (row?.amount ?? 0) > 0 || (depixAtomic != null && depixAtomic > 0n);
+  const isSend =
+    (row?.amount ?? 0) < 0 ||
+    (depixAtomic != null && depixAtomic < 0n) ||
+    Boolean(row?.tags.includes("brl") && row.title === "Send");
 
   const primaryIds = useMemo(() => {
     if (!row) {
@@ -554,10 +559,9 @@ export function ActivityDetailView({
   const feeCopy =
     primaryIds.feeSats != null ? String(primaryIds.feeSats) : "";
   const dateDisplay = row ? formatWhen(row.createdAt) : "—";
-  const depixAtomic = row ? activityDepixAtomic(row, network.id) : null;
   const amountCopy = row
     ? depixAtomic != null && depixAtomic !== 0n
-      ? String(depixAtomicToDisplay(depixAtomic < 0n ? -depixAtomic : depixAtomic))
+      ? String(depixAtomicToDisplay(depixAtomic < 0n ? -depixAtomic : depixAtomic, network.id))
       : String(Math.abs(row.amount))
     : "";
   const amountDisplay = row ? formatActivityAmountSigned(row, network.id) : "";

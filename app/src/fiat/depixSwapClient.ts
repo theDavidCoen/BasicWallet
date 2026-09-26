@@ -101,7 +101,7 @@ function maxFeeForTake(
 }
 
 /**
- * Run BTC↔DePix exchange. Single-flight; caller must surface loading + Cancel.
+ * Run BTC↔DePix exchange. Single-flight; caller surfaces converting overlay.
  * Resolves when filled or cancelled; rejects on hard errors.
  */
 export async function runDepixExchange(opts: {
@@ -151,7 +151,7 @@ export async function runDepixExchange(opts: {
     onProgress?.({
       phase: "waiting",
       swapId: swap.id,
-      message: "Waiting for fill… You can cancel until filled.",
+      message: "Waiting for fill…",
     });
 
     let settled = false;
@@ -175,7 +175,7 @@ export async function runDepixExchange(opts: {
       const started = Date.now();
       while (!settled) {
         if (signal?.aborted) {
-          onProgress?.({ phase: "waiting", swapId: swap.id, message: "Cancelling…" });
+          onProgress?.({ phase: "waiting", swapId: swap.id, message: "Stopping…" });
           try {
             const { outcome } = await client.cancel(swap.id);
             finalOutcome = String(outcome);
@@ -185,7 +185,7 @@ export async function runDepixExchange(opts: {
           onProgress?.({
             phase: finalOutcome === "filled" ? "filled" : "cancelled",
             swapId: swap.id,
-            message: finalOutcome === "filled" ? "Filled before cancel" : "Cancelled",
+            message: finalOutcome === "filled" ? "Conversion complete" : "Stopped",
           });
           return;
         }
@@ -195,7 +195,7 @@ export async function runDepixExchange(opts: {
           } catch {
             /* ignore */
           }
-          throw new Error("Conversion timed out — cancelled");
+          throw new Error("Conversion timed out");
         }
         await new Promise((r) => setTimeout(r, 500));
       }

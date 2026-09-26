@@ -139,6 +139,10 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
     const [contentH, setContentH] = useState(0);
 
     useEffect(() => {
+      if (!open) setContentH(0);
+    }, [open]);
+
+    useEffect(() => {
       if (!avoidKeyboard || !open) {
         setKeyboardHeight(0);
         return;
@@ -410,7 +414,7 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
             </View>
           </GestureDetector>
           <View
-            style={styles.body}
+            style={[styles.body, fitContent ? styles.bodyFit : null]}
             onLayout={
               fitContent
                 ? (e) => {
@@ -494,5 +498,10 @@ const styles = StyleSheet.create({
   body: {
     flex: 1,
     paddingHorizontal: 16,
+  },
+  /** fitContent must measure intrinsic height — flex:1 would report the sheet slot. */
+  bodyFit: {
+    flex: 0,
+    flexGrow: 0,
   },
 });

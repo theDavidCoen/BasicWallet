@@ -1,13 +1,13 @@
 /**
- * Full-screen converting overlay + Cancel for Fiat Mode swaps.
+ * Full-screen converting overlay for Fiat Mode swaps (no cancel during convert).
  */
 
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Modal, StyleSheet, Text, View } from "react-native";
 import { colors } from "../theme/colors";
 import { useFiatMode } from "./FiatModeProvider";
 
 export function FiatModeConvertingOverlay() {
-  const { converting, convertingMessage, cancelConverting } = useFiatMode();
+  const { converting, convertingMessage } = useFiatMode();
   if (!converting) return null;
   return (
     <Modal visible transparent animationType="fade" statusBarTranslucent>
@@ -16,9 +16,6 @@ export function FiatModeConvertingOverlay() {
           <ActivityIndicator color="#fff" size="large" />
           <Text style={styles.title}>CONVERTING</Text>
           <Text style={styles.msg}>{convertingMessage || "Please wait…"}</Text>
-          <Pressable style={styles.cancel} onPress={cancelConverting}>
-            <Text style={styles.cancelLabel}>Cancel</Text>
-          </Pressable>
         </View>
       </View>
     </Modal>
@@ -56,18 +53,5 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.hint,
     textAlign: "center",
-  },
-  cancel: {
-    marginTop: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-  },
-  cancelLabel: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 13,
-    color: colors.fg,
   },
 });

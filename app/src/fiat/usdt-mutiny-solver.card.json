@@ -3,14 +3,10 @@
   "name": "frenchman",
   "markets": [
     {
-      "base_asset": {
-        "id": "arkade:mutinynet/slip44:1",
-        "name": "Bitcoin",
-        "ticker": "BTC",
-        "decimals": 8
-      },
+      "pair": "BTC/USDT",
+      "base_asset": { "id": "btc", "name": "Bitcoin", "ticker": "BTC", "decimals": 8 },
       "quote_asset": {
-        "id": "arkade:mutinynet/asset:f121ac9b7656797cc68d1e8fecacfbaa2069ec1461edf0bf2f3c37404cb9791a0000",
+        "id": "f121ac9b7656797cc68d1e8fecacfbaa2069ec1461edf0bf2f3c37404cb9791a0000",
         "name": "USDT",
         "ticker": "USDT",
         "decimals": 2
@@ -25,8 +21,7 @@
       "min_base_amount": "330",
       "max_base_amount": "10000000",
       "min_quote_amount": "1",
-      "max_quote_amount": "10000000",
-      "pair": "BTC/USDT"
+      "max_quote_amount": "10000000"
     }
   ]
 }

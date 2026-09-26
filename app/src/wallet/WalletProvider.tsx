@@ -24,6 +24,7 @@ import { getNetworkConfig } from "../config/network";
 import { DEFAULT_MIN_VTXO_SATS } from "./arkMultiSend";
 import { isFiatModeActiveGate } from "../fiat/fiatModeGate";
 import {
+  depixAssetIdForNetwork,
   depixAtomicToDisplay,
   sumDesignatedAssetAtomic,
 } from "../fiat/depixAssets";
@@ -87,6 +88,7 @@ import { getAccountDb } from "../account/accountDb";
 import {
   clearOpenWallet,
   getOpenWallet,
+  getOpenWalletMode,
   openHdWalletFromKeystore,
   runWalletRestore,
   consumeRestorePending,
@@ -195,6 +197,11 @@ type WalletContextValue = {
   bootstrapExisting: () => Promise<void>;
   /** After factoryResetWipeDevice — clear in-memory wallet state. */
   applyFactoryReset: () => Promise<void>;
+  /**
+   * Fiat Mode: single static receive address while on; restore HD on Exit.
+   * Disposes and reopens the selected Arkade engine (same mnemonic / storage).
+   */
+  reopenWithWalletMode: (mode: "hd" | "static") => Promise<void>;
   avatarLabel: string;
 };
 
@@ -2139,6 +2146,39 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     await clearWarmupSeen();
   }, []);
 
+  const reopenWithWalletMode = useCallback(
+    async (mode: "hd" | "static") => {
+      const walletId = selectedIdRef.current;
+      if (!walletId) return;
+      if (getOpenWalletMode() === mode && getOpenWallet()) {
+        return;
+      }
+      console.warn("[basic] reopenWithWalletMode", mode);
+      openSyncQuietRef.current = true;
+      suppressIncomingUntilRef.current = Date.now() + 15_000;
+      try {
+        clearOpenWallet();
+        setWallet(null);
+        const w = await openHdWalletFromKeystore(walletId, {
+          runRestore: mode === "hd",
+          walletMode: mode,
+        });
+        if (selectedIdRef.current !== walletId) {
+          clearOpenWallet();
+          return;
+        }
+        setWallet(w);
+        await syncReceiveAddresses(w);
+        await reloadWallet(w, walletId);
+      } catch (e) {
+        console.warn("[basic] reopenWithWalletMode failed", e);
+      } finally {
+        openSyncQuietRef.current = false;
+      }
+    },
+    [reloadWallet, syncReceiveAddresses],
+  );
+
   useEffect(() => {
     void bootstrapExisting();
   }, [bootstrapExisting]);
@@ -2227,6 +2267,20 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                       assetAtomic: String(assetAtomic),
                       sats: amount,
                     });
+                    try {
+                      recordOptimisticArkadeReceive(getNetworkConfig().id, walletId, {
+                        amountSats: 0,
+                        assets: [
+                          {
+                            assetId: depixAssetIdForNetwork(networkId),
+                            amount: assetAtomic,
+                          },
+                        ],
+                      });
+                      setActivityEpoch((n) => n + 1);
+                    } catch (e) {
+                      console.warn("[basic] optimistic fiat recv activity failed", e);
+                    }
                   }
                 }
               }
@@ -2412,6 +2466,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       refreshWalletList,
       bootstrapExisting,
       applyFactoryReset,
+      reopenWithWalletMode,
       avatarLabel,
     }),
     [
@@ -2460,6 +2515,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       refreshWalletList,
       bootstrapExisting,
       applyFactoryReset,
+      reopenWithWalletMode,
       avatarLabel,
     ],
   );
