@@ -1,9 +1,10 @@
 /**
  * Enter Fiat Mode body for InteractiveBottomSheet (Home).
- * Intrinsic height (no flex:1 ScrollView) so fitContent sheets stay compact.
+ * Scrollable copy + sticky Confirm/Cancel so fee card / buttons never clip
+ * (fitContent was flaky — empty gap / cut fee card).
  */
 
-import { StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { Pressable } from "react-native-gesture-handler";
 import { getNetworkConfig } from "../config/network";
 import { colors } from "../theme/colors";
@@ -35,67 +36,84 @@ export function FiatModeEnterSheetContent({
 
   return (
     <View style={styles.root}>
-      <Text style={sheetUi.title}>Enter Fiat Mode</Text>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        bounces={false}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <Text style={sheetUi.title}>Enter Fiat Mode</Text>
 
-      {!swapOk ? (
-        <Text style={[styles.body, styles.warn]}>
-          No stable swap card is pinned for this network. Switch network in
-          Settings to use Fiat Mode.
-        </Text>
-      ) : (
-        <>
-          <Text style={styles.body}>
-            Fiat Mode keeps your balance in {unitName} instead of bitcoin.
+        {!swapOk ? (
+          <Text style={[styles.body, styles.warn]}>
+            No stable swap card is pinned for this network. Switch network in
+            Settings to use Fiat Mode.
           </Text>
-          <Text style={styles.body}>
-            When you turn it on, your sats are converted to {shortName} so everyday
-            spending feels familiar: prices stay steady while you still use Bitcoin
-            under the hood.
-          </Text>
-          <Text style={styles.body}>
-            You can leave Fiat Mode whenever you want and go back to sats.
-          </Text>
-          <Text style={styles.body}>No KYC is applied!</Text>
+        ) : (
+          <>
+            <Text style={styles.body}>
+              Fiat Mode keeps your balance in {unitName} instead of bitcoin.
+            </Text>
+            <Text style={styles.body}>
+              When you turn it on, your sats are converted to {shortName} so everyday
+              spending feels familiar: prices stay steady while you still use Bitcoin
+              under the hood.
+            </Text>
+            <Text style={styles.body}>
+              You can leave Fiat Mode whenever you want and go back to sats.
+            </Text>
+            <Text style={styles.body}>No KYC is applied!</Text>
 
-          <View style={styles.feeCard}>
-            <Text style={styles.feeTitle}>What it costs to switch</Text>
-            <Text style={styles.feeLine}>About {feePct}% conversion fee</Text>
-            <Text style={styles.feeLine}>Minimum {minSats} sats</Text>
-          </View>
+            <View style={styles.feeCard}>
+              <Text style={styles.feeTitle}>What it costs to switch</Text>
+              <Text style={styles.feeLine}>About {feePct}% conversion fee</Text>
+              <Text style={styles.feeLine}>Minimum {minSats} sats</Text>
+            </View>
 
-          <Text style={styles.available}>
-            Available now: {availableSats.toLocaleString("en-US")} sats
-          </Text>
-        </>
-      )}
+            <Text style={styles.available}>
+              Available now: {availableSats.toLocaleString("en-US")} sats
+            </Text>
+          </>
+        )}
+      </ScrollView>
 
-      {swapOk ? (
+      <View style={styles.actions}>
+        {swapOk ? (
+          <Pressable
+            style={sheetUi.primaryBtn}
+            onPress={onConfirm}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Confirm Enter Fiat Mode"
+          >
+            <Text style={sheetUi.primaryBtnText}>Confirm</Text>
+          </Pressable>
+        ) : null}
         <Pressable
-          style={sheetUi.primaryBtn}
-          onPress={onConfirm}
+          style={styles.secondaryBtn}
+          onPress={onCancel}
           hitSlop={8}
           accessibilityRole="button"
-          accessibilityLabel="Confirm Enter Fiat Mode"
+          accessibilityLabel="Cancel"
         >
-          <Text style={sheetUi.primaryBtnText}>Confirm</Text>
+          <Text style={sheetUi.secondaryBtnText}>{swapOk ? "Cancel" : "Close"}</Text>
         </Pressable>
-      ) : null}
-      <Pressable
-        style={styles.secondaryBtn}
-        onPress={onCancel}
-        hitSlop={8}
-        accessibilityRole="button"
-        accessibilityLabel="Cancel"
-      >
-        <Text style={sheetUi.secondaryBtnText}>{swapOk ? "Cancel" : "Close"}</Text>
-      </Pressable>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: {
-    paddingBottom: 8,
+    flex: 1,
+  },
+  scroll: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 12,
+    flexGrow: 1,
   },
   body: {
     fontFamily: "JetBrainsMono_400Regular",
@@ -139,7 +157,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.hint,
     textAlign: "center",
-    marginBottom: 8,
+    marginBottom: 4,
+  },
+  actions: {
+    paddingTop: 4,
+    paddingBottom: 8,
   },
   secondaryBtn: {
     ...sheetUi.secondaryBtn,

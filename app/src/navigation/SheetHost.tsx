@@ -1271,10 +1271,10 @@ export function SheetHost({ children }: { children: ReactNode }) {
           ref={fiatModeRef}
           open={fiatModeSheet != null}
           onDismiss={clearFiatModeSheet}
-          // Fit-to-content anchored at bottom (Enter/Exit). Cap height so
-          // intrinsic measure never expands to a tall empty void.
-          visibleFraction={fiatModeSheet === "exit" ? 0.55 : 0.72}
-          fitContent
+          // Fixed fractions + ScrollView bodies (sticky Confirm/Cancel).
+          // fitContent was flaky: clipped fee card / empty mid gap on Mutinynet.
+          visibleFraction={fiatModeSheet === "exit" ? 0.55 : 0.88}
+          fitContent={false}
         >
           {fiatModeSheet === "enter" ? (
             <FiatModeEnterSheetContent
