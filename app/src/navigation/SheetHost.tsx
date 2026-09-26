@@ -303,7 +303,11 @@ export function SheetHost({ children }: { children: ReactNode }) {
   }, []);
 
   const dismissActivityAnimated = useCallback(() => {
-    activityRef.current?.dismiss() ?? dismissActivity();
+    if (activityRef.current) {
+      activityRef.current.dismiss();
+    } else {
+      dismissActivity();
+    }
   }, [dismissActivity]);
 
   /** Same idea as popWalletStep: walk Activity sheet steps before closing. */
@@ -320,11 +324,19 @@ export function SheetHost({ children }: { children: ReactNode }) {
   }, [activityOpen, activityStep, dismissActivityAnimated]);
 
   const dismissWalletAnimated = useCallback(() => {
-    walletRef.current?.dismiss() ?? dismissWalletSwitcher();
+    if (walletRef.current) {
+      walletRef.current.dismiss();
+    } else {
+      dismissWalletSwitcher();
+    }
   }, [dismissWalletSwitcher]);
 
   const dismissPosAnimated = useCallback(() => {
-    posRef.current?.dismiss() ?? dismissPosSheet();
+    if (posRef.current) {
+      posRef.current.dismiss();
+    } else {
+      dismissPosSheet();
+    }
   }, [dismissPosSheet]);
 
   const dismissScanAnimated = useCallback(() => {
@@ -370,6 +382,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
     setPosSkipEnter(false);
     setScanOpen(false);
     setScanSkipEnter(false);
+    // Instant clear — never leave Fiat sheet mid-spring over Activity.
     setFiatModeSheet(null);
     closeNoticeSheets(
       setFundsSentOpen,
@@ -471,7 +484,13 @@ export function SheetHost({ children }: { children: ReactNode }) {
 
   const dismissFiatModeSheet = useCallback(() => {
     if (fiatModeSheet == null) return;
-    fiatModeRef.current?.dismiss() ?? setFiatModeSheet(null);
+    // Do NOT use `dismiss() ?? setNull` — dismiss returns void, so ?? always
+    // cleared kind immediately and left a grabber-only sheet mid-spring.
+    if (fiatModeRef.current) {
+      fiatModeRef.current.dismiss();
+    } else {
+      setFiatModeSheet(null);
+    }
   }, [fiatModeSheet]);
 
   const openFiatModeEnter = useCallback(() => {
