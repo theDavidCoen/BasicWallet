@@ -189,9 +189,16 @@ export const InteractiveBottomSheet = forwardRef<InteractiveBottomSheetRef, Prop
       sheetPaddingBottom = 8;
     } else if (fitContent && contentH > 0) {
       const fitted = Math.min(maxVisibleH, contentH + chromeExtra);
-      const minH = Math.max(180, fitted);
-      sheetHeight = minH;
-      resolvedOpenY = Math.max(insets.top + 12, windowHeight - minH);
+      // No artificial 180 floor — short confirm sheets should hug content.
+      sheetHeight = Math.max(120, fitted);
+      resolvedOpenY = Math.max(insets.top + 12, windowHeight - sheetHeight);
+      sheetPaddingBottom = bottomPad;
+    } else if (fitContent) {
+      // Before first layout: park near bottom at a modest provisional height
+      // so we never flash a tall empty void (then shrink on measure).
+      const provisional = Math.min(maxVisibleH, Math.max(220, windowHeight * 0.35));
+      sheetHeight = provisional;
+      resolvedOpenY = Math.max(insets.top + 12, windowHeight - provisional);
       sheetPaddingBottom = bottomPad;
     } else {
       resolvedOpenY = Math.max(

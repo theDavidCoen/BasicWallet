@@ -40,6 +40,7 @@ import {
 import {
   quietFiatEnterNotices,
   quietFiatExitNotices,
+  registerFiatDepixOptimistic,
   setFiatModeActiveGate,
 } from "./fiatModeGate";
 import {
@@ -65,6 +66,11 @@ type FiatModeContextValue = {
   depixDisplay: number | null;
   /** ≈ sats estimate from BRL using last known spot (optional). */
   satsEstimate: number | null;
+  /**
+   * After Exit conversion: expected sats not yet reflected in live Home balance.
+   * Cleared when balanceSats catches up (or timeout).
+   */
+  pendingExitSats: number | null;
   feeBps: number;
   minEnterSats: number;
   /**
@@ -77,6 +83,10 @@ type FiatModeContextValue = {
   cancelConverting: () => void;
   /** Refresh DePix balance from live wallet.getBalance().assets. */
   refreshDepixBalance: () => Promise<void>;
+  /** Optimistic DePix spend so Home does not flash 0 while ASP settles. */
+  applyLocalDepixSpend: (displayAmount: number) => void;
+  /** Optimistic DePix receive so Home updates with the Funds Received notice. */
+  applyLocalDepixReceive: (displayAmount: number) => void;
   /** After inbound sats while in fiat mode — swap to DePix (non-blocking job). */
   maybeAutoSwapInboundSats: (sats: number) => void;
   /** Convert DePix → BTC then return; used by Send for sats destinations. */
@@ -122,11 +132,18 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const [convertingMessage, setConvertingMessage] = useState("");
   const [depixDisplay, setDepixDisplay] = useState<number | null>(null);
   const [btcBrl, setBtcBrl] = useState<number | null>(null);
+  const [pendingExitSats, setPendingExitSats] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const activeSwapIdRef = useRef<string | null>(null);
   const walletIdRef = useRef<string | null>(null);
   const lastSatsRef = useRef<number | null>(null);
   const lastDepixRef = useRef<number | null>(null);
+  /** Floor while a local spend/receive is settling — ignore transient empty/overshoot polls. */
+  const optimisticDepixRef = useRef<number | null>(null);
+  const optimisticDepixUntilRef = useRef(0);
+  /** Sats expected on Home after Exit fill (pre-exit sats + swap proceeds). */
+  const pendingExitTargetRef = useRef<number | null>(null);
+  const pendingExitClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const networkId = getNetworkConfig().id;
   const walletId = selectedWallet?.kind === "arkade" ? selectedWallet.id : null;
@@ -149,19 +166,84 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     };
   }, [networkId, walletId]);
 
+  const clearOptimisticDepix = useCallback(() => {
+    optimisticDepixRef.current = null;
+    optimisticDepixUntilRef.current = 0;
+  }, []);
+
+  const applyLocalDepixSpend = useCallback((displayAmount: number) => {
+    const spend = Number(displayAmount);
+    if (!(spend > 0)) return;
+    setDepixDisplay((prev) => {
+      const base = prev ?? 0;
+      const next = Math.max(0, Math.round((base - spend) * 100) / 100);
+      optimisticDepixRef.current = next;
+      optimisticDepixUntilRef.current = Date.now() + 20_000;
+      lastDepixRef.current = next;
+      console.warn("[basic] applyLocalDepixSpend", { spend, next });
+      return next;
+    });
+  }, []);
+
+  const applyLocalDepixReceive = useCallback((displayAmount: number) => {
+    const add = Number(displayAmount);
+    if (!(add > 0)) return;
+    setDepixDisplay((prev) => {
+      const base = prev ?? 0;
+      const next = Math.round((base + add) * 100) / 100;
+      optimisticDepixRef.current = next;
+      optimisticDepixUntilRef.current = Date.now() + 20_000;
+      lastDepixRef.current = next;
+      console.warn("[basic] applyLocalDepixReceive", { add, next });
+      return next;
+    });
+  }, []);
+
   const refreshDepixBalance = useCallback(async () => {
     if (!wallet || !walletId) {
       setDepixDisplay(null);
+      clearOptimisticDepix();
       return;
     }
     try {
       const raw = await wallet.getBalance();
       const atomic = readDepixAtomicFromBalance(raw, depixAssetIdForNetwork(networkId));
-      setDepixDisplay(depixAtomicToDisplay(atomic, networkId));
+      const live = depixAtomicToDisplay(atomic, networkId);
+      const opt = optimisticDepixRef.current;
+      const hold =
+        opt != null && Date.now() < optimisticDepixUntilRef.current;
+      if (hold && opt != null) {
+        // Transient empty after asset send — keep optimistic floor.
+        if (live + 1e-8 < opt && live < 0.01 && opt >= 0.01) {
+          console.warn("[basic] depix poll ignore empty live", { live, opt });
+          return;
+        }
+        // Transient overshoot (double-count / unsettled vtxos) — keep optimistic.
+        if (live > opt + 0.05) {
+          console.warn("[basic] depix poll ignore overshoot", { live, opt });
+          return;
+        }
+        // Live caught up to optimistic (±0.02) — adopt and clear hold.
+        if (Math.abs(live - opt) <= 0.02) {
+          clearOptimisticDepix();
+          setDepixDisplay(live);
+          return;
+        }
+        // Live slightly below optimistic (fee dust) — adopt when close.
+        if (live >= opt - 0.05 && live <= opt) {
+          clearOptimisticDepix();
+          setDepixDisplay(live);
+          return;
+        }
+        // Still settling — keep showing optimistic.
+        return;
+      }
+      clearOptimisticDepix();
+      setDepixDisplay(live);
     } catch (e) {
       console.warn("[basic] depix balance read failed", e);
     }
-  }, [wallet, walletId, networkId]);
+  }, [wallet, walletId, networkId, clearOptimisticDepix]);
 
   useEffect(() => {
     if (!state?.fiatMode || !wallet) return;
@@ -259,14 +341,38 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
           if (kind === "enter") {
             // No BRL Funds Received for the enter swap itself.
             quietFiatEnterNotices(60_000);
+            clearOptimisticDepix();
             await patchState({
               fiatMode: true,
               pendingJob: null,
               lastSwapId: result.swapId,
             });
           } else if (kind === "exit") {
-            // No sats Funds Received for the exit swap itself.
-            quietFiatExitNotices(60_000);
+            // No sats Funds Received for the exit swap itself (incl. 330 dust).
+            quietFiatExitNotices(90_000);
+            const preExitSats = balanceSats ?? 0;
+            const exitBrl = depixDisplay ?? 0;
+            const spot = btcBrl;
+            const estimatedRaw =
+              exitBrl > 0 && spot != null && spot > 0
+                ? brlToSatsEstimate(exitBrl, spot)
+                : null;
+            const estimatedProceeds = estimatedRaw ?? 0;
+            // Show pending until live Home balance catches up (avoid 990→4606 flash confusion).
+            const target = Math.max(preExitSats, estimatedProceeds);
+            if (target > preExitSats + 10) {
+              pendingExitTargetRef.current = target;
+              setPendingExitSats(Math.max(0, target - preExitSats));
+              if (pendingExitClearTimerRef.current) {
+                clearTimeout(pendingExitClearTimerRef.current);
+              }
+              pendingExitClearTimerRef.current = setTimeout(() => {
+                pendingExitTargetRef.current = null;
+                setPendingExitSats(null);
+              }, 90_000);
+            }
+            clearOptimisticDepix();
+            setDepixDisplay(null);
             await patchState({
               fiatMode: false,
               pendingJob: null,
@@ -310,6 +416,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       networkId,
       refresh,
       refreshDepixBalance,
+      clearOptimisticDepix,
+      balanceSats,
+      depixDisplay,
+      btcBrl,
     ],
   );
 
@@ -412,6 +522,32 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     [depixDisplay, runJob, networkId],
   );
 
+  // Clear "+ x sats pending" once live balance catches the exit target.
+  useEffect(() => {
+    const target = pendingExitTargetRef.current;
+    if (target == null || balanceSats == null) return;
+    if (balanceSats >= target - 2) {
+      pendingExitTargetRef.current = null;
+      setPendingExitSats(null);
+      if (pendingExitClearTimerRef.current) {
+        clearTimeout(pendingExitClearTimerRef.current);
+        pendingExitClearTimerRef.current = null;
+      }
+      return;
+    }
+    // Still settling — refresh pending delta so the hint tracks.
+    const pending = Math.max(0, target - balanceSats);
+    setPendingExitSats(pending > 10 ? pending : null);
+  }, [balanceSats]);
+
+  useEffect(() => {
+    return () => {
+      if (pendingExitClearTimerRef.current) {
+        clearTimeout(pendingExitClearTimerRef.current);
+      }
+    };
+  }, []);
+
   const fiatMode = Boolean(state?.fiatMode);
   const status: FiatModeStatus = converting
     ? "converting"
@@ -423,6 +559,14 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     setFiatModeActiveGate(fiatMode);
     return () => setFiatModeActiveGate(false);
   }, [fiatMode]);
+
+  useEffect(() => {
+    registerFiatDepixOptimistic({
+      spend: applyLocalDepixSpend,
+      receive: applyLocalDepixReceive,
+    });
+    return () => registerFiatDepixOptimistic(null);
+  }, [applyLocalDepixSpend, applyLocalDepixReceive]);
 
   // Track DePix balance for Home; do NOT toast from poll deltas.
   // BRL Funds Received comes only from notifyIncomingFunds (has vtxo txid).
@@ -454,12 +598,15 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       convertingMessage,
       depixDisplay: fiatMode ? depixDisplay : null,
       satsEstimate: fiatMode ? satsEstimate : null,
+      pendingExitSats: fiatMode ? null : pendingExitSats,
       feeBps: fiatFeeBps(networkId),
       minEnterSats: fiatMinBaseSats(networkId),
       confirmEnter,
       confirmExit,
       cancelConverting,
       refreshDepixBalance,
+      applyLocalDepixSpend,
+      applyLocalDepixReceive,
       maybeAutoSwapInboundSats,
       convertDepixToSatsForPay,
     }),
@@ -470,10 +617,13 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       convertingMessage,
       depixDisplay,
       satsEstimate,
+      pendingExitSats,
       confirmEnter,
       confirmExit,
       cancelConverting,
       refreshDepixBalance,
+      applyLocalDepixSpend,
+      applyLocalDepixReceive,
       maybeAutoSwapInboundSats,
       convertDepixToSatsForPay,
       networkId,

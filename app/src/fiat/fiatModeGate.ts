@@ -5,6 +5,9 @@
  * Conversion quiet: after Enter, suppress BRL receive toasts for the swap fill;
  * after Exit, suppress sats receive toasts for the swap fill. Real inbound
  * payments outside that window still toast.
+ *
+ * Optimistic DePix: FiatModeProvider registers spend/receive so WalletProvider /
+ * Send can update Home without waiting for getBalance (avoids flash 0 / overshoot).
  */
 
 let active = false;
@@ -12,6 +15,13 @@ let active = false;
 let suppressBrlUntil = 0;
 /** Epoch ms — suppress arkade/sats FundsReceived (exit swap fill). */
 let suppressSatsUntil = 0;
+
+type DepixOptimisticHandlers = {
+  spend: (displayAmount: number) => void;
+  receive: (displayAmount: number) => void;
+};
+
+let depixOptimistic: DepixOptimisticHandlers | null = null;
 
 export function setFiatModeActiveGate(on: boolean): void {
   active = Boolean(on);
@@ -37,4 +47,20 @@ export function shouldSuppressFiatEnterBrlNotice(): boolean {
 
 export function shouldSuppressFiatExitSatsNotice(): boolean {
   return Date.now() < suppressSatsUntil;
+}
+
+export function registerFiatDepixOptimistic(
+  handlers: DepixOptimisticHandlers | null,
+): void {
+  depixOptimistic = handlers;
+}
+
+export function optimisticDepixSpend(displayAmount: number): void {
+  if (!(displayAmount > 0)) return;
+  depixOptimistic?.spend(displayAmount);
+}
+
+export function optimisticDepixReceive(displayAmount: number): void {
+  if (!(displayAmount > 0)) return;
+  depixOptimistic?.receive(displayAmount);
 }

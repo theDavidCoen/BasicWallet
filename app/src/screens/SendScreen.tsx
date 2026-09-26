@@ -232,7 +232,7 @@ export function SendScreen() {
     wallets,
     bumpActivity,
   } = useWallet();
-  const { fiatMode, convertDepixToSatsForPay, depixDisplay } = useFiatMode();
+  const { fiatMode, convertDepixToSatsForPay, depixDisplay, applyLocalDepixSpend } = useFiatMode();
   const network = getNetworkConfig();
   const depixAssetId = depixAssetIdForNetwork(network.id);
   /** Lightning path still uses flat address/amount. */
@@ -1182,6 +1182,9 @@ export function SendScreen() {
         const assetDisplaySum = wantsAsset
           ? lines.reduce((s, l) => s + (parseBrlDisplay(l.amountStr) ?? 0), 0)
           : 0;
+        if (wantsAsset && assetDisplaySum > 0) {
+          applyLocalDepixSpend(assetDisplaySum);
+        }
         const amountLabel =
           wantsAsset && assetDisplaySum > 0
             ? `−${formatBrlDisplay(assetDisplaySum, { networkId: network.id })}`

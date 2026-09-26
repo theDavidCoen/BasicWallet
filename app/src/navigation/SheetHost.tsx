@@ -464,9 +464,15 @@ export function SheetHost({ children }: { children: ReactNode }) {
     setSaveContactOpen(true);
   }, []);
 
-  const dismissFiatModeSheet = useCallback(() => {
+  /** Clear kind only after spring dismiss so the sheet never shows an empty body. */
+  const clearFiatModeSheet = useCallback(() => {
     setFiatModeSheet(null);
   }, []);
+
+  const dismissFiatModeSheet = useCallback(() => {
+    if (fiatModeSheet == null) return;
+    fiatModeRef.current?.dismiss() ?? setFiatModeSheet(null);
+  }, [fiatModeSheet]);
 
   const openFiatModeEnter = useCallback(() => {
     if (selectedWallet?.kind !== "arkade" || fiatMode || converting) return;
@@ -881,6 +887,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
       dismissFundsReceived,
       dismissFundsSent,
       dismissFiatModeSheet,
+      clearFiatModeSheet,
       dismissPosSheet,
       dismissScanSheet,
       activitySheetRef: activityRef,
@@ -921,6 +928,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
       dismissAddWallet,
       dismissConnectNode,
       dismissFiatModeSheet,
+      clearFiatModeSheet,
       dismissFundsReceived,
       dismissFundsSent,
       dismissImportWallet,
@@ -984,10 +992,13 @@ export function SheetHost({ children }: { children: ReactNode }) {
           motion={activityMotion}
           onDismiss={dismissActivity}
         >
-          {activityStep === "list" ? (
+          {activityStep === "list" ||
+          (activityStep === "detail" &&
+            !(activityDetailId && activityDetailWalletId)) ? (
             <ActivitySheetContent
               active={activityOpen && activityStep === "list"}
               onOpenDetail={(activityId, walletId) => {
+                if (!activityId || !walletId) return;
                 setActivityDetailId(activityId);
                 setActivityDetailWalletId(walletId);
                 setActivityStep("detail");
@@ -1082,6 +1093,24 @@ export function SheetHost({ children }: { children: ReactNode }) {
             />
           ) : null}
 
+          {/* Stale step without payload — never leave a blank grabber sheet. */}
+          {walletStep === "edit" && !editWalletId ? (
+            <WalletSwitcherSheetContent
+              onClose={dismissWalletSwitcher}
+              onAddWallet={() => {
+                setWalletStep("add");
+              }}
+              onEditWallet={(walletId) => {
+                setEditWalletId(walletId);
+                setWalletStep("edit");
+              }}
+              onConnectNode={() => {
+                setNodeStatusPayload(null);
+                setWalletStep("connect-menu");
+              }}
+            />
+          ) : null}
+
           {walletStep === "add" ? (
             <AddWalletSheetContent
               open={addWalletOpen}
@@ -1153,6 +1182,16 @@ export function SheetHost({ children }: { children: ReactNode }) {
               }}
             />
           ) : null}
+
+          {walletStep === "connect-status" && !nodeStatusPayload ? (
+            <ConnectNodeSheetContent
+              onSelect={(dest) => {
+                setWalletStep(
+                  dest === "lndhub" ? "connect-lndhub" : "connect-btcpay",
+                );
+              }}
+            />
+          ) : null}
         </InteractiveBottomSheet>
 
         <FundsNoticeOverlay open={fundsSentOpen}>
@@ -1212,11 +1251,11 @@ export function SheetHost({ children }: { children: ReactNode }) {
         <InteractiveBottomSheet
           ref={fiatModeRef}
           open={fiatModeSheet != null}
-          onDismiss={dismissFiatModeSheet}
-          // Enter: tall explainer. Exit: fixed compact height (fitContent was
-          // flaky — sometimes measured full flex slot → "tutto alto").
-          visibleFraction={fiatModeSheet === "exit" ? 0.42 : 0.88}
-          fitContent={false}
+          onDismiss={clearFiatModeSheet}
+          // Fit-to-content anchored at bottom (Enter/Exit). Cap height so
+          // intrinsic measure never expands to a tall empty void.
+          visibleFraction={fiatModeSheet === "exit" ? 0.55 : 0.72}
+          fitContent
         >
           {fiatModeSheet === "enter" ? (
             <FiatModeEnterSheetContent

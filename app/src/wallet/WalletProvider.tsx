@@ -22,7 +22,7 @@ import {
 } from "../account/walletRegistry";
 import { getNetworkConfig } from "../config/network";
 import { DEFAULT_MIN_VTXO_SATS } from "./arkMultiSend";
-import { isFiatModeActiveGate, shouldSuppressFiatEnterBrlNotice, shouldSuppressFiatExitSatsNotice } from "../fiat/fiatModeGate";
+import { isFiatModeActiveGate, optimisticDepixReceive, shouldSuppressFiatEnterBrlNotice, shouldSuppressFiatExitSatsNotice } from "../fiat/fiatModeGate";
 import {
   depixAssetIdForNetwork,
   depixAtomicToDisplay,
@@ -680,6 +680,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     opts?: { bypassSendSuppress?: boolean },
   ): "shown" | "busy" | "blocked" => {
     if (amount <= 0) return "busy";
+    // After Exit Fiat Mode: suppress sats/boarding toasts for the swap fill
+    // (incl. 330 dust). Must live here — gate is off so dust carrier check misses.
+    if (
+      (kind === "arkade" || kind === "boarding") &&
+      shouldSuppressFiatExitSatsNotice()
+    ) {
+      console.warn("[basic] fundsNotice suppressed (exit-swap quiet)", kind, amount);
+      return "busy";
+    }
     // Fiat Mode: DePix arrives on a 330-sat carrier VTXO — never toast that dust
     // as a sats receive (BRL notice is emitted from FiatModeProvider).
     if (
@@ -688,6 +697,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       amount <= DEFAULT_MIN_VTXO_SATS
     ) {
       console.warn("[basic] fundsNotice suppressed (fiat dust carrier)", amount);
+      return "busy";
+    }
+    // Enter Fiat Mode: suppress BRL toast for the enter swap fill itself.
+    if (kind === "brl" && shouldSuppressFiatEnterBrlNotice()) {
+      console.warn("[basic] fundsNotice suppressed (enter-swap quiet)", amount);
       return "busy";
     }
     // Only while bio/PIN sheet is open — not AppLock grace (that ate POS notices).
@@ -2298,6 +2312,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                       bypassSendSuppress: expectingReceive,
                     });
                     if (shown === "shown") {
+                      optimisticDepixReceive(display);
                       const assetVtxo = vtxos.find((c) =>
                         (c.assets ?? []).some(
                           (a) =>

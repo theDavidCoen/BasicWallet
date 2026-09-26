@@ -1,8 +1,9 @@
 /**
  * Enter Fiat Mode body for InteractiveBottomSheet (Home).
+ * Intrinsic height (no flex:1 ScrollView) so fitContent sheets stay compact.
  */
 
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { Pressable } from "react-native-gesture-handler";
 import { getNetworkConfig } from "../config/network";
 import { colors } from "../theme/colors";
@@ -33,13 +34,7 @@ export function FiatModeEnterSheetContent({
   const shortName = stable.displayCode;
 
   return (
-    <ScrollView
-      style={styles.scroll}
-      contentContainerStyle={styles.content}
-      bounces={false}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-    >
+    <View style={styles.root}>
       <Text style={sheetUi.title}>Enter Fiat Mode</Text>
 
       {!swapOk ? (
@@ -94,15 +89,12 @@ export function FiatModeEnterSheetContent({
       >
         <Text style={sheetUi.secondaryBtnText}>{swapOk ? "Cancel" : "Close"}</Text>
       </Pressable>
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: {
-    flex: 1,
-  },
-  content: {
+  root: {
     paddingBottom: 8,
   },
   body: {

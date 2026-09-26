@@ -85,6 +85,7 @@ export function HomeScreen() {
     fiatMode,
     depixDisplay,
     satsEstimate,
+    pendingExitSats,
   } = useFiatMode();
   const { activeCount, pendingSweep, refreshPendingSweep } = useExitJobs();
   const {
@@ -730,6 +731,14 @@ export function HomeScreen() {
               {secondaryBalance ? (
                 <Text style={styles.fiatHint}>{secondaryBalance}</Text>
               ) : null}
+              {!fiatMode && pendingExitSats != null && pendingExitSats > 0 ? (
+                <Text
+                  style={styles.pendingExitHint}
+                  accessibilityLabel={`${pendingExitSats} sats pending`}
+                >
+                  {`+ ${pendingExitSats.toLocaleString("en-US")} sats pending`}
+                </Text>
+              ) : null}
               {statusHint ? <Text style={styles.statusHint}>{statusHint}</Text> : null}
 
               <View style={styles.actions}>
@@ -909,6 +918,13 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 6,
     minHeight: 18,
+  },
+  pendingExitHint: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.caption,
+    textAlign: "center",
+    marginTop: 4,
   },
   statusHint: {
     fontFamily: "JetBrainsMono_400Regular",
