@@ -24,6 +24,7 @@ import {
   decodeWireEnvelope,
   decryptPairPayload,
   generatePairEphemeralKeypair,
+  type PairEphemeralKeypair,
 } from "../pair/pairProtocol";
 import { useWallet } from "../wallet/WalletProvider";
 
@@ -65,11 +66,14 @@ export function OnboardingCreateScreen() {
   const [pairInfoOpen, setPairInfoOpen] = useState(false);
   const [pairStatus, setPairStatus] = useState("Waiting for nearby device…");
   const [pairBusy, setPairBusy] = useState(false);
-  const [pairArmed, setPairArmed] = useState(false);
+  const [lobbyId, setLobbyId] = useState<string | null>(null);
+  const [sessionKey, setSessionKey] = useState(0);
+  const ephRef = useRef<PairEphemeralKeypair | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (!pairArmed) return;
+    if (!pairInfoOpen || !ephRef.current || sessionKey === 0) return;
+    const eph = ephRef.current;
 
     let cancelled = false;
     const ac = new AbortController();
@@ -78,8 +82,6 @@ export function OnboardingCreateScreen() {
     void (async () => {
       setPairBusy(true);
       try {
-        const eph = await generatePairEphemeralKeypair();
-        if (cancelled) return;
         setPairStatus("Waiting for nearby device…");
         const wire = await runRequesterBleSession({
           lobbyHash8: eph.lobbyHash8,
@@ -108,10 +110,9 @@ export function OnboardingCreateScreen() {
         navigation.reset({ index: 0, routes: [{ name: "Home" }] });
       } catch (e) {
         if (cancelled || ac.signal.aborted) return;
-        // Stay on onboarding — user can still Continue / Restore. Soft status only.
         setPairStatus(
-          e instanceof Error && /permission/i.test(e.message)
-            ? "Bluetooth permission needed to pair nearby"
+          e instanceof Error
+            ? e.message
             : "Waiting for nearby device…",
         );
       } finally {
@@ -124,16 +125,32 @@ export function OnboardingCreateScreen() {
       ac.abort();
       void cancelPairBle();
     };
-  }, [pairArmed, beginQuietImportSync, navigation, selectWallet]);
+  }, [pairInfoOpen, sessionKey, beginQuietImportSync, navigation, selectWallet]);
 
   async function openPairInfo() {
     setPairInfoOpen(true);
     const ok = await ensureBlePermissions();
     if (!ok) {
+      setLobbyId(null);
       setPairStatus("Bluetooth permission needed to pair nearby");
       return;
     }
-    setPairArmed(true);
+    try {
+      const eph = await generatePairEphemeralKeypair();
+      ephRef.current = eph;
+      setLobbyId(eph.lobbyId);
+      setPairStatus("Waiting for nearby device…");
+      setSessionKey((k) => k + 1);
+    } catch (e) {
+      setLobbyId(null);
+      setPairStatus(e instanceof Error ? e.message : "Could not start pairing");
+    }
+  }
+
+  function dismissPairInfo() {
+    setPairInfoOpen(false);
+    abortRef.current?.abort();
+    void cancelPairBle();
   }
 
   async function goCreate(continueTo: OnboardingContinueTo) {
@@ -247,18 +264,29 @@ export function OnboardingCreateScreen() {
 
       <InteractiveBottomSheet
         open={pairInfoOpen}
-        onDismiss={() => setPairInfoOpen(false)}
-        visibleFraction={0.58}
+        onDismiss={dismissPairInfo}
+        visibleFraction={0.62}
         fitContent
         portal
       >
         <Text style={styles.sheetTitle}>Pair account with Bluetooth</Text>
+        {lobbyId ? (
+          <View style={styles.codeBlock}>
+            <Text style={styles.codeLabel}>Your pairing code</Text>
+            <Text style={styles.codeValue} selectable>
+              {lobbyId}
+            </Text>
+            <Text style={styles.codeHint}>
+              Show this code on the logged-in phone and approve only if it matches.
+            </Text>
+          </View>
+        ) : null}
         <Text style={[styles.sheetBody, { paddingBottom: sheetBottomPad }]}>
-          A logged-in Basic phone can approve pairing over Bluetooth and move your
-          wallets here. Grant Bluetooth permission when prompted so this phone can
-          advertise and receive. Nothing is shown in cleartext. Passkeys are not
-          transferred; enable Backup afterward if the other phone did not already
-          have Nostr or Home backup on.
+          Grant Bluetooth permission when prompted so this phone can advertise.
+          Keep this screen open while the other phone scans. Nothing is shown in
+          cleartext. Passkeys are not transferred; enable Backup afterward if the
+          other phone did not already have Nostr or Home backup on.
+          {pairStatus ? `\n\n${pairStatus}` : ""}
         </Text>
       </InteractiveBottomSheet>
     </View>
@@ -335,6 +363,37 @@ const styles = StyleSheet.create({
     color: colors.fg,
     textAlign: "center",
     marginBottom: 10,
+  },
+  codeBlock: {
+    alignItems: "center",
+    marginBottom: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.fg,
+    backgroundColor: colors.card,
+  },
+  codeLabel: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.caption,
+    marginBottom: 8,
+  },
+  codeValue: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 22,
+    color: colors.fg,
+    letterSpacing: 1,
+    textAlign: "center",
+  },
+  codeHint: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.caption,
+    textAlign: "center",
+    marginTop: 10,
+    lineHeight: 17,
   },
   sheetBody: {
     fontFamily: "JetBrainsMono_400Regular",

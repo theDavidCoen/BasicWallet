@@ -1,6 +1,9 @@
 /**
  * BLE advertise/scan transport for Basic pair (chunked manufacturer data).
  * Uses react-native-ble-advertiser — no plaintext secrets on the air.
+ *
+ * Advertise uses manufacturer data only in the primary AD (≤31 bytes). Service
+ * UUID is in the scan response (patched native). Scan filters by company ID.
  */
 
 import { NativeEventEmitter, NativeModules, PermissionsAndroid, Platform } from "react-native";
@@ -20,7 +23,8 @@ import {
 } from "./pairProtocol";
 
 const PAIR_WINDOW_MS = 3 * 60 * 1000;
-const BROADCAST_ROTATE_MS = 80;
+/** Slow enough that stop/restart advertise on MIUI can settle between frames. */
+const BROADCAST_ROTATE_MS = 280;
 
 type DeviceFoundEvent = {
   manufData?: number[];
@@ -110,15 +114,28 @@ async function stopAllBle(): Promise<void> {
   }
 }
 
+/** Open BLE scan; JS filters on Basic frame magic + company manuf data. */
+function startCompanyScan(): Promise<string> {
+  // Empty manuf array → native opens an unfiltered scan (see ble-advertiser patch).
+  return BLEAdvertiser.scan([], {
+    scanMode: BLEAdvertiser.SCAN_MODE_LOW_LATENCY ?? 2,
+    matchMode: BLEAdvertiser.MATCH_MODE_AGGRESSIVE ?? 1,
+    numberOfMatches: BLEAdvertiser.MATCH_NUM_MAX_ADVERTISEMENT ?? 3,
+    reportDelay: 0,
+  });
+}
+
 function rotateBroadcast(
   frames: number[][],
   signal: { cancelled: boolean },
+  onError?: (msg: string) => void,
 ): { stop: () => void } {
   let i = 0;
   let timer: ReturnType<typeof setInterval> | undefined;
+  let advertiseFailed = false;
 
   const tick = () => {
-    if (signal.cancelled) return;
+    if (signal.cancelled || advertiseFailed) return;
     const data = frames[i % frames.length]!;
     i += 1;
     void BLEAdvertiser.broadcast(BASIC_PAIR_SERVICE_UUID, data, {
@@ -127,8 +144,14 @@ function rotateBroadcast(
       connectable: false,
       includeDeviceName: false,
       includeTxPowerLevel: false,
-    }).catch(() => {
-      /* transient */
+    }).catch((e: unknown) => {
+      if (signal.cancelled) return;
+      const msg = e instanceof Error ? e.message : String(e);
+      // DATA_TOO_LARGE / unavailable — stop thrashing and surface once.
+      if (/too large|unavailable|not supported|Invalid company/i.test(msg)) {
+        advertiseFailed = true;
+        onError?.(msg);
+      }
     });
   };
 
@@ -181,25 +204,42 @@ export async function runRequesterBleSession(input: {
   };
   input.signal?.addEventListener("abort", onAbort);
 
-  const rotator = rotateBroadcast(helloFrames, local);
-  input.onStatus?.("Waiting for nearby device…");
-
   const parts = new Map<number, Uint8Array>();
-  let expectedTotal: number | null = null;
 
   return new Promise<Uint8Array>((resolve, reject) => {
-    const timeout = setTimeout(() => {
+    let cleaned = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let sub: { remove: () => void } | undefined;
+    let rotator: { stop: () => void } | undefined;
+
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      local.cancelled = true;
+      if (timeout) clearTimeout(timeout);
+      sub?.remove();
+      rotator?.stop();
+      input.signal?.removeEventListener("abort", onAbort);
+      void stopAllBle();
+    };
+
+    rotator = rotateBroadcast(helloFrames, local, (err) => {
+      cleanup();
+      reject(new Error(`Bluetooth advertise failed: ${err}`));
+    });
+    input.onStatus?.("Waiting for nearby device…");
+
+    timeout = setTimeout(() => {
       cleanup();
       reject(new Error("Pairing timed out. Try again with devices close together."));
     }, PAIR_WINDOW_MS);
 
-    const sub = emitter().addListener("onDeviceFound", (device: DeviceFoundEvent) => {
+    sub = emitter().addListener("onDeviceFound", (device: DeviceFoundEvent) => {
       if (local.cancelled) return;
       if (!device.manufData?.length) return;
       const frame = decodePairFrame(device.manufData);
       if (!frame || frame.msgType !== MSG_CIPHER) return;
       if (!hash8Equal(frame.lobbyHash8, input.lobbyHash8)) return;
-      expectedTotal = frame.total;
       parts.set(frame.seq, frame.payload);
       input.onStatus?.(`Receiving… ${parts.size}/${frame.total}`);
       const assembled = assembleChunks(frame.total, parts);
@@ -208,24 +248,10 @@ export async function runRequesterBleSession(input: {
       resolve(assembled);
     });
 
-    void BLEAdvertiser.scanByService(BASIC_PAIR_SERVICE_UUID, {
-      scanMode: BLEAdvertiser.SCAN_MODE_LOW_LATENCY ?? 2,
-      matchMode: BLEAdvertiser.MATCH_MODE_AGGRESSIVE ?? 1,
-      numberOfMatches: BLEAdvertiser.MATCH_NUM_MAX_ADVERTISEMENT ?? 3,
-      reportDelay: 0,
-    }).catch((e: unknown) => {
+    void startCompanyScan().catch((e: unknown) => {
       cleanup();
       reject(e instanceof Error ? e : new Error("BLE scan failed"));
     });
-
-    function cleanup() {
-      local.cancelled = true;
-      clearTimeout(timeout);
-      sub.remove();
-      rotator.stop();
-      input.signal?.removeEventListener("abort", onAbort);
-      void stopAllBle();
-    }
   });
 }
 
@@ -273,12 +299,7 @@ export async function scanRequesterHello(input: {
       resolve({ pubCompressed: assembled, lobbyHash8 });
     });
 
-    void BLEAdvertiser.scanByService(BASIC_PAIR_SERVICE_UUID, {
-      scanMode: BLEAdvertiser.SCAN_MODE_LOW_LATENCY ?? 2,
-      matchMode: BLEAdvertiser.MATCH_MODE_AGGRESSIVE ?? 1,
-      numberOfMatches: BLEAdvertiser.MATCH_NUM_MAX_ADVERTISEMENT ?? 3,
-      reportDelay: 0,
-    }).catch((e: unknown) => {
+    void startCompanyScan().catch((e: unknown) => {
       cleanup();
       reject(e instanceof Error ? e : new Error("BLE scan failed"));
     });
@@ -311,7 +332,11 @@ export async function broadcastCipherReply(input: {
   };
   input.signal?.addEventListener("abort", onAbort);
 
-  const rotator = rotateBroadcast(frames, local);
+  let advertiseError: Error | null = null;
+  const rotator = rotateBroadcast(frames, local, (err) => {
+    advertiseError = new Error(`Bluetooth advertise failed: ${err}`);
+    local.cancelled = true;
+  });
   input.onStatus?.("Sending encrypted login…");
 
   const duration = input.durationMs ?? Math.min(PAIR_WINDOW_MS, Math.max(8_000, frames.length * BROADCAST_ROTATE_MS * 3));
@@ -328,6 +353,7 @@ export async function broadcastCipherReply(input: {
   rotator.stop();
   input.signal?.removeEventListener("abort", onAbort);
   await stopAllBle();
+  if (advertiseError) throw advertiseError;
 }
 
 export async function cancelPairBle(): Promise<void> {

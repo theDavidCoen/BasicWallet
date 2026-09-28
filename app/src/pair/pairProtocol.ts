@@ -127,7 +127,12 @@ export function decryptPairPayload(
 
 /** Bytes available for payload after fixed frame header (company-data only). */
 export const FRAME_HEADER_LEN = 14; // magic2+ver+type+hash8+seq+total
-export const FRAME_PAYLOAD_MAX = 14; // keep AD under typical 31-byte limit with company id
+/**
+ * Keep manufacturer AD ≤ 31 bytes:
+ * len(1)+type(1)+companyId(2)+header+payload ≤ 31 → payload ≤ 13.
+ * Use 12 for a little headroom on picky stacks (MIUI).
+ */
+export const FRAME_PAYLOAD_MAX = 12;
 
 export type PairFrame = {
   msgType: number;
