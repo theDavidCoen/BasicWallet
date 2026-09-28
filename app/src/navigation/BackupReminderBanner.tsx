@@ -90,8 +90,8 @@ export function BackupReminderBanner({
       >
         <Text style={styles.title}>No backup set up</Text>
         <Text style={styles.body}>
-          Your wallet is only on this device. Tap to add Nostr, home server, or export your recovery
-          phrase.
+          Your wallet is only on this device. Pairing does not move your passkey. Tap to add Nostr,
+          home server, or export your recovery phrase.
         </Text>
       </Pressable>
     </View>

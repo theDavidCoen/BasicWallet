@@ -166,6 +166,10 @@ PY
 
 mkdir -p "$DIST"
 rm -rf "$ANDROID/app/build/outputs/apk/release"
+# Keep react-native-ble-advertiser on modern compileSdk (upstream pins API 28).
+if [[ -x "$APP/scripts/patch-ble-advertiser.sh" ]]; then
+  bash "$APP/scripts/patch-ble-advertiser.sh"
+fi
 cd "$ANDROID"
 GRADLE_ARGS=(:app:assembleRelease --no-daemon)
 if [[ "$ABI_MODE" != "universal" ]]; then

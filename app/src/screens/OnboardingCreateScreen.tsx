@@ -1,14 +1,27 @@
 import { useNavigation } from "@react-navigation/native";
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Svg, { Path } from "react-native-svg";
 import * as Passkeys from "react-native-passkeys";
 import type { RootNav } from "../navigation/types";
 import { BasicLogo } from "../components/BasicLogo";
+import { InteractiveBottomSheet } from "../components/sheet/InteractiveBottomSheet";
 import { colors } from "../theme/colors";
 import { PasskeyPrfUnavailableError } from "../onboarding/passkeyPrf";
 import { needsOnboardingSecurityGate } from "../security/onboardingSecurityGate";
 import type { OnboardingContinueTo } from "../security/onboardingSecurityGate";
+import { cancelPairBle, runRequesterBleSession } from "../pair/pairBleTransport";
+import {
+  applyPairLoginPackage,
+  decodePairLoginPackage,
+} from "../pair/pairLoginPackage";
+import {
+  decodeWireEnvelope,
+  decryptPairPayload,
+  generatePairEphemeralKeypair,
+} from "../pair/pairProtocol";
+import { useWallet } from "../wallet/WalletProvider";
 
 /**
  * Penpot `11 Onboarding Create` (390×844):
@@ -29,12 +42,86 @@ const PENPOT = {
 /** Matches BasicLogo height math (VIEW_H * 0.55 * scale). */
 const LOGO_H = Math.round(62 * 0.55 * PENPOT.logoScale);
 
+function BluetoothIcon({ size = 22, color = colors.fg }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" accessibilityElementsHidden>
+      <Path
+        d="M17.71 7.71L12 2h-1v7.59L6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 11 14.41V22h1l5.71-5.71-4.3-4.29 4.3-4.29zM13 5.83l1.88 1.88L13 9.59V5.83zm1.88 10.46L13 18.17v-3.76l1.88 1.88z"
+        fill={color}
+      />
+    </Svg>
+  );
+}
+
 export function OnboardingCreateScreen() {
   const navigation = useNavigation<RootNav>();
   const insets = useSafeAreaInsets();
+  const { beginQuietImportSync, selectWallet } = useWallet();
   const [busy, setBusy] = useState(false);
+  const [pairInfoOpen, setPairInfoOpen] = useState(false);
+  const [pairStatus, setPairStatus] = useState("Waiting for nearby device…");
+  const [pairBusy, setPairBusy] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const ac = new AbortController();
+    abortRef.current = ac;
+
+    void (async () => {
+      setPairBusy(true);
+      try {
+        const eph = await generatePairEphemeralKeypair();
+        if (cancelled) return;
+        setPairStatus("Waiting for nearby device…");
+        const wire = await runRequesterBleSession({
+          lobbyHash8: eph.lobbyHash8,
+          pubCompressed: eph.pubCompressed,
+          onStatus: (msg) => {
+            if (!cancelled) setPairStatus(msg);
+          },
+          signal: ac.signal,
+        });
+        if (cancelled || ac.signal.aborted) return;
+        setPairStatus("Decrypting…");
+        const envelope = decodeWireEnvelope(wire);
+        const plain = decryptPairPayload(envelope, eph.sk);
+        const pkg = decodePairLoginPackage(plain);
+        const applied = await applyPairLoginPackage(pkg);
+        beginQuietImportSync();
+        await selectWallet(applied.preferredWalletId);
+        if (applied.backupReArmed) {
+          Alert.alert(
+            "Paired",
+            applied.channel === "home"
+              ? "Home server backup is on."
+              : "Nostr backup is on.",
+          );
+        }
+        navigation.reset({ index: 0, routes: [{ name: "Home" }] });
+      } catch (e) {
+        if (cancelled || ac.signal.aborted) return;
+        // Stay on onboarding — user can still Continue / Restore. Soft status only.
+        setPairStatus(
+          e instanceof Error && /permission/i.test(e.message)
+            ? "Bluetooth permission needed to pair nearby"
+            : "Waiting for nearby device…",
+        );
+      } finally {
+        if (!cancelled) setPairBusy(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      ac.abort();
+      void cancelPairBle();
+    };
+  }, [beginQuietImportSync, navigation, selectWallet]);
 
   async function goCreate(continueTo: OnboardingContinueTo) {
+    abortRef.current?.abort();
+    void cancelPairBle();
     if (await needsOnboardingSecurityGate()) {
       navigation.navigate("OnboardingSecurity", { continueTo });
       return;
@@ -115,16 +202,40 @@ export function OnboardingCreateScreen() {
         >
           Continue without passkey
         </Text>
+
+        <Pressable
+          style={styles.pairRow}
+          onPress={() => setPairInfoOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel="tap to pair"
+          accessibilityHint={pairBusy ? pairStatus : "Pair account with Bluetooth"}
+        >
+          <BluetoothIcon />
+          <Text style={styles.pairLabel}>tap to pair</Text>
+        </Pressable>
       </View>
 
       <View style={{ flex: 1 }} />
 
-      <Text
-        style={styles.footer}
-        onPress={() => void goCreate("restore")}
-      >
+      <Text style={styles.footer} onPress={() => void goCreate("restore")}>
         Seed phrase or nsec? Restore here.
       </Text>
+
+      <InteractiveBottomSheet
+        open={pairInfoOpen}
+        onDismiss={() => setPairInfoOpen(false)}
+        visibleFraction={0.42}
+        fitContent
+        portal
+      >
+        <Text style={styles.sheetTitle}>Pair account with Bluetooth</Text>
+        <Text style={styles.sheetBody}>
+          A logged-in Basic phone can approve pairing over Bluetooth and move your
+          wallets here. Nothing is shown in cleartext. Passkeys are not transferred;
+          enable Backup afterward if the other phone did not already have Nostr or
+          Home backup on.
+        </Text>
+      </InteractiveBottomSheet>
     </View>
   );
 }
@@ -168,6 +279,19 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingVertical: 8,
   },
+  pairRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    marginTop: 20,
+    paddingVertical: 10,
+  },
+  pairLabel: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 14,
+    color: colors.caption,
+  },
   footer: {
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 14,
@@ -175,5 +299,21 @@ const styles = StyleSheet.create({
     textAlign: "center",
     // Penpot restore ≈ y 780 → ~40px above frame bottom before system inset
     paddingBottom: 8,
+  },
+  sheetTitle: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 16,
+    color: colors.fg,
+    textAlign: "center",
+    marginBottom: 10,
+  },
+  sheetBody: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 13,
+    color: colors.caption,
+    textAlign: "center",
+    lineHeight: 18,
+    // Extra pad so the last line clears OS nav (sheet also applies insets).
+    paddingBottom: 28,
   },
 });

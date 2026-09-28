@@ -95,6 +95,17 @@ export function hasSessionBackupPassphrase(): boolean {
   return !!sessionPassphrase;
 }
 
+/** Load passphrase from session or SecureStore (for BLE pair package assembly). */
+export async function getPersistedBackupPassphrase(): Promise<string | null> {
+  if (sessionPassphrase?.trim()) return sessionPassphrase.trim();
+  try {
+    const v = await SecureStore.getItemAsync(PASSPHRASE_KEY, SECURE_OPTIONS);
+    return v?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function markBackupPackageDirty(): Promise<void> {
   await AsyncStorage.setItem(DIRTY_KEY, "1");
 }

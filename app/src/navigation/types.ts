@@ -38,6 +38,8 @@ export type RootStackParamList = {
   Receive: undefined;
   Send: { to?: string; amountSats?: number } | undefined;
   Settings: undefined;
+  /** Bluetooth fast login — approve nearby onboarding device. */
+  PairBluetooth: undefined;
   /** Arkade-specific settings (network, delegates, recovery, exits) */
   ArkadeSettings: undefined;
   /** Arkade network + custom ASP */

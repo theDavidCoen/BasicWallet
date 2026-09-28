@@ -51,6 +51,7 @@ export const BACKUP_REMINDER_HIDDEN_ROUTES = new Set<string>([
   "GenerateIdentityWarning",
   "ImportNsecWarning",
   "ResetApp",
+  "PairBluetooth",
   "RestoreWallet",
   "DisplayCurrencies",
   "Delegates",
