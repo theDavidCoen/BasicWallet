@@ -2,7 +2,7 @@
   "expo": {
     "name": "Basic",
     "slug": "basic-wallet",
-    "version": "0.7.0-alpha.25",
+    "version": "0.7.0-alpha.26",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "splash": {
@@ -11,6 +11,10 @@
       "backgroundColor": "#000000"
     },
     "userInterfaceStyle": "dark",
+    "androidStatusBar": {
+      "backgroundColor": "#000000",
+      "barStyle": "light-content"
+    },
     "scheme": "basicwallet",
     "newArchEnabled": true,
     "ios": {
@@ -31,6 +35,11 @@
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "splash": {
+        "image": "./assets/splash.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#000000"
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
@@ -88,5 +97,5 @@
       "passkeyRpId": "basic.davidcoen.it"
     }
   },
-  "version": "0.7.0-alpha.25"
+  "version": "0.7.0-alpha.26"
 }
