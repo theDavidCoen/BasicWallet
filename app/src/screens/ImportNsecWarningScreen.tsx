@@ -57,16 +57,16 @@ export function ImportNsecWarningScreen() {
           <Text style={ui.title}>IMPORT NSEC</Text>
           <Text style={ui.caption}>
             Sets the Nostr identity on this device:{"\n"}
-            social profile, contacts, and label directory{"\n"}
+            social profile, contacts, and wallet names{"\n"}
             under that key. It is not your wallet seed.
           </Text>
 
           <View style={ui.cardMuted}>
             {[
               "Passkey users: import does not replace or back up passkey wallets.",
-              "Continue with passkey rematerializes those wallets and puts the passkey-derived nsec back.",
-              "Import alone is not Path C (encrypted Nostr / Home backup).",
-              "If you import a foreign nsec and never enable Path C, contacts/labels published under that key will not return with passkey alone.",
+              "Continue with passkey brings those wallets back and restores the passkey Nostr key.",
+              "Import alone is not a Nostr or Home backup. Turn on Backup in Settings if you need an encrypted login package.",
+              "If you import another nsec and never enable Backup, contacts and labels under that key will not come back with passkey alone.",
               "Clipboard / screenshot risk on paste.",
             ].map((line) => (
               <Text key={line} style={[ui.caption, { textAlign: "left", marginBottom: 10 }]}>
