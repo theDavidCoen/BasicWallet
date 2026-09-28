@@ -1,5 +1,5 @@
 /**
- * Arkade-specific settings: network, delegates, recovery, exits.
+ * Arkade-specific settings: network, delegates, restore, recovery, exits.
  */
 
 import { useNavigation } from "@react-navigation/native";
@@ -16,6 +16,7 @@ type Row = {
   on:
     | "ArkadeNetwork"
     | "Delegates"
+    | "RestoreWallet"
     | "ExitRecoveryAddress"
     | "CollaborativeOffboard"
     | "UnilateralExitHub";
@@ -24,6 +25,7 @@ type Row = {
 const ROWS: Row[] = [
   { label: "Network", on: "ArkadeNetwork" },
   { label: "Delegates", on: "Delegates" },
+  { label: "Restore Wallet", on: "RestoreWallet" },
   { label: "Recovery address", on: "ExitRecoveryAddress" },
   { label: "Collaborative Exit", on: "CollaborativeOffboard" },
   { label: "Unilateral Exit", on: "UnilateralExitHub", danger: true },
@@ -41,6 +43,12 @@ export function ArkadeSettingsScreen() {
             key={row.label}
             style={styles.row}
             onPress={() => {
+              if (row.on === "RestoreWallet") {
+                // Settings path: seed only. Home/Nostr package restore stays on
+                // onboarding + Backup hub flows (mode "full").
+                navigation.navigate("RestoreWallet", { mode: "seed" });
+                return;
+              }
               if (row.on === "ExitRecoveryAddress") {
                 navigation.navigate("ExitRecoveryAddress");
                 return;
@@ -48,10 +56,10 @@ export function ArkadeSettingsScreen() {
               navigation.navigate(row.on);
             }}
           >
-            <Text style={[styles.rowText, row.danger && { color: DANGER }]}>
+            <Text style={[styles.rowLabel, row.danger && styles.dangerLabel]}>
               {row.label}
             </Text>
-            <Text style={styles.chev}>›</Text>
+            <Text style={[styles.chevron, row.danger && styles.dangerLabel]}>›</Text>
           </Pressable>
         ))}
       </ScrollView>
@@ -61,12 +69,11 @@ export function ArkadeSettingsScreen() {
 
 const styles = StyleSheet.create({
   title: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 20,
     color: colors.fg,
-    fontSize: 22,
-    fontWeight: "700",
-    letterSpacing: 1,
     textAlign: "center",
-    marginBottom: 20,
+    marginVertical: 16,
   },
   list: { flex: 1 },
   row: {
@@ -77,6 +84,17 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },
-  rowText: { color: colors.fg, fontSize: 16 },
-  chev: { color: colors.caption, fontSize: 22 },
+  rowLabel: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 16,
+    color: colors.fg,
+    flex: 1,
+    paddingRight: 12,
+  },
+  chevron: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 16,
+    color: colors.caption,
+  },
+  dangerLabel: { color: DANGER },
 });

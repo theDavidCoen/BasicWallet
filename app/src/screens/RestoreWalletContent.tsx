@@ -50,11 +50,12 @@ import { useWallet } from "../wallet/WalletProvider";
 type Tab = "seed" | "nsec" | "server";
 
 const CAPTION_SEED_ONLY =
-  "Imports one Arkade wallet from a BIP39 seed.";
+  "Import one Arkade wallet from a BIP39 recovery phrase\n" +
+  "(12 or 24 words).";
 
 const CAPTION_SEED_PASSKEY_NOTE =
   "\n\nA passkey alone is not enough to recover imported wallets after a fresh install. " +
-  "Use seed export, Nostr package, or home server for those wallets.";
+  "Export each wallet’s seed, or use Backup (Nostr / Home server) from onboarding.";
 
 const CAPTION_FULL =
   "Restore with seed imports just a single Arkade wallet.\n" +
@@ -100,7 +101,11 @@ export function RestoreWalletContent({
   const [serverAppPassword, setServerAppPassword] = useState("");
   const [serverToken, setServerToken] = useState("");
 
-  const title = useMemo(() => (seedOnly ? "IMPORT WALLET" : "RESTORE"), [seedOnly]);
+  // Sheet add-wallet: IMPORT. Settings → Arkade → Restore Wallet: RESTORE WALLET.
+  const title = useMemo(() => {
+    if (!seedOnly) return "RESTORE";
+    return embedded ? "IMPORT WALLET" : "RESTORE WALLET";
+  }, [embedded, seedOnly]);
   const caption = useMemo(() => {
     if (seedOnly) {
       return CAPTION_SEED_ONLY + (passkeyInstall ? CAPTION_SEED_PASSKEY_NOTE : "");
@@ -430,7 +435,9 @@ export function RestoreWalletContent({
               <ActivityIndicator color="#000" />
             ) : (
               <Text style={ui.primaryBtnText}>
-                {seedOnly ? "Import Arkade wallet" : "Restore Arkade from seed"}
+                {seedOnly && embedded
+                  ? "Import Arkade wallet"
+                  : "Restore Arkade from seed"}
               </Text>
             )}
           </Pressable>
