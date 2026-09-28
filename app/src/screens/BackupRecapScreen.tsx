@@ -24,6 +24,7 @@ import { mnemonicFromEntropy, randomEntropy32 } from "../onboarding/mnemonicFrom
 import {
   enableEncryptedBackup,
   readCipherBlob,
+  sanitizeFiatPrefsBeforePack,
 } from "../nostr/backupPackage";
 import {
   publishEncryptedBackupToRelays,
@@ -35,6 +36,10 @@ import { requireUserPresence } from "../security/userPresence";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 import { useWallet } from "../wallet/WalletProvider";
+import { listWallets } from "../account/walletRegistry";
+import { getNetworkConfig } from "../config/network";
+import { writeFiatModeState } from "../fiat/fiatModeStore";
+import { hasMnemonic } from "../security/mnemonicStore";
 
 export function BackupRecapScreen() {
   const navigation = useNavigation<RootNav>();
@@ -120,10 +125,44 @@ export function BackupRecapScreen() {
       noteLocalSend();
       await ensureNostrIdentity();
 
+      const networkId = getNetworkConfig().id;
+      let createdWallet = false;
       if (!hasWallet) {
         const mnemonic = mnemonicFromEntropy(await randomEntropy32());
         await provisionFromMnemonic(mnemonic, "device-only");
+        createdWallet = true;
       }
+
+      // Settle: Path C pack needs mnemonic-backed wallets. Recap used to pack
+      // immediately after provision while openWallet raced in the background.
+      const arkade = listWallets(networkId).filter((w) => w.kind === "arkade");
+      const seeded: string[] = [];
+      for (const w of arkade) {
+        if (await hasMnemonic(w.id)) seeded.push(w.id);
+      }
+      if (!seeded.length) {
+        throw new Error("No seed wallets ready to back up yet. Try Enable again.");
+      }
+
+      // New Recap-provisioned wallets must start with fiatMode off in the package.
+      if (createdWallet) {
+        for (const walletId of seeded) {
+          await writeFiatModeState(
+            networkId,
+            walletId,
+            {
+              fiatMode: false,
+              pendingJob: null,
+              pendingEnterDisplay: null,
+              lastSwapId: null,
+              lastGoodDisplay: null,
+              labelTouched: false,
+            },
+            { syncBackup: false },
+          );
+        }
+      }
+      await sanitizeFiatPrefsBeforePack(networkId, seeded);
 
       await ensureNostrIdentity();
 

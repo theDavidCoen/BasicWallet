@@ -15,6 +15,14 @@ function queueMaxiPrefsBackupSync(reason: string): void {
   void import("../nostr/backupSync")
     .then(async (m) => {
       await m.markBackupPackageDirty();
+      const meta = await import("../nostr/backupPackage").then((b) =>
+        b.readBackupMeta(),
+      );
+      if (meta?.enabled && meta.channel === "home") {
+        await m.unlockBackupPassphraseSession();
+        await m.syncEncryptedBackupNow(reason);
+        return;
+      }
       m.queueEncryptedBackupSync(reason);
     })
     .catch((e) => console.warn("[basic] maxi prefs backup dirty failed", e));
