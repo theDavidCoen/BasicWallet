@@ -24,7 +24,9 @@ import {
 import { getNetworkConfig } from "../config/network";
 import {
   decryptPackage,
+  DEFAULT_NOSTR_RELAYS,
   PASSPHRASE_LOSS_CAPTION,
+  armBackupMetaAfterRestore,
   readCipherBlob,
   restoreContactsFromPackage,
   restorePrefsFromPackage,
@@ -48,11 +50,12 @@ import { useWallet } from "../wallet/WalletProvider";
 type Tab = "seed" | "nsec" | "server";
 
 const CAPTION_SEED_ONLY =
-  "Imports one Arkade wallet from a BIP39 seed.";
+  "Import one Arkade wallet from a BIP39 recovery phrase\n" +
+  "(12 or 24 words).";
 
 const CAPTION_SEED_PASSKEY_NOTE =
   "\n\nA passkey alone is not enough to recover imported wallets after a fresh install. " +
-  "Use seed export, Nostr package, or home server for those wallets.";
+  "Export each wallet’s seed, or use Backup (Nostr / Home server) from onboarding.";
 
 const CAPTION_FULL =
   "Restore with seed imports just a single Arkade wallet.\n" +
@@ -98,7 +101,11 @@ export function RestoreWalletContent({
   const [serverAppPassword, setServerAppPassword] = useState("");
   const [serverToken, setServerToken] = useState("");
 
-  const title = useMemo(() => (seedOnly ? "IMPORT WALLET" : "RESTORE"), [seedOnly]);
+  // Sheet add-wallet: IMPORT. Settings → Arkade → Restore Wallet: RESTORE WALLET.
+  const title = useMemo(() => {
+    if (!seedOnly) return "RESTORE";
+    return embedded ? "IMPORT WALLET" : "RESTORE WALLET";
+  }, [embedded, seedOnly]);
   const caption = useMemo(() => {
     if (seedOnly) {
       return CAPTION_SEED_ONLY + (passkeyInstall ? CAPTION_SEED_PASSKEY_NOTE : "");
@@ -217,6 +224,16 @@ export function RestoreWalletContent({
       // Flags only — no Enter/Exit swap. Enter stays HD (α10); prefs drive UI.
       const prefsRestored = await restorePrefsFromPackage(pkg);
 
+      await armBackupMetaAfterRestore({
+        channel: "nostr",
+        npub: pair.npub,
+        walletCount: pkg.wallets.length,
+        txMetaCount: pkg.txMeta?.length,
+        contactsCount: pkg.contacts?.length,
+        prefsCount: prefsRestored,
+        relays: DEFAULT_NOSTR_RELAYS,
+      });
+
       const wallets = listWallets(networkId).filter((w) => restoredIds.has(w.id));
       if (!wallets.length) throw new Error("Package had no wallets");
 
@@ -239,7 +256,7 @@ export function RestoreWalletContent({
           (notesRestored ? `\n${notesRestored} note(s)` : "") +
           (contactsRestored ? `\n${contactsRestored} contact(s)` : "") +
           (prefsRestored ? `\n${prefsRestored} Fiat/Maxi pref(s)` : "") +
-          ".",
+          "\n\nNostr backup is on (same passphrase as restore).",
       );
       onDone("Ready");
     } catch (e) {
@@ -326,6 +343,20 @@ export function RestoreWalletContent({
       const notesRestored = restoreTxMetaFromPackage(pkg);
       const contactsRestored = restoreContactsFromPackage(pkg);
       const prefsRestored = await restorePrefsFromPackage(pkg);
+
+      await armBackupMetaAfterRestore({
+        channel: "home",
+        npub: pair.npub,
+        walletCount: pkg.wallets.length,
+        txMetaCount: pkg.txMeta?.length,
+        contactsCount: pkg.contacts?.length,
+        prefsCount: prefsRestored,
+        homeUrl: serverUrl.trim(),
+        homeToken: creds.token,
+        homeUser: creds.username,
+        homePassword: creds.password,
+      });
+
       const wallets = listWallets(networkId).filter((w) => restoredIds.has(w.id));
       if (!wallets.length) throw new Error("Package had no wallets");
 
@@ -348,7 +379,7 @@ export function RestoreWalletContent({
           (notesRestored ? `\n${notesRestored} note(s)` : "") +
           (contactsRestored ? `\n${contactsRestored} contact(s)` : "") +
           (prefsRestored ? `\n${prefsRestored} Fiat/Maxi pref(s)` : "") +
-          ".",
+          "\n\nHome server backup is on (same URL + passphrase as restore).",
       );
       onDone("Ready");
     } catch (e) {
@@ -404,7 +435,9 @@ export function RestoreWalletContent({
               <ActivityIndicator color="#000" />
             ) : (
               <Text style={ui.primaryBtnText}>
-                {seedOnly ? "Import Arkade wallet" : "Restore Arkade from seed"}
+                {seedOnly && embedded
+                  ? "Import Arkade wallet"
+                  : "Restore Arkade from seed"}
               </Text>
             )}
           </Pressable>

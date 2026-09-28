@@ -87,8 +87,13 @@ export async function uploadHomeBackupCipher(
   credsOverride?: HomeServerCreds,
 ): Promise<{ fileUrl: string }> {
   const creds = credsOverride ?? (await loadHomeServerCreds());
-  if (!homeCredsHaveAuth(creds) && !homeUrl.trim()) {
-    throw new Error("Home server URL and credentials required");
+  if (!homeUrl.trim()) {
+    throw new Error("Home server URL required");
+  }
+  if (!homeCredsHaveAuth(creds)) {
+    throw new Error(
+      "Home server credentials required (Bearer token or username + app password)",
+    );
   }
   const fileUrl = resolveHomeBackupFileUrl(homeUrl, creds.username);
   const headers = {

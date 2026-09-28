@@ -1,5 +1,5 @@
-import { useNavigation } from "@react-navigation/native";
-import { useState } from "react";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -11,35 +11,67 @@ import {
 } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
-import { mnemonicFromEntropy, randomEntropy32 } from "../onboarding/mnemonicFromEntropy";
+import { BackupPassphraseLiveRules } from "../components/BackupPassphraseLiveRules";
+import { PassphraseInput } from "../components/PassphraseInput";
+import { BACKUP_PASSPHRASE_HINT } from "../nostr/passphrasePolicy";
+import { backupPassphraseChecklist, validateBackupPassphrase } from "../nostr/passphrasePolicy";
 import {
-  enableEncryptedBackup,
-  PASSPHRASE_LOSS_CAPTION,
-  readCipherBlob,
+  disableEncryptedBackup,
+  readBackupMeta,
+  type BackupPackageMeta,
 } from "../nostr/backupPackage";
-import { BACKUP_PASSPHRASE_HINT, BACKUP_PASSPHRASE_RULES, validateBackupPassphrase } from "../nostr/passphrasePolicy";
-import { ensureNostrIdentity, hasNostrIdentity } from "../nostr/identityStore";
 import { homeCredsHaveAuth } from "../nostr/homeServerCreds";
-import { uploadHomeBackupCipher } from "../nostr/homeServerWebdav";
+import { ensureNostrIdentity, hasNostrIdentity } from "../nostr/identityStore";
+import {
+  hasSessionBackupPassphrase,
+  persistBackupPassphrase,
+  syncEncryptedBackupNow,
+  unlockBackupPassphraseSession,
+} from "../nostr/backupSync";
 import { requireUserPresence } from "../security/userPresence";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
-import { useWallet } from "../wallet/WalletProvider";
-import { PassphraseInput } from "../components/PassphraseInput";
 
-/** Penpot 12e — home server channel (WebDAV / Nextcloud + optional Bearer token). */
+/** Penpot 12e — home server channel; Next → Backup Recap when enabling. */
 export function HomeServerBackupScreen() {
   const navigation = useNavigation<RootNav>();
-  const { hasWallet, provisionFromMnemonic } = useWallet();
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [username, setUsername] = useState("");
   const [appPassword, setAppPassword] = useState("");
   const [passphrase, setPassphrase] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
-  const wasEmpty = !hasWallet;
+  const [homeEnabled, setHomeEnabled] = useState(false);
+  const [backupMeta, setBackupMeta] = useState<BackupPackageMeta | null>(null);
+  const [sessionReady, setSessionReady] = useState(false);
 
-  async function onEnable() {
+  const checklist = useMemo(
+    () => backupPassphraseChecklist(passphrase, confirm),
+    [passphrase, confirm],
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      void (async () => {
+        const meta = await readBackupMeta();
+        setBackupMeta(meta);
+        const on = !!(meta?.enabled && meta.channel === "home");
+        setHomeEnabled(on);
+        if (on && meta?.homeUrl) setUrl(meta.homeUrl);
+        if (on) {
+          if (!hasSessionBackupPassphrase()) {
+            await unlockBackupPassphraseSession();
+          }
+          setSessionReady(hasSessionBackupPassphrase());
+        } else {
+          setSessionReady(false);
+        }
+      })();
+    }, []),
+  );
+
+  async function onNext() {
     if (!url.trim()) {
       Alert.alert("Server URL required", "Enter your home server or Nextcloud URL.");
       return;
@@ -70,54 +102,98 @@ export function HomeServerBackupScreen() {
       Alert.alert("Invalid passphrase", check.message);
       return;
     }
+    if (passphrase !== confirm) {
+      Alert.alert("Mismatch", "Passphrase and confirmation do not match.");
+      return;
+    }
 
     setBusy(true);
     try {
-      const auth = await requireUserPresence("Confirm to enable home server backup");
-      if (!auth.ok) {
-        Alert.alert("Authentication required", "Backup was not enabled.");
-        return;
-      }
-
       if (!(await hasNostrIdentity())) {
         await ensureNostrIdentity();
       }
-
-      if (!hasWallet) {
-        const mnemonic = mnemonicFromEntropy(await randomEntropy32());
-        await provisionFromMnemonic(mnemonic, "device-only");
-      }
-
-      await ensureNostrIdentity();
-      const meta = await enableEncryptedBackup({
+      navigation.navigate("BackupRecap", {
         channel: "home",
-        passphrase,
-        homeUrl: url,
+        passphrase: check.passphrase,
+        homeUrl: url.trim(),
         homeToken: creds.token,
         homeUser: creds.username,
         homePassword: creds.password,
       });
-
-      const blob = await readCipherBlob();
-      if (!blob) throw new Error("Local backup package missing after enable");
-      const { fileUrl } = await uploadHomeBackupCipher(url, blob, creds);
-
+    } catch (e) {
       Alert.alert(
-        "Home backup enabled",
-        `${meta.walletCount} wallet(s) uploaded to\n${fileUrl}\n\n` +
-          "Next: save your nsec offline. You need nsec + passphrase to restore.",
-        [
-          {
-            text: "Export nsec",
-            onPress: () =>
-              navigation.replace("ExportNsecWarning", {
-                afterEnable: wasEmpty ? "Ready" : "AdvancedBackup",
-              }),
-          },
-        ],
+        "Could not continue",
+        e instanceof Error ? e.message : "Unknown error",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onUpdateAndUpload() {
+    setBusy(true);
+    try {
+      const auth = await requireUserPresence("Confirm to update home server backup");
+      if (!auth.ok) {
+        Alert.alert("Authentication required", "Backup was not updated.");
+        return;
+      }
+      await unlockBackupPassphraseSession();
+      setSessionReady(hasSessionBackupPassphrase());
+
+      if (!hasSessionBackupPassphrase()) {
+        const check = validateBackupPassphrase(passphrase);
+        if (!check.ok) {
+          Alert.alert(
+            "Passphrase needed",
+            "Session is locked. Enter your backup passphrase once, or unlock the app with biometrics.",
+          );
+          return;
+        }
+        await persistBackupPassphrase(passphrase);
+        setSessionReady(true);
+      }
+
+      const synced = await syncEncryptedBackupNow("manual-home-update");
+      if (!synced) {
+        throw new Error("Could not update backup (missing session passphrase).");
+      }
+      setBackupMeta(synced);
+      setPassphrase("");
+      Alert.alert(
+        "Backup updated",
+        `${synced.walletCount} wallet(s)` +
+          (synced.txMetaCount ? `, ${synced.txMetaCount} note(s)` : "") +
+          " re-packed and uploaded.",
       );
     } catch (e) {
-      Alert.alert("Could not enable backup", e instanceof Error ? e.message : "Unknown error");
+      Alert.alert("Update failed", e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onDisable() {
+    setBusy(true);
+    try {
+      const auth = await requireUserPresence("Confirm to disable home server backup");
+      if (!auth.ok) {
+        Alert.alert("Authentication required", "Backup was not disabled.");
+        return;
+      }
+      await disableEncryptedBackup();
+      setHomeEnabled(false);
+      setBackupMeta(null);
+      setPassphrase("");
+      setConfirm("");
+      setSessionReady(false);
+      Alert.alert(
+        "Home backup disabled",
+        "Local encrypted package removed. Wallets on this device are unchanged. Server file is not deleted.",
+      );
+      navigation.navigate("AdvancedBackup");
+    } catch (e) {
+      Alert.alert("Could not disable", e instanceof Error ? e.message : "Unknown error");
     } finally {
       setBusy(false);
     }
@@ -132,86 +208,149 @@ export function HomeServerBackupScreen() {
         <Text style={ui.title}>HOME SERVER</Text>
         <Text style={ui.caption}>
           Same encrypted package as Nostr.{"\n"}
-          Nextcloud WebDAV or Bearer token.{"\n"}
-          Passphrase required.
+          Nextcloud WebDAV or Bearer token.
         </Text>
 
-        <Text style={styles.label}>server URL</Text>
-        <TextInput
-          style={styles.input}
-          value={url}
-          onChangeText={setUrl}
-          autoCapitalize="none"
-          autoCorrect={false}
-          placeholder="https://nextcloud.example"
-          placeholderTextColor={colors.hint}
-        />
-        <Text style={[ui.hint, { marginTop: 6 }]}>
-          Origin is enough for Nextcloud (we append remote.php/dav/…). Or paste a full WebDAV file URL.
-        </Text>
+        {homeEnabled ? (
+          <>
+            <Text style={[ui.hint, { marginTop: 20 }]}>
+              Home server backup is active.
+              {backupMeta?.homeUrl ? `\n${backupMeta.homeUrl}` : ""}
+              {"\n\n"}
+              {backupMeta?.lastPublishedAt
+                ? `Last upload: ${new Date(backupMeta.lastPublishedAt).toLocaleString()}`
+                : "Local package ready; upload on Update."}
+              {"\n\n"}
+              After you unlock the app (biometrics), wallet / note / Fiat Mode
+              changes sync to the server automatically.
+            </Text>
 
-        <Text style={[styles.section, { marginTop: 20 }]}>Nextcloud / WebDAV</Text>
-        <Text style={styles.label}>username</Text>
-        <TextInput
-          style={styles.input}
-          value={username}
-          onChangeText={setUsername}
-          autoCapitalize="none"
-          autoCorrect={false}
-          placeholder="username"
-          placeholderTextColor={colors.hint}
-        />
-        <Text style={styles.label}>application password</Text>
-        <TextInput
-          style={styles.input}
-          value={appPassword}
-          onChangeText={setAppPassword}
-          autoCapitalize="none"
-          autoCorrect={false}
-          placeholder="Nextcloud app password"
-          placeholderTextColor={colors.hint}
-          secureTextEntry
-        />
+            {sessionReady ? (
+              <Text style={[ui.hint, { marginTop: 16 }]}>
+                Session unlocked — Update uses the stored passphrase (no re-entry).
+              </Text>
+            ) : (
+              <>
+                <Text style={styles.label}>passphrase (session locked)</Text>
+                <PassphraseInput
+                  value={passphrase}
+                  onChangeText={setPassphrase}
+                  placeholder="••••••••••••"
+                />
+              </>
+            )}
 
-        <Text style={[styles.section, { marginTop: 20 }]}>Or access token</Text>
-        <Text style={styles.label}>Bearer token</Text>
-        <TextInput
-          style={styles.input}
-          value={token}
-          onChangeText={setToken}
-          autoCapitalize="none"
-          autoCorrect={false}
-          placeholder="optional if using username + app password"
-          placeholderTextColor={colors.hint}
-          secureTextEntry
-        />
+            <Pressable
+              style={[ui.primaryBtn, { marginTop: 16 }, busy && { opacity: 0.6 }]}
+              disabled={busy}
+              onPress={() => void onUpdateAndUpload()}
+            >
+              {busy ? (
+                <ActivityIndicator color="#000" />
+              ) : (
+                <Text style={ui.primaryBtnText}>Update & upload</Text>
+              )}
+            </Pressable>
 
-        <Text style={styles.label}>backup passphrase</Text>
-        <PassphraseInput
-          value={passphrase}
-          onChangeText={setPassphrase}
-          placeholder="••••••••••••"
-        />
+            <Pressable
+              style={[ui.secondaryBtn, { marginTop: 12 }, busy && { opacity: 0.6 }]}
+              disabled={busy}
+              onPress={() => void onDisable()}
+            >
+              {busy ? (
+                <ActivityIndicator color={colors.fg} />
+              ) : (
+                <Text style={ui.secondaryBtnText}>Disable home backup</Text>
+              )}
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <Text style={styles.label}>server URL</Text>
+            <TextInput
+              style={styles.input}
+              value={url}
+              onChangeText={setUrl}
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder="https://nextcloud.example"
+              placeholderTextColor={colors.hint}
+            />
+            <Text style={[ui.hint, { marginTop: 6 }]}>
+              Origin is enough for Nextcloud (we append remote.php/dav/…). Or paste a full WebDAV file URL.
+            </Text>
 
-        <Text style={[ui.hint, { marginTop: 16 }]}>
-          {BACKUP_PASSPHRASE_RULES}
-          {"\n\n"}
-          {BACKUP_PASSPHRASE_HINT}
-          {"\n\n"}
-          {PASSPHRASE_LOSS_CAPTION}
-        </Text>
+            <Text style={[styles.section, { marginTop: 20 }]}>Nextcloud / WebDAV</Text>
+            <Text style={styles.label}>username</Text>
+            <TextInput
+              style={styles.input}
+              value={username}
+              onChangeText={setUsername}
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder="username"
+              placeholderTextColor={colors.hint}
+            />
+            <Text style={styles.label}>application password</Text>
+            <TextInput
+              style={styles.input}
+              value={appPassword}
+              onChangeText={setAppPassword}
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder="Nextcloud app password"
+              placeholderTextColor={colors.hint}
+              secureTextEntry
+            />
 
-        <Pressable
-          style={[ui.primaryBtn, busy && { opacity: 0.6 }]}
-          disabled={busy}
-          onPress={() => void onEnable()}
-        >
-          {busy ? (
-            <ActivityIndicator color="#000" />
-          ) : (
-            <Text style={ui.primaryBtnText}>Enable home backup</Text>
-          )}
-        </Pressable>
+            <Text style={[styles.section, { marginTop: 20 }]}>Or access token</Text>
+            <Text style={styles.label}>Bearer token</Text>
+            <TextInput
+              style={styles.input}
+              value={token}
+              onChangeText={setToken}
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder="optional if using username + app password"
+              placeholderTextColor={colors.hint}
+              secureTextEntry
+            />
+
+            <Text style={[styles.section, { marginTop: 28 }]}>Backup passphrase</Text>
+            <Text style={[ui.hint, { marginTop: 8, marginBottom: 4 }]}>
+              {BACKUP_PASSPHRASE_HINT}
+            </Text>
+            <Text style={styles.label}>passphrase</Text>
+            <PassphraseInput
+              value={passphrase}
+              onChangeText={setPassphrase}
+              placeholder="••••••••••••"
+            />
+            <Text style={styles.label}>confirm passphrase</Text>
+            <PassphraseInput
+              value={confirm}
+              onChangeText={setConfirm}
+              placeholder="••••••••••••"
+            />
+            <BackupPassphraseLiveRules passphrase={passphrase} confirm={confirm} />
+
+            <Pressable
+              style={[
+                ui.primaryBtn,
+                { marginTop: 24 },
+                (busy || !checklist.allOk) && { opacity: 0.6 },
+              ]}
+              disabled={busy || !checklist.allOk}
+              onPress={() => void onNext()}
+            >
+              {busy ? (
+                <ActivityIndicator color="#000" />
+              ) : (
+                <Text style={ui.primaryBtnText}>Next</Text>
+              )}
+            </Pressable>
+          </>
+        )}
       </ScrollView>
     </ScreenChrome>
   );

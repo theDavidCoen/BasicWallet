@@ -56,16 +56,18 @@ export function ImportNsecWarningScreen() {
         <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
           <Text style={ui.title}>IMPORT NSEC</Text>
           <Text style={ui.caption}>
-            Advanced path.{"\n"}You may reuse a social nsec.{"\n"}A backup passphrase is always
-            required.
+            Sets the Nostr identity on this device:{"\n"}
+            social profile, contacts, and wallet names{"\n"}
+            under that key. It is not your wallet seed.
           </Text>
 
           <View style={ui.cardMuted}>
             {[
-              "nsec unlocks the encrypted package",
-              "Passphrase ALWAYS required",
-              "Clipboard / screenshot risk on paste",
-              "You can reuse your social nsec, but you will be required to add a passphrase.",
+              "Passkey users: import does not replace or back up passkey wallets.",
+              "Continue with passkey brings those wallets back and restores the passkey Nostr key.",
+              "Import alone is not a Nostr or Home backup. Turn on Backup in Settings if you need an encrypted login package.",
+              "If you import another nsec and never enable Backup, contacts and labels under that key will not come back with passkey alone.",
+              "Clipboard / screenshot risk on paste.",
             ].map((line) => (
               <Text key={line} style={[ui.caption, { textAlign: "left", marginBottom: 10 }]}>
                 · {line}

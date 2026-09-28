@@ -306,16 +306,52 @@ async function collectWalletPrefs(
       readFiatModeState(networkId, walletId),
       readBitcoinMaxiMode(networkId, walletId),
     ]);
+    // Strict === true — never coerce strings / 1 into on.
+    const fiatMode = fiat.fiatMode === true;
+    const bitcoinMaxiMode = maxiOn !== false;
     out.push({
       walletId,
       networkId,
-      fiatMode: Boolean(fiat.fiatMode),
-      bitcoinMaxiMode: maxiOn !== false,
+      fiatMode,
+      bitcoinMaxiMode,
       stableId,
-      updatedAt: Math.max(fiat.updatedAt || 0, Date.now()),
+      updatedAt: typeof fiat.updatedAt === "number" ? fiat.updatedAt : Date.now(),
+    });
+    console.warn("[basic] pack prefs", {
+      walletId: walletId.slice(0, 8),
+      fiatMode,
+      bitcoinMaxiMode,
     });
   }
   return out;
+}
+
+/**
+ * Canonicalize fiat flags in AsyncStorage before Path C pack.
+ * Empty / corrupt / non-boolean truthy values become explicit `false` so Recap
+ * enable cannot upload fiatMode:true when the user is not in Fiat Mode.
+ * Does not clear a genuine `fiatMode === true`.
+ */
+export async function sanitizeFiatPrefsBeforePack(
+  networkId: ArkadeNetworkId,
+  walletIds: string[],
+): Promise<void> {
+  for (const walletId of walletIds) {
+    const fiat = await readFiatModeState(networkId, walletId);
+    if (fiat.fiatMode === true) continue;
+    await writeFiatModeState(
+      networkId,
+      walletId,
+      {
+        fiatMode: false,
+        pendingJob: null,
+        pendingEnterDisplay: null,
+        lastSwapId: null,
+        lastGoodDisplay: null,
+      },
+      { syncBackup: false },
+    );
+  }
 }
 
 /**
@@ -323,20 +359,37 @@ async function collectWalletPrefs(
  * Flags only — never auto Enter/Exit swap. Clears pending job/enter.
  * Enter stays on HD (α10); no static walletMode reopen.
  * Missing `prefs` (old packages) → no-op (defaults: fiat off, Maxi ON).
+ * Only applies rows whose walletId exists in `pkg.wallets` (no orphan flags).
  */
 export async function restorePrefsFromPackage(
   pkg: DecryptedBackupPackage,
 ): Promise<number> {
   if (!Array.isArray(pkg.prefs) || !pkg.prefs.length) return 0;
   const networkId = getNetworkConfig().id;
+  const knownIds = new Set(
+    (pkg.wallets ?? [])
+      .map((w) => (typeof w?.id === "string" ? w.id.trim() : ""))
+      .filter(Boolean),
+  );
   let n = 0;
   for (const raw of pkg.prefs) {
     if (!raw || typeof raw.walletId !== "string" || !raw.walletId.trim()) continue;
     if (typeof raw.networkId === "string" && raw.networkId && raw.networkId !== networkId) {
+      console.warn("[basic] restore prefs skip network mismatch", {
+        prefNetwork: raw.networkId,
+        localNetwork: networkId,
+      });
       continue;
     }
     const walletId = raw.walletId.trim();
-    const fiatMode = Boolean(raw.fiatMode);
+    if (knownIds.size > 0 && !knownIds.has(walletId)) {
+      console.warn("[basic] restore prefs skip unknown walletId", {
+        walletId: walletId.slice(0, 8),
+      });
+      continue;
+    }
+    // Strict === true only. Missing / "false" / 0 / null → off.
+    const fiatMode = raw.fiatMode === true;
     const bitcoinMaxiMode =
       typeof raw.bitcoinMaxiMode === "boolean" ? raw.bitcoinMaxiMode : true;
     await writeFiatModeState(
@@ -348,6 +401,7 @@ export async function restorePrefsFromPackage(
         pendingEnterDisplay: null,
         lastSwapId: null,
         lastGoodDisplay: null,
+        labelTouched: false,
       },
       { syncBackup: false },
     );
@@ -399,12 +453,19 @@ export async function enableEncryptedBackup(input: EnableBackupInput): Promise<B
     entries.map((e) => e.label),
   );
 
+  const walletIds = entries.map((e) => e.id);
+  // Settle prefs before AEAD — Recap enable used to race provision/openWallet
+  // and could pack a corrupt/truthy fiatMode for an empty store.
+  await sanitizeFiatPrefsBeforePack(networkId, walletIds);
+
   const txMeta = collectTxMetaEntries();
   const contacts = listContacts();
-  const prefs = await collectWalletPrefs(
-    networkId,
-    entries.map((e) => e.id),
-  );
+  const prefs = await collectWalletPrefs(networkId, walletIds);
+  const fiatOnCount = prefs.filter((p) => p.fiatMode).length;
+  console.warn("[basic] encrypt prefs summary", {
+    prefs: prefs.length,
+    fiatModeOn: fiatOnCount,
+  });
 
   const plaintext: DecryptedBackupPackage = {
     version: 1,
@@ -475,6 +536,77 @@ export async function refreshEncryptedBackup(passphrase: string): Promise<Backup
 
 export async function writeBackupMeta(meta: BackupPackageMeta): Promise<void> {
   await AsyncStorage.setItem(PACKAGE_META_KEY, JSON.stringify(meta));
+}
+
+/**
+ * After Path C restore, re-arm local backup meta so the channel is ON without
+ * going through Recap/Enable again. Persisted passphrase + cipher stay from
+ * the restore form; we only write meta + home creds + clear the reminder.
+ */
+export async function armBackupMetaAfterRestore(input: {
+  channel: BackupChannel;
+  npub: string;
+  walletCount: number;
+  txMetaCount?: number;
+  contactsCount?: number;
+  prefsCount?: number;
+  relays?: string[];
+  homeUrl?: string | null;
+  homeToken?: string | null;
+  homeUser?: string | null;
+  homePassword?: string | null;
+}): Promise<BackupPackageMeta> {
+  const meta: BackupPackageMeta = {
+    enabled: true,
+    channel: input.channel,
+    relays: input.relays?.length ? input.relays : DEFAULT_NOSTR_RELAYS,
+    homeUrl: input.homeUrl?.trim() || null,
+    homeToken: input.homeToken?.trim() || null,
+    homeUser: input.homeUser?.trim() || null,
+    npub: input.npub,
+    updatedAt: Date.now(),
+    walletCount: input.walletCount,
+    txMetaCount: input.txMetaCount,
+    contactsCount: input.contactsCount,
+    prefsCount: input.prefsCount,
+  };
+  if (input.channel === "home" && !meta.homeUrl) {
+    throw new Error("Home backup arm requires server URL");
+  }
+  await writeBackupMeta(meta);
+  if (input.channel === "home") {
+    const { saveHomeServerCreds } = await import("./homeServerCreds");
+    await saveHomeServerCreds({
+      token: input.homeToken?.trim() || null,
+      username: input.homeUser?.trim() || null,
+      password: input.homePassword?.trim() || null,
+    });
+  }
+  const {
+    clearBackupPackageDirty,
+    unlockBackupPassphraseSession,
+    hasSessionBackupPassphrase,
+  } = await import("./backupSync");
+  await clearBackupPackageDirty();
+  // Restore already called persistBackupPassphrase; ensure RAM session is warm
+  // so dirty sync / Update work without re-entering the passphrase.
+  if (!hasSessionBackupPassphrase()) {
+    await unlockBackupPassphraseSession();
+  }
+  const { clearBackupReminder } = await import("../wallet/backupReminder");
+  await clearBackupReminder();
+
+  const verify = await readBackupMeta();
+  if (!verify?.enabled || verify.channel !== input.channel) {
+    throw new Error("Backup meta failed to arm after restore");
+  }
+  console.warn("[basic] backup meta armed after restore", {
+    channel: verify.channel,
+    walletCount: verify.walletCount,
+    prefsCount: verify.prefsCount ?? 0,
+    homeUrl: verify.homeUrl ? "set" : null,
+  });
+  return verify;
 }
 
 export async function disableEncryptedBackup(): Promise<void> {

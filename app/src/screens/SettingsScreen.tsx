@@ -1,6 +1,6 @@
 /**
- * Settings hub. Account / Wallet Settings are section headers (not nested entries).
- * Arkade-specific rows live under Arkade Settings.
+ * Settings hub. Account / Provider / Advanced are section headers (not nested entries).
+ * Arkade-specific rows live under Arkade Settings (incl. Restore Wallet).
  */
 
 import { useNavigation } from "@react-navigation/native";
@@ -19,7 +19,6 @@ type NavTarget =
   | "NostrIdentity"
   | "ArchivedWallets"
   | "Contacts"
-  | "RestoreWallet"
   | "ResetApp"
   | "Logs"
   | "Privacy"
@@ -32,7 +31,6 @@ type Row = {
   stub?: boolean;
   danger?: boolean;
   on?: NavTarget;
-  restoreMode?: "full";
 };
 
 type Block =
@@ -51,18 +49,15 @@ const BLOCKS: Block[] = [
   { kind: "row", row: { label: "Contacts", on: "Contacts" } },
   { kind: "row", row: { label: "Duress PIN", stub: true } },
 
-  { kind: "section", title: "Wallet Settings" },
-  { kind: "row", row: { label: "Connected node", on: "ConnectedNode" } },
-  { kind: "row", row: { label: "Hardware wallet", stub: true } },
-  { kind: "row", row: { label: "Multisig", stub: true } },
-  { kind: "row", row: { label: "Backup", on: "AdvancedBackup" } },
-  { kind: "row", row: { label: "Restore", on: "RestoreWallet", restoreMode: "full" } },
-
   { kind: "section", title: "Provider Settings" },
   { kind: "row", row: { label: "Arkade", on: "ArkadeSettings" } },
 
   { kind: "section", title: "Advanced settings" },
   { kind: "row", row: { label: "Logs", on: "Logs" } },
+  { kind: "row", row: { label: "Connected node", on: "ConnectedNode" } },
+  { kind: "row", row: { label: "Hardware wallet", stub: true } },
+  { kind: "row", row: { label: "Multisig", stub: true } },
+  { kind: "row", row: { label: "Backup", on: "AdvancedBackup" } },
   { kind: "row", row: { label: "Reset app", on: "ResetApp", danger: true } },
 
   { kind: "row", row: { label: "About", on: "About" } },
@@ -70,14 +65,6 @@ const BLOCKS: Block[] = [
 
 export function SettingsScreen() {
   const navigation = useNavigation<RootNav>();
-
-  const go = (target: NavTarget, restoreMode?: "full") => {
-    if (target === "RestoreWallet") {
-      navigation.navigate("RestoreWallet", { mode: restoreMode ?? "full" });
-    } else {
-      navigation.navigate(target);
-    }
-  };
 
   return (
     <ScreenChrome logoScale={0.77}>
@@ -101,7 +88,7 @@ export function SettingsScreen() {
               style={styles.row}
               onPress={() => {
                 if (!row.on) return;
-                go(row.on, row.restoreMode);
+                navigation.navigate(row.on);
               }}
             >
               <Text style={[styles.rowLabel, row.danger && styles.dangerLabel]}>

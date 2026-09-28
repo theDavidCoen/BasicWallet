@@ -10,6 +10,17 @@ function queueFiatPrefsBackupSync(reason: string): void {
   void import("../nostr/backupSync")
     .then(async (m) => {
       await m.markBackupPackageDirty();
+      // Home channel: flush immediately so remote cipher matches local fiatMode
+      // before uninstall / cross-device restore. Debounced queue can leave a
+      // stale fiatMode:true on the server after Exit.
+      const meta = await import("../nostr/backupPackage").then((b) =>
+        b.readBackupMeta(),
+      );
+      if (meta?.enabled && meta.channel === "home") {
+        await m.unlockBackupPassphraseSession();
+        await m.syncEncryptedBackupNow(reason);
+        return;
+      }
       m.queueEncryptedBackupSync(reason);
     })
     .catch((e) => console.warn("[basic] fiat prefs backup dirty failed", e));
@@ -70,7 +81,7 @@ export async function readFiatModeState(
     if (!raw) return { ...DEFAULT_STATE };
     const parsed = JSON.parse(raw) as Partial<FiatModeState>;
     return {
-      fiatMode: Boolean(parsed.fiatMode),
+      fiatMode: parsed.fiatMode === true,
       labelTouched: Boolean(parsed.labelTouched),
       lastSwapId: typeof parsed.lastSwapId === "string" ? parsed.lastSwapId : null,
       pendingJob:
@@ -107,7 +118,7 @@ export async function writeFiatModeState(
   if (
     opts?.syncBackup !== false &&
     patch.fiatMode !== undefined &&
-    Boolean(patch.fiatMode) !== Boolean(prev.fiatMode)
+    (patch.fiatMode === true) !== (prev.fiatMode === true)
   ) {
     queueFiatPrefsBackupSync(`fiatMode:${walletId.slice(0, 8)}`);
   }

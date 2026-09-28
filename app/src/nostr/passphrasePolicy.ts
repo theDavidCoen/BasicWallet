@@ -41,3 +41,35 @@ export function validateBackupPassphrase(
   }
   return { ok: true, passphrase: value };
 }
+
+/** Live checklist for enable / Next CTAs (does not replace validateBackupPassphrase). */
+export type BackupPassphraseChecklist = {
+  minLength: boolean;
+  hasLetter: boolean;
+  hasDigit: boolean;
+  hasSpecial: boolean;
+  /** When confirm is provided; otherwise true so callers can ignore. */
+  matchesConfirm: boolean;
+  allOk: boolean;
+};
+
+export function backupPassphraseChecklist(
+  passphrase: string,
+  confirm?: string,
+): BackupPassphraseChecklist {
+  const minLength = passphrase.length >= 12;
+  const hasLetter = HAS_LETTER.test(passphrase);
+  const hasDigit = HAS_DIGIT.test(passphrase);
+  const hasSpecial = HAS_SPECIAL.test(passphrase);
+  const matchesConfirm =
+    confirm === undefined ? true : confirm.length > 0 && passphrase === confirm;
+  const rulesOk = minLength && hasLetter && hasDigit && hasSpecial;
+  return {
+    minLength,
+    hasLetter,
+    hasDigit,
+    hasSpecial,
+    matchesConfirm,
+    allOk: rulesOk && matchesConfirm,
+  };
+}
