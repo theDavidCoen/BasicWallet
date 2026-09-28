@@ -1,5 +1,5 @@
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -12,33 +12,27 @@ import {
 } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
-import { mnemonicFromEntropy, randomEntropy32 } from "../onboarding/mnemonicFromEntropy";
+import { BackupPassphraseLiveRules } from "../components/BackupPassphraseLiveRules";
+import { PassphraseInput } from "../components/PassphraseInput";
 import {
   DEFAULT_NOSTR_RELAYS,
-  PASSPHRASE_LOSS_CAPTION,
   disableEncryptedBackup,
-  enableEncryptedBackup,
   readBackupMeta,
   writeBackupMeta,
   type BackupPackageMeta,
 } from "../nostr/backupPackage";
-import {
-  publishEncryptedBackupToRelays,
-  rememberPublishMeta,
-} from "../nostr/backupBroadcast";
 import {
   hasSessionBackupPassphrase,
   persistBackupPassphrase,
   syncEncryptedBackupNow,
   unlockBackupPassphraseSession,
 } from "../nostr/backupSync";
-import { BACKUP_PASSPHRASE_HINT, BACKUP_PASSPHRASE_RULES, validateBackupPassphrase } from "../nostr/passphrasePolicy";
+import { BACKUP_PASSPHRASE_HINT, validateBackupPassphrase } from "../nostr/passphrasePolicy";
+import { backupPassphraseChecklist } from "../nostr/passphrasePolicy";
 import { ensureNostrIdentity, hasNostrIdentity } from "../nostr/identityStore";
 import { requireUserPresence } from "../security/userPresence";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
-import { useWallet } from "../wallet/WalletProvider";
-import { PassphraseInput } from "../components/PassphraseInput";
 
 const MAX_CUSTOM_RELAYS = 3;
 
@@ -57,10 +51,9 @@ function customRelaysFromMeta(meta: BackupPackageMeta | null): string[] {
     .slice(0, MAX_CUSTOM_RELAYS);
 }
 
-/** Penpot 12d — enable / disable Nostr AEAD package + passphrase. */
+/** Penpot 12d — enable / disable Nostr AEAD package + passphrase. Next → Recap. */
 export function NostrBackupScreen() {
   const navigation = useNavigation<RootNav>();
-  const { hasWallet, provisionFromMnemonic, noteLocalSend } = useWallet();
   const [passphrase, setPassphrase] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
@@ -68,7 +61,11 @@ export function NostrBackupScreen() {
   const [nostrEnabled, setNostrEnabled] = useState(false);
   const [backupMeta, setBackupMeta] = useState<BackupPackageMeta | null>(null);
   const [sessionReady, setSessionReady] = useState(false);
-  const wasEmpty = !hasWallet;
+
+  const checklist = useMemo(
+    () => backupPassphraseChecklist(passphrase, confirm),
+    [passphrase, confirm],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -123,22 +120,6 @@ export function NostrBackupScreen() {
     setCustomRelays((prev) => prev.filter((_, i) => i !== index));
   }
 
-  async function publishAfterPack(meta: BackupPackageMeta): Promise<string> {
-    try {
-      const pub = await publishEncryptedBackupToRelays(meta.relays);
-      const next = await rememberPublishMeta(meta, pub);
-      setBackupMeta(next);
-      const failNote = pub.failedRelays.length
-        ? ` (${pub.failedRelays.length} relay(s) failed)`
-        : "";
-      return `Published NIP-44 ciphertext to ${pub.okRelays.length} relay(s)${failNote}.`;
-    } catch (e) {
-      return `Local package saved; relay publish failed: ${
-        e instanceof Error ? e.message : "unknown"
-      }`;
-    }
-  }
-
   async function persistRelays(meta: BackupPackageMeta): Promise<BackupPackageMeta | null> {
     const relays = buildRelayList();
     if (!relays) return null;
@@ -148,7 +129,7 @@ export function NostrBackupScreen() {
     return next;
   }
 
-  async function onEnable() {
+  async function onNext() {
     const check = validateBackupPassphrase(passphrase);
     if (!check.ok) {
       Alert.alert("Invalid passphrase", check.message);
@@ -163,53 +144,19 @@ export function NostrBackupScreen() {
 
     setBusy(true);
     try {
-      const auth = await requireUserPresence("Confirm to enable Nostr backup");
-      if (!auth.ok) {
-        Alert.alert("Authentication required", "Backup was not enabled.");
-        return;
-      }
-      // Rematerialize / WS replay after the bio sheet must not look like fresh receives.
-      noteLocalSend();
-
       if (!(await hasNostrIdentity())) {
         await ensureNostrIdentity();
       }
-
-      // Onboarding Path C: create wallet before packaging if none yet.
-      if (!hasWallet) {
-        const mnemonic = mnemonicFromEntropy(await randomEntropy32());
-        await provisionFromMnemonic(mnemonic, "device-only");
-      }
-
-      await ensureNostrIdentity();
-      const meta = await enableEncryptedBackup({
+      navigation.navigate("BackupRecap", {
         channel: "nostr",
-        passphrase,
+        passphrase: check.passphrase,
         relays,
       });
-      setNostrEnabled(true);
-      setBackupMeta(meta);
-
-      const publishNote = await publishAfterPack(meta);
-
-      const afterEnable = wasEmpty ? ("Ready" as const) : ("AdvancedBackup" as const);
-      Alert.alert(
-        "Nostr backup enabled",
-        `${meta.walletCount} wallet(s)` +
-          (meta.txMetaCount ? `, ${meta.txMetaCount} note(s)` : "") +
-          " packaged (passphrase AEAD).\n\n" +
-          publishNote +
-          "\n\nNext: save your nsec offline. You need nsec + passphrase to restore.",
-        [
-          {
-            text: "Export nsec",
-            onPress: () =>
-              navigation.replace("ExportNsecWarning", { afterEnable }),
-          },
-        ],
-      );
     } catch (e) {
-      Alert.alert("Could not enable backup", e instanceof Error ? e.message : "Unknown error");
+      Alert.alert(
+        "Could not continue",
+        e instanceof Error ? e.message : "Unknown error",
+      );
     } finally {
       setBusy(false);
     }
@@ -341,7 +288,11 @@ export function NostrBackupScreen() {
 
         {!nostrEnabled ? (
           <>
-            <Text style={styles.label}>backup passphrase</Text>
+            <Text style={[styles.section, { marginTop: 28 }]}>Backup passphrase</Text>
+            <Text style={[ui.hint, { marginTop: 8, marginBottom: 4 }]}>
+              {BACKUP_PASSPHRASE_HINT}
+            </Text>
+            <Text style={styles.label}>passphrase</Text>
             <PassphraseInput
               value={passphrase}
               onChangeText={setPassphrase}
@@ -354,24 +305,21 @@ export function NostrBackupScreen() {
               onChangeText={setConfirm}
               placeholder="••••••••••••"
             />
-
-            <Text style={[ui.hint, { marginTop: 16 }]}>
-              {BACKUP_PASSPHRASE_RULES}
-              {"\n\n"}
-              {BACKUP_PASSPHRASE_HINT}
-              {"\n\n"}
-              {PASSPHRASE_LOSS_CAPTION}
-            </Text>
+            <BackupPassphraseLiveRules passphrase={passphrase} confirm={confirm} />
 
             <Pressable
-              style={[ui.primaryBtn, busy && { opacity: 0.6 }]}
-              disabled={busy}
-              onPress={() => void onEnable()}
+              style={[
+                ui.primaryBtn,
+                { marginTop: 24 },
+                (busy || !checklist.allOk) && { opacity: 0.6 },
+              ]}
+              disabled={busy || !checklist.allOk}
+              onPress={() => void onNext()}
             >
               {busy ? (
                 <ActivityIndicator color="#000" />
               ) : (
-                <Text style={ui.primaryBtnText}>Enable Nostr backup</Text>
+                <Text style={ui.primaryBtnText}>Next</Text>
               )}
             </Pressable>
           </>
@@ -433,6 +381,11 @@ export function NostrBackupScreen() {
 }
 
 const styles = StyleSheet.create({
+  section: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 12,
+    color: colors.fg,
+  },
   label: {
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 12,

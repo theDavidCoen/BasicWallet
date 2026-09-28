@@ -42,6 +42,8 @@ export const BACKUP_REMINDER_HIDDEN_ROUTES = new Set<string>([
   "AdvancedBackup",
   "NostrBackup",
   "HomeServerBackup",
+  "BackupRecap",
+  "BackupEnabledSuccess",
   "ExportRecoveryPhrase",
   "NostrIdentity",
   "ExportNsecWarning",

@@ -11,6 +11,18 @@ export type RootStackParamList = {
   AdvancedBackup: undefined;
   NostrBackup: undefined;
   HomeServerBackup: undefined;
+  /** Path C enable Recap — reveal nsec + passphrase, then enable. */
+  BackupRecap: {
+    channel: "nostr" | "home";
+    passphrase: string;
+    relays?: string[];
+    homeUrl?: string;
+    homeToken?: string | null;
+    homeUser?: string | null;
+    homePassword?: string | null;
+  };
+  /** Brief success after enable → auto Home after 2s. */
+  BackupEnabledSuccess: { channel: "nostr" | "home" };
   /** `seed` = Add Wallet (Arkade only). `full` = Settings / onboarding (seed | nsec | server). */
   RestoreWallet: { mode?: "full" | "seed" };
   Ready: undefined;

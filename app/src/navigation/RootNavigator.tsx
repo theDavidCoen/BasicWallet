@@ -32,6 +32,8 @@ import { ExportRecoveryPhraseScreen } from "../screens/ExportRecoveryPhraseScree
 import { AdvancedBackupScreen } from "../screens/AdvancedBackupScreen";
 import { NostrBackupScreen } from "../screens/NostrBackupScreen";
 import { HomeServerBackupScreen } from "../screens/HomeServerBackupScreen";
+import { BackupRecapScreen } from "../screens/BackupRecapScreen";
+import { BackupEnabledSuccessScreen } from "../screens/BackupEnabledSuccessScreen";
 import { RestoreWalletScreen } from "../screens/RestoreWalletScreen";
 import { NostrIdentityScreen } from "../screens/NostrIdentityScreen";
 import { ArchivedWalletsScreen } from "../screens/ArchivedWalletsScreen";
@@ -115,6 +117,8 @@ export function RootNavigator() {
             <Stack.Screen name="AdvancedBackup" component={AdvancedBackupScreen} />
             <Stack.Screen name="NostrBackup" component={NostrBackupScreen} />
             <Stack.Screen name="HomeServerBackup" component={HomeServerBackupScreen} />
+            <Stack.Screen name="BackupRecap" component={BackupRecapScreen} />
+            <Stack.Screen name="BackupEnabledSuccess" component={BackupEnabledSuccessScreen} />
             <Stack.Screen name="RestoreWallet" component={RestoreWalletScreen} />
             <Stack.Screen name="Ready" component={ReadyScreen} />
             <Stack.Screen name="Home" component={HomeScreen} />

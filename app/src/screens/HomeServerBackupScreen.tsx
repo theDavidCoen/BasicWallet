@@ -1,5 +1,5 @@
 import { useNavigation } from "@react-navigation/native";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -11,35 +11,32 @@ import {
 } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
-import { mnemonicFromEntropy, randomEntropy32 } from "../onboarding/mnemonicFromEntropy";
-import {
-  enableEncryptedBackup,
-  PASSPHRASE_LOSS_CAPTION,
-  readCipherBlob,
-} from "../nostr/backupPackage";
-import { BACKUP_PASSPHRASE_HINT, BACKUP_PASSPHRASE_RULES, validateBackupPassphrase } from "../nostr/passphrasePolicy";
-import { ensureNostrIdentity, hasNostrIdentity } from "../nostr/identityStore";
+import { BackupPassphraseLiveRules } from "../components/BackupPassphraseLiveRules";
+import { PassphraseInput } from "../components/PassphraseInput";
+import { BACKUP_PASSPHRASE_HINT } from "../nostr/passphrasePolicy";
+import { backupPassphraseChecklist, validateBackupPassphrase } from "../nostr/passphrasePolicy";
 import { homeCredsHaveAuth } from "../nostr/homeServerCreds";
-import { uploadHomeBackupCipher } from "../nostr/homeServerWebdav";
-import { requireUserPresence } from "../security/userPresence";
+import { ensureNostrIdentity, hasNostrIdentity } from "../nostr/identityStore";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
-import { useWallet } from "../wallet/WalletProvider";
-import { PassphraseInput } from "../components/PassphraseInput";
 
-/** Penpot 12e — home server channel (WebDAV / Nextcloud + optional Bearer token). */
+/** Penpot 12e — home server channel; Next → Backup Recap (enable there). */
 export function HomeServerBackupScreen() {
   const navigation = useNavigation<RootNav>();
-  const { hasWallet, provisionFromMnemonic } = useWallet();
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [username, setUsername] = useState("");
   const [appPassword, setAppPassword] = useState("");
   const [passphrase, setPassphrase] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
-  const wasEmpty = !hasWallet;
 
-  async function onEnable() {
+  const checklist = useMemo(
+    () => backupPassphraseChecklist(passphrase, confirm),
+    [passphrase, confirm],
+  );
+
+  async function onNext() {
     if (!url.trim()) {
       Alert.alert("Server URL required", "Enter your home server or Nextcloud URL.");
       return;
@@ -70,54 +67,29 @@ export function HomeServerBackupScreen() {
       Alert.alert("Invalid passphrase", check.message);
       return;
     }
+    if (passphrase !== confirm) {
+      Alert.alert("Mismatch", "Passphrase and confirmation do not match.");
+      return;
+    }
 
     setBusy(true);
     try {
-      const auth = await requireUserPresence("Confirm to enable home server backup");
-      if (!auth.ok) {
-        Alert.alert("Authentication required", "Backup was not enabled.");
-        return;
-      }
-
       if (!(await hasNostrIdentity())) {
         await ensureNostrIdentity();
       }
-
-      if (!hasWallet) {
-        const mnemonic = mnemonicFromEntropy(await randomEntropy32());
-        await provisionFromMnemonic(mnemonic, "device-only");
-      }
-
-      await ensureNostrIdentity();
-      const meta = await enableEncryptedBackup({
+      navigation.navigate("BackupRecap", {
         channel: "home",
-        passphrase,
-        homeUrl: url,
+        passphrase: check.passphrase,
+        homeUrl: url.trim(),
         homeToken: creds.token,
         homeUser: creds.username,
         homePassword: creds.password,
       });
-
-      const blob = await readCipherBlob();
-      if (!blob) throw new Error("Local backup package missing after enable");
-      const { fileUrl } = await uploadHomeBackupCipher(url, blob, creds);
-
-      Alert.alert(
-        "Home backup enabled",
-        `${meta.walletCount} wallet(s) uploaded to\n${fileUrl}\n\n` +
-          "Next: save your nsec offline. You need nsec + passphrase to restore.",
-        [
-          {
-            text: "Export nsec",
-            onPress: () =>
-              navigation.replace("ExportNsecWarning", {
-                afterEnable: wasEmpty ? "Ready" : "AdvancedBackup",
-              }),
-          },
-        ],
-      );
     } catch (e) {
-      Alert.alert("Could not enable backup", e instanceof Error ? e.message : "Unknown error");
+      Alert.alert(
+        "Could not continue",
+        e instanceof Error ? e.message : "Unknown error",
+      );
     } finally {
       setBusy(false);
     }
@@ -132,8 +104,7 @@ export function HomeServerBackupScreen() {
         <Text style={ui.title}>HOME SERVER</Text>
         <Text style={ui.caption}>
           Same encrypted package as Nostr.{"\n"}
-          Nextcloud WebDAV or Bearer token.{"\n"}
-          Passphrase required.
+          Nextcloud WebDAV or Bearer token.
         </Text>
 
         <Text style={styles.label}>server URL</Text>
@@ -186,30 +157,37 @@ export function HomeServerBackupScreen() {
           secureTextEntry
         />
 
-        <Text style={styles.label}>backup passphrase</Text>
+        <Text style={[styles.section, { marginTop: 28 }]}>Backup passphrase</Text>
+        <Text style={[ui.hint, { marginTop: 8, marginBottom: 4 }]}>
+          {BACKUP_PASSPHRASE_HINT}
+        </Text>
+        <Text style={styles.label}>passphrase</Text>
         <PassphraseInput
           value={passphrase}
           onChangeText={setPassphrase}
           placeholder="••••••••••••"
         />
-
-        <Text style={[ui.hint, { marginTop: 16 }]}>
-          {BACKUP_PASSPHRASE_RULES}
-          {"\n\n"}
-          {BACKUP_PASSPHRASE_HINT}
-          {"\n\n"}
-          {PASSPHRASE_LOSS_CAPTION}
-        </Text>
+        <Text style={styles.label}>confirm passphrase</Text>
+        <PassphraseInput
+          value={confirm}
+          onChangeText={setConfirm}
+          placeholder="••••••••••••"
+        />
+        <BackupPassphraseLiveRules passphrase={passphrase} confirm={confirm} />
 
         <Pressable
-          style={[ui.primaryBtn, busy && { opacity: 0.6 }]}
-          disabled={busy}
-          onPress={() => void onEnable()}
+          style={[
+            ui.primaryBtn,
+            { marginTop: 24 },
+            (busy || !checklist.allOk) && { opacity: 0.6 },
+          ]}
+          disabled={busy || !checklist.allOk}
+          onPress={() => void onNext()}
         >
           {busy ? (
             <ActivityIndicator color="#000" />
           ) : (
-            <Text style={ui.primaryBtnText}>Enable home backup</Text>
+            <Text style={ui.primaryBtnText}>Next</Text>
           )}
         </Pressable>
       </ScrollView>
