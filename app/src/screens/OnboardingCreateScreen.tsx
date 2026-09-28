@@ -46,7 +46,7 @@ const PENPOT = {
 /** Matches BasicLogo height math (VIEW_H * 0.55 * scale). */
 const LOGO_H = Math.round(62 * 0.55 * PENPOT.logoScale);
 
-function BluetoothIcon({ size = 22, color = colors.fg }: { size?: number; color?: string }) {
+function BluetoothIcon({ size = 18, color = colors.fg }: { size?: number; color?: string }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" accessibilityElementsHidden>
       <Path
@@ -220,24 +220,30 @@ export function OnboardingCreateScreen() {
         >
           Continue without passkey
         </Text>
+      </View>
 
+      <View style={{ flex: 1 }} />
+
+      <View style={styles.footerChips}>
         <Pressable
-          style={styles.pairRow}
+          style={styles.chip}
           onPress={() => void openPairInfo()}
           accessibilityRole="button"
           accessibilityLabel="pair"
           accessibilityHint={pairBusy ? pairStatus : "Pair account with Bluetooth"}
         >
           <BluetoothIcon />
-          <Text style={styles.pairLabel}>pair</Text>
+          <Text style={styles.chipText}>pair</Text>
+        </Pressable>
+        <Pressable
+          style={styles.chip}
+          onPress={() => void goCreate("restore")}
+          accessibilityRole="button"
+          accessibilityLabel="Restore options"
+        >
+          <Text style={styles.chipText}>Restore options</Text>
         </Pressable>
       </View>
-
-      <View style={{ flex: 1 }} />
-
-      <Text style={styles.footer} onPress={() => void goCreate("restore")}>
-        Seed phrase or nsec? Restore here.
-      </Text>
 
       <InteractiveBottomSheet
         open={pairInfoOpen}
@@ -298,26 +304,30 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingVertical: 8,
   },
-  pairRow: {
+  footerChips: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 10,
+    paddingBottom: 8,
+  },
+  chip: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 10,
-    marginTop: 20,
-    paddingVertical: 10,
+    gap: 8,
+    minHeight: 44,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
   },
-  pairLabel: {
+  chipText: {
     fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 14,
-    color: colors.caption,
-  },
-  footer: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 14,
-    color: colors.caption,
-    textAlign: "center",
-    // Penpot restore ≈ y 780 → ~40px above frame bottom before system inset
-    paddingBottom: 8,
+    fontSize: 13,
+    color: colors.fg,
   },
   sheetTitle: {
     fontFamily: "JetBrainsMono_700Bold",
