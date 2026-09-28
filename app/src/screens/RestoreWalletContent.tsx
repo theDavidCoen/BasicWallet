@@ -251,7 +251,7 @@ export function RestoreWalletContent({
           (notesRestored ? `\n${notesRestored} note(s)` : "") +
           (contactsRestored ? `\n${contactsRestored} contact(s)` : "") +
           (prefsRestored ? `\n${prefsRestored} Fiat/Maxi pref(s)` : "") +
-          ".",
+          "\n\nNostr backup is on (same passphrase as restore).",
       );
       onDone("Ready");
     } catch (e) {
@@ -374,7 +374,7 @@ export function RestoreWalletContent({
           (notesRestored ? `\n${notesRestored} note(s)` : "") +
           (contactsRestored ? `\n${contactsRestored} contact(s)` : "") +
           (prefsRestored ? `\n${prefsRestored} Fiat/Maxi pref(s)` : "") +
-          ".",
+          "\n\nHome server backup is on (same URL + passphrase as restore).",
       );
       onDone("Ready");
     } catch (e) {

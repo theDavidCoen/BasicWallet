@@ -539,9 +539,9 @@ export async function writeBackupMeta(meta: BackupPackageMeta): Promise<void> {
 }
 
 /**
- * After Path C restore, re-arm local backup meta so dirty sync / Exit can
- * re-upload. Without this, Home restore left channel disabled and Exit never
- * flushed fiatMode:false to the server (stale true on next restore).
+ * After Path C restore, re-arm local backup meta so the channel is ON without
+ * going through Recap/Enable again. Persisted passphrase + cipher stay from
+ * the restore form; we only write meta + home creds + clear the reminder.
  */
 export async function armBackupMetaAfterRestore(input: {
   channel: BackupChannel;
@@ -570,6 +570,9 @@ export async function armBackupMetaAfterRestore(input: {
     contactsCount: input.contactsCount,
     prefsCount: input.prefsCount,
   };
+  if (input.channel === "home" && !meta.homeUrl) {
+    throw new Error("Home backup arm requires server URL");
+  }
   await writeBackupMeta(meta);
   if (input.channel === "home") {
     const { saveHomeServerCreds } = await import("./homeServerCreds");
@@ -579,14 +582,31 @@ export async function armBackupMetaAfterRestore(input: {
       password: input.homePassword?.trim() || null,
     });
   }
-  const { clearBackupPackageDirty } = await import("./backupSync");
+  const {
+    clearBackupPackageDirty,
+    unlockBackupPassphraseSession,
+    hasSessionBackupPassphrase,
+  } = await import("./backupSync");
   await clearBackupPackageDirty();
+  // Restore already called persistBackupPassphrase; ensure RAM session is warm
+  // so dirty sync / Update work without re-entering the passphrase.
+  if (!hasSessionBackupPassphrase()) {
+    await unlockBackupPassphraseSession();
+  }
+  const { clearBackupReminder } = await import("../wallet/backupReminder");
+  await clearBackupReminder();
+
+  const verify = await readBackupMeta();
+  if (!verify?.enabled || verify.channel !== input.channel) {
+    throw new Error("Backup meta failed to arm after restore");
+  }
   console.warn("[basic] backup meta armed after restore", {
-    channel: meta.channel,
-    walletCount: meta.walletCount,
-    prefsCount: meta.prefsCount ?? 0,
+    channel: verify.channel,
+    walletCount: verify.walletCount,
+    prefsCount: verify.prefsCount ?? 0,
+    homeUrl: verify.homeUrl ? "set" : null,
   });
-  return meta;
+  return verify;
 }
 
 export async function disableEncryptedBackup(): Promise<void> {
