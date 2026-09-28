@@ -18,6 +18,7 @@ import { ScreenChrome } from "../components/ScreenChrome";
 import {
   broadcastCipherReply,
   cancelPairBle,
+  ensureBlePermissions,
   scanRequesterHello,
 } from "../pair/pairBleTransport";
 import {
@@ -60,6 +61,18 @@ export function PairBluetoothScreen() {
     const ac = new AbortController();
     abortRef.current = ac;
     setPhase("scanning");
+    setStatus("Requesting Bluetooth permission…");
+    const permitted = await ensureBlePermissions();
+    if (ac.signal.aborted) return;
+    if (!permitted) {
+      setPhase("idle");
+      setStatus("");
+      Alert.alert(
+        "Bluetooth permission required",
+        "Allow Bluetooth (and nearby devices) for Basic so it can scan and pair.",
+      );
+      return;
+    }
     setStatus("Scanning for nearby Basic…");
     try {
       const hello = await scanRequesterHello({

@@ -32,26 +32,57 @@ function emitter(): NativeEventEmitter {
   return new NativeEventEmitter(NativeModules.BLEAdvertiser);
 }
 
+function androidApiLevel(): number {
+  if (typeof Platform.Version === "number") return Platform.Version;
+  const n = parseInt(String(Platform.Version), 10);
+  return Number.isFinite(n) ? n : 30;
+}
+
+function isGranted(status: string | undefined): boolean {
+  return status === PermissionsAndroid.RESULTS.GRANTED || status === "granted";
+}
+
+/**
+ * Request runtime BLE permissions so scan/advertise can prompt the OS dialog.
+ * Android 12+: SCAN / ADVERTISE / CONNECT. Older: fine/coarse location.
+ */
 export async function ensureBlePermissions(): Promise<boolean> {
   if (Platform.OS !== "android") return true;
-  const api = typeof Platform.Version === "number" ? Platform.Version : 30;
-  const wanted: string[] = [];
-  if (api >= 31) {
-    wanted.push(
-      "android.permission.BLUETOOTH_SCAN",
-      "android.permission.BLUETOOTH_ADVERTISE",
-      "android.permission.BLUETOOTH_CONNECT",
-    );
-  } else {
-    wanted.push(
-      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-      PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
-    );
+
+  const api = androidApiLevel();
+  const wanted =
+    api >= 31
+      ? [
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE,
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+        ]
+      : [
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+          PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
+        ];
+
+  const missing: string[] = [];
+  for (const perm of wanted) {
+    try {
+      const ok = await PermissionsAndroid.check(perm);
+      if (!ok) missing.push(perm);
+    } catch {
+      missing.push(perm);
+    }
   }
-  const result = await PermissionsAndroid.requestMultiple(wanted as never[]);
-  return Object.values(result).every(
-    (v) => v === PermissionsAndroid.RESULTS.GRANTED || v === "granted",
-  );
+  if (missing.length === 0) return true;
+
+  try {
+    const result = await PermissionsAndroid.requestMultiple(
+      missing as (typeof PermissionsAndroid.PERMISSIONS)[keyof typeof PermissionsAndroid.PERMISSIONS][],
+    );
+    return missing.every((perm) =>
+      isGranted(result[perm as keyof typeof result]),
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function prepareAdapter(): Promise<void> {

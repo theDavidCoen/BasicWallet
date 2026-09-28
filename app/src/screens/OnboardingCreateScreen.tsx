@@ -11,7 +11,11 @@ import { colors } from "../theme/colors";
 import { PasskeyPrfUnavailableError } from "../onboarding/passkeyPrf";
 import { needsOnboardingSecurityGate } from "../security/onboardingSecurityGate";
 import type { OnboardingContinueTo } from "../security/onboardingSecurityGate";
-import { cancelPairBle, runRequesterBleSession } from "../pair/pairBleTransport";
+import {
+  cancelPairBle,
+  ensureBlePermissions,
+  runRequesterBleSession,
+} from "../pair/pairBleTransport";
 import {
   applyPairLoginPackage,
   decodePairLoginPackage,
@@ -61,9 +65,12 @@ export function OnboardingCreateScreen() {
   const [pairInfoOpen, setPairInfoOpen] = useState(false);
   const [pairStatus, setPairStatus] = useState("Waiting for nearby device…");
   const [pairBusy, setPairBusy] = useState(false);
+  const [pairArmed, setPairArmed] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
+    if (!pairArmed) return;
+
     let cancelled = false;
     const ac = new AbortController();
     abortRef.current = ac;
@@ -117,7 +124,17 @@ export function OnboardingCreateScreen() {
       ac.abort();
       void cancelPairBle();
     };
-  }, [beginQuietImportSync, navigation, selectWallet]);
+  }, [pairArmed, beginQuietImportSync, navigation, selectWallet]);
+
+  async function openPairInfo() {
+    setPairInfoOpen(true);
+    const ok = await ensureBlePermissions();
+    if (!ok) {
+      setPairStatus("Bluetooth permission needed to pair nearby");
+      return;
+    }
+    setPairArmed(true);
+  }
 
   async function goCreate(continueTo: OnboardingContinueTo) {
     abortRef.current?.abort();
@@ -162,6 +179,7 @@ export function OnboardingCreateScreen() {
   const tagMarginTop = PENPOT.tagY - PENPOT.logoY - LOGO_H;
   const btnMarginTop = PENPOT.btn1Y - PENPOT.tagY - 48;
   const btnGap = PENPOT.btn2Y - PENPOT.btn1Y - PENPOT.btnH;
+  const sheetBottomPad = Math.max(insets.bottom, 48) + 20;
 
   return (
     <View
@@ -205,13 +223,13 @@ export function OnboardingCreateScreen() {
 
         <Pressable
           style={styles.pairRow}
-          onPress={() => setPairInfoOpen(true)}
+          onPress={() => void openPairInfo()}
           accessibilityRole="button"
-          accessibilityLabel="tap to pair"
+          accessibilityLabel="pair"
           accessibilityHint={pairBusy ? pairStatus : "Pair account with Bluetooth"}
         >
           <BluetoothIcon />
-          <Text style={styles.pairLabel}>tap to pair</Text>
+          <Text style={styles.pairLabel}>pair</Text>
         </Pressable>
       </View>
 
@@ -224,16 +242,17 @@ export function OnboardingCreateScreen() {
       <InteractiveBottomSheet
         open={pairInfoOpen}
         onDismiss={() => setPairInfoOpen(false)}
-        visibleFraction={0.42}
+        visibleFraction={0.58}
         fitContent
         portal
       >
         <Text style={styles.sheetTitle}>Pair account with Bluetooth</Text>
-        <Text style={styles.sheetBody}>
+        <Text style={[styles.sheetBody, { paddingBottom: sheetBottomPad }]}>
           A logged-in Basic phone can approve pairing over Bluetooth and move your
-          wallets here. Nothing is shown in cleartext. Passkeys are not transferred;
-          enable Backup afterward if the other phone did not already have Nostr or
-          Home backup on.
+          wallets here. Grant Bluetooth permission when prompted so this phone can
+          advertise and receive. Nothing is shown in cleartext. Passkeys are not
+          transferred; enable Backup afterward if the other phone did not already
+          have Nostr or Home backup on.
         </Text>
       </InteractiveBottomSheet>
     </View>
@@ -313,7 +332,5 @@ const styles = StyleSheet.create({
     color: colors.caption,
     textAlign: "center",
     lineHeight: 18,
-    // Extra pad so the last line clears OS nav (sheet also applies insets).
-    paddingBottom: 28,
   },
 });
