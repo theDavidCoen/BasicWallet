@@ -1,6 +1,6 @@
 {
   "name": "basic-wallet",
-  "version": "0.7.0-alpha.36",
+  "version": "0.7.0-alpha.37",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -8,8 +8,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
-    "prebuild:android": "expo prebuild --platform android --clean",
-    "postinstall": "bash scripts/patch-ble-advertiser.sh"
+    "prebuild:android": "expo prebuild --platform android --clean"
   },
   "dependencies": {
     "@arkade-os/sdk": "^0.5.0-rc.10",
@@ -38,7 +37,7 @@
     "nostr-tools": "^2.25.2",
     "react": "19.2.3",
     "react-native": "0.86.3",
-    "react-native-ble-advertiser": "^0.0.17",
+    "react-native-ble-plx": "^3.5.1",
     "react-native-gesture-handler": "~2.32.0",
     "react-native-passkeys": "^0.4.2",
     "react-native-qrcode-svg": "^6.3.24",

@@ -15,6 +15,7 @@ import {
   cancelPairBle,
   ensureBlePermissions,
   runRequesterBleSession,
+  sendRequesterAck,
 } from "../pair/pairBleTransport";
 import {
   applyPairLoginPackage,
@@ -96,9 +97,13 @@ export function OnboardingCreateScreen() {
         const envelope = decodeWireEnvelope(wire);
         const plain = decryptPairPayload(envelope, eph.sk);
         const pkg = decodePairLoginPackage(plain);
+        setPairStatus("Applying login…");
         const applied = await applyPairLoginPackage(pkg);
         beginQuietImportSync();
         await selectWallet(applied.preferredWalletId);
+        if (cancelled || ac.signal.aborted) return;
+        setPairStatus("Confirming with the other phone…");
+        await sendRequesterAck(true);
         if (applied.backupReArmed) {
           Alert.alert(
             "Paired",
@@ -110,11 +115,13 @@ export function OnboardingCreateScreen() {
         navigation.reset({ index: 0, routes: [{ name: "Home" }] });
       } catch (e) {
         if (cancelled || ac.signal.aborted) return;
-        setPairStatus(
-          e instanceof Error
-            ? e.message
-            : "Waiting for nearby device…",
-        );
+        const msg = e instanceof Error ? e.message : "Pairing failed";
+        try {
+          await sendRequesterAck(false, msg);
+        } catch {
+          /* best-effort NACK */
+        }
+        setPairStatus(msg);
       } finally {
         if (!cancelled) setPairBusy(false);
       }
@@ -282,10 +289,11 @@ export function OnboardingCreateScreen() {
           </View>
         ) : null}
         <Text style={[styles.sheetBody, { paddingBottom: sheetBottomPad }]}>
-          Grant Bluetooth permission when prompted so this phone can advertise.
-          Keep this screen open while the other phone scans. Nothing is shown in
-          cleartext. Passkeys are not transferred; enable Backup afterward if the
-          other phone did not already have Nostr or Home backup on.
+          Grant Bluetooth when prompted. Keep this screen open while the other
+          phone scans and connects. Transfer uses a short encrypted Bluetooth
+          link (not dozens of tiny ads). Passkeys are not transferred; enable
+          Backup afterward if the other phone did not already have Nostr or Home
+          backup on.
           {pairStatus ? `\n\n${pairStatus}` : ""}
         </Text>
       </InteractiveBottomSheet>

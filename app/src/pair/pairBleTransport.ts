@@ -1,39 +1,55 @@
 /**
- * BLE advertise/scan transport for Basic pair (chunked manufacturer data).
- * Uses react-native-ble-advertiser — no plaintext secrets on the air.
- *
- * Advertise uses manufacturer data only in the primary AD (≤31 bytes). Service
- * UUID is in the scan response (patched native). Scan filters by company ID.
+ * BLE GATT transport for Basic pair.
+ * Device 2 hosts a GATT server (native); Device 1 connects via react-native-ble-plx,
+ * reads lobby pub, writes ciphertext chunks (large MTU), waits for ACK after apply.
  */
 
 import { NativeEventEmitter, NativeModules, PermissionsAndroid, Platform } from "react-native";
-import BLEAdvertiser from "react-native-ble-advertiser";
+import { BleError, BleManager, Device, State } from "react-native-ble-plx";
 import {
   assembleChunks,
-  BASIC_PAIR_COMPANY_ID,
+  base64ToBytes,
+  BASIC_PAIR_ACK_UUID,
+  BASIC_PAIR_CIPHER_UUID,
+  BASIC_PAIR_LOBBY_UUID,
   BASIC_PAIR_SERVICE_UUID,
+  bytesToBase64,
   chunkBytes,
-  decodePairFrame,
-  encodePairFrame,
-  FRAME_PAYLOAD_MAX,
-  hash8Equal,
-  MSG_CIPHER,
-  MSG_HELLO,
-  type PairFrame,
+  decodeAckPayload,
+  decodeGattChunk,
+  encodeGattChunk,
+  GATT_CHUNK_PAYLOAD_DEFAULT,
+  GATT_CHUNK_PAYLOAD_LARGE,
+  lobbyHash8FromPub,
 } from "./pairProtocol";
 
 const PAIR_WINDOW_MS = 3 * 60 * 1000;
-/** Slow enough that stop/restart advertise on MIUI can settle between frames. */
-const BROADCAST_ROTATE_MS = 280;
+const SCAN_TIMEOUT_MS = 90_000;
+const ACK_TIMEOUT_MS = 60_000;
 
-type DeviceFoundEvent = {
-  manufData?: number[];
-  companyId?: number;
-  rssi?: number;
+type NativeGatt = {
+  startServer: (lobbyValueBase64: string) => Promise<boolean>;
+  sendAck: (ok: boolean, message: string | null) => Promise<boolean>;
+  stopServer: () => Promise<boolean>;
+  addListener: (eventName: string) => void;
+  removeListeners: (count: number) => void;
 };
 
-function emitter(): NativeEventEmitter {
-  return new NativeEventEmitter(NativeModules.BLEAdvertiser);
+function nativeGatt(): NativeGatt {
+  const mod = NativeModules.BasicPairGattServer as NativeGatt | undefined;
+  if (!mod) {
+    throw new Error(
+      "Bluetooth GATT server is unavailable on this build. Reinstall the latest Basic APK.",
+    );
+  }
+  return mod;
+}
+
+let bleManager: BleManager | null = null;
+
+function manager(): BleManager {
+  if (!bleManager) bleManager = new BleManager();
+  return bleManager;
 }
 
 function androidApiLevel(): number {
@@ -47,8 +63,7 @@ function isGranted(status: string | undefined): boolean {
 }
 
 /**
- * Request runtime BLE permissions so scan/advertise can prompt the OS dialog.
- * Android 12+: SCAN / ADVERTISE / CONNECT. Older: fine/coarse location.
+ * Request runtime BLE permissions so scan/advertise/connect can prompt the OS dialog.
  */
 export async function ensureBlePermissions(): Promise<boolean> {
   if (Platform.OS !== "android") return true;
@@ -81,110 +96,48 @@ export async function ensureBlePermissions(): Promise<boolean> {
     const result = await PermissionsAndroid.requestMultiple(
       missing as (typeof PermissionsAndroid.PERMISSIONS)[keyof typeof PermissionsAndroid.PERMISSIONS][],
     );
-    return missing.every((perm) =>
-      isGranted(result[perm as keyof typeof result]),
-    );
+    return missing.every((perm) => isGranted(result[perm as keyof typeof result]));
   } catch {
     return false;
   }
 }
 
-async function prepareAdapter(): Promise<void> {
-  BLEAdvertiser.setCompanyId(BASIC_PAIR_COMPANY_ID);
-  try {
-    const state = await BLEAdvertiser.getAdapterState();
-    if (String(state).toUpperCase().includes("OFF")) {
-      BLEAdvertiser.enableAdapter();
-    }
-  } catch {
-    /* best-effort */
-  }
-}
-
-async function stopAllBle(): Promise<void> {
-  try {
-    await BLEAdvertiser.stopBroadcast();
-  } catch {
-    /* ok */
-  }
-  try {
-    await BLEAdvertiser.stopScan();
-  } catch {
-    /* ok */
-  }
-}
-
-/** Open BLE scan; JS filters on Basic frame magic + company manuf data. */
-function startCompanyScan(): Promise<string> {
-  // Empty manuf array → native opens an unfiltered scan (see ble-advertiser patch).
-  return BLEAdvertiser.scan([], {
-    scanMode: BLEAdvertiser.SCAN_MODE_LOW_LATENCY ?? 2,
-    matchMode: BLEAdvertiser.MATCH_MODE_AGGRESSIVE ?? 1,
-    numberOfMatches: BLEAdvertiser.MATCH_NUM_MAX_ADVERTISEMENT ?? 3,
-    reportDelay: 0,
+async function waitForPoweredOn(timeoutMs = 15_000): Promise<void> {
+  const m = manager();
+  const current = await m.state();
+  if (current === State.PoweredOn) return;
+  await new Promise<void>((resolve, reject) => {
+    const t = setTimeout(() => {
+      sub.remove();
+      reject(new Error("Bluetooth is off. Turn it on and try again."));
+    }, timeoutMs);
+    const sub = m.onStateChange((state) => {
+      if (state === State.PoweredOn) {
+        clearTimeout(t);
+        sub.remove();
+        resolve();
+      }
+    }, true);
   });
 }
 
-function rotateBroadcast(
-  frames: number[][],
-  signal: { cancelled: boolean },
-  onError?: (msg: string) => void,
-): { stop: () => void } {
-  let i = 0;
-  let timer: ReturnType<typeof setInterval> | undefined;
-  let advertiseFailed = false;
-
-  const tick = () => {
-    if (signal.cancelled || advertiseFailed) return;
-    const data = frames[i % frames.length]!;
-    i += 1;
-    void BLEAdvertiser.broadcast(BASIC_PAIR_SERVICE_UUID, data, {
-      advertiseMode: BLEAdvertiser.ADVERTISE_MODE_LOW_LATENCY ?? 2,
-      txPowerLevel: BLEAdvertiser.ADVERTISE_TX_POWER_HIGH ?? 3,
-      connectable: false,
-      includeDeviceName: false,
-      includeTxPowerLevel: false,
-    }).catch((e: unknown) => {
-      if (signal.cancelled) return;
-      const msg = e instanceof Error ? e.message : String(e);
-      // DATA_TOO_LARGE / unavailable — stop thrashing and surface once.
-      if (/too large|unavailable|not supported|Invalid company/i.test(msg)) {
-        advertiseFailed = true;
-        onError?.(msg);
-      }
-    });
-  };
-
-  tick();
-  timer = setInterval(tick, BROADCAST_ROTATE_MS);
-  return {
-    stop: () => {
-      if (timer) clearInterval(timer);
-      timer = undefined;
-    },
-  };
-}
-
-function framesForMessage(
-  msgType: number,
-  lobbyHash8: Uint8Array,
-  payload: Uint8Array,
-): number[][] {
-  const chunks = chunkBytes(payload, FRAME_PAYLOAD_MAX);
-  const total = chunks.length;
-  return chunks.map((payloadChunk, seq) =>
-    encodePairFrame({
-      msgType,
-      lobbyHash8,
-      seq,
-      total,
-      payload: payloadChunk,
-    }),
-  );
-}
+/** Open session returned after Device 1 connects and reads the lobby pub. */
+export type ApproverBleSession = {
+  deviceId: string;
+  pubCompressed: Uint8Array;
+  lobbyHash8: Uint8Array;
+  /** Disconnect + stop scan without sending. */
+  cancel: () => Promise<void>;
+  /** Encrypt caller builds wire; this writes chunks and waits for Device 2 ACK. */
+  sendCipherAndWaitAck: (input: {
+    wireBytes: Uint8Array;
+    onStatus?: (msg: string) => void;
+    signal?: AbortSignal;
+  }) => Promise<void>;
+};
 
 /**
- * Device 2: advertise HELLO (pub) while scanning for CIPHER reply with same lobby hash.
+ * Device 2: host GATT server with lobby pub; assemble CIPHER writes; caller decrypts/applies then sendRequesterAck.
  */
 export async function runRequesterBleSession(input: {
   lobbyHash8: Uint8Array;
@@ -192,173 +145,324 @@ export async function runRequesterBleSession(input: {
   onStatus?: (msg: string) => void;
   signal?: AbortSignal;
 }): Promise<Uint8Array> {
+  if (Platform.OS !== "android") {
+    throw new Error("Bluetooth pairing is currently Android-only.");
+  }
   const ok = await ensureBlePermissions();
   if (!ok) throw new Error("Bluetooth permission required");
-  await prepareAdapter();
-  await stopAllBle();
 
-  const helloFrames = framesForMessage(MSG_HELLO, input.lobbyHash8, input.pubCompressed);
-  const local = { cancelled: false };
-  const onAbort = () => {
-    local.cancelled = true;
-  };
-  input.signal?.addEventListener("abort", onAbort);
+  const gatt = nativeGatt();
+  await gatt.stopServer().catch(() => undefined);
+  await gatt.startServer(bytesToBase64(input.pubCompressed));
 
+  const emitter = new NativeEventEmitter(NativeModules.BasicPairGattServer);
   const parts = new Map<number, Uint8Array>();
+  let expectedTotal: number | null = null;
 
   return new Promise<Uint8Array>((resolve, reject) => {
     let cleaned = false;
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    let sub: { remove: () => void } | undefined;
-    let rotator: { stop: () => void } | undefined;
-
-    const cleanup = () => {
-      if (cleaned) return;
-      cleaned = true;
-      local.cancelled = true;
-      if (timeout) clearTimeout(timeout);
-      sub?.remove();
-      rotator?.stop();
-      input.signal?.removeEventListener("abort", onAbort);
-      void stopAllBle();
-    };
-
-    rotator = rotateBroadcast(helloFrames, local, (err) => {
-      cleanup();
-      reject(new Error(`Bluetooth advertise failed: ${err}`));
-    });
-    input.onStatus?.("Waiting for nearby device…");
-
-    timeout = setTimeout(() => {
+    const timeout = setTimeout(() => {
       cleanup();
       reject(new Error("Pairing timed out. Try again with devices close together."));
     }, PAIR_WINDOW_MS);
 
-    sub = emitter().addListener("onDeviceFound", (device: DeviceFoundEvent) => {
-      if (local.cancelled) return;
-      if (!device.manufData?.length) return;
-      const frame = decodePairFrame(device.manufData);
-      if (!frame || frame.msgType !== MSG_CIPHER) return;
-      if (!hash8Equal(frame.lobbyHash8, input.lobbyHash8)) return;
-      parts.set(frame.seq, frame.payload);
-      input.onStatus?.(`Receiving… ${parts.size}/${frame.total}`);
-      const assembled = assembleChunks(frame.total, parts);
-      if (!assembled) return;
+    const onAbort = () => {
       cleanup();
-      resolve(assembled);
-    });
+      reject(new Error("Pairing cancelled"));
+    };
+    input.signal?.addEventListener("abort", onAbort);
 
-    void startCompanyScan().catch((e: unknown) => {
-      cleanup();
-      reject(e instanceof Error ? e : new Error("BLE scan failed"));
-    });
-  });
-}
+    const subs = [
+      emitter.addListener("BasicPairGatt_onAdvertiseError", (ev: { errorCode?: number }) => {
+        cleanup();
+        reject(new Error(`Bluetooth advertise failed (code ${ev?.errorCode ?? "?"})`));
+      }),
+      emitter.addListener("BasicPairGatt_onAdvertising", () => {
+        input.onStatus?.("Waiting for nearby device…");
+      }),
+      emitter.addListener("BasicPairGatt_onConnected", () => {
+        input.onStatus?.("Connected. Waiting for encrypted login…");
+      }),
+      emitter.addListener("BasicPairGatt_onCipherWrite", (ev: { dataBase64?: string }) => {
+        if (cleaned || !ev?.dataBase64) return;
+        try {
+          const raw = base64ToBytes(ev.dataBase64);
+          const chunk = decodeGattChunk(raw);
+          if (!chunk) return;
+          if (expectedTotal == null) expectedTotal = chunk.total;
+          else if (chunk.total !== expectedTotal) return;
+          parts.set(chunk.seq, chunk.payload);
+          input.onStatus?.(`Receiving… ${parts.size}/${chunk.total}`);
+          const assembled = assembleChunks(chunk.total, parts);
+          if (!assembled) return;
+          cleanup(false);
+          resolve(assembled);
+        } catch (e) {
+          cleanup();
+          reject(e instanceof Error ? e : new Error("Failed to parse login chunks"));
+        }
+      }),
+    ];
 
-/**
- * Device 1: scan HELLO, return requester pub + lobby hash; caller encrypts then sendCipherReply.
- */
-export async function scanRequesterHello(input: {
-  onStatus?: (msg: string) => void;
-  signal?: AbortSignal;
-}): Promise<{ pubCompressed: Uint8Array; lobbyHash8: Uint8Array }> {
-  const ok = await ensureBlePermissions();
-  if (!ok) throw new Error("Bluetooth permission required");
-  await prepareAdapter();
-  await stopAllBle();
+    input.onStatus?.("Waiting for nearby device…");
 
-  const local = { cancelled: false };
-  const onAbort = () => {
-    local.cancelled = true;
-  };
-  input.signal?.addEventListener("abort", onAbort);
-
-  const parts = new Map<number, Uint8Array>();
-  let lobbyHash8: Uint8Array | null = null;
-
-  input.onStatus?.("Scanning for nearby Basic…");
-
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      cleanup();
-      reject(new Error("No nearby device found. Open Basic onboarding on the other phone."));
-    }, PAIR_WINDOW_MS);
-
-    const sub = emitter().addListener("onDeviceFound", (device: DeviceFoundEvent) => {
-      if (local.cancelled) return;
-      if (!device.manufData?.length) return;
-      const frame = decodePairFrame(device.manufData);
-      if (!frame || frame.msgType !== MSG_HELLO) return;
-      if (!lobbyHash8) lobbyHash8 = frame.lobbyHash8;
-      else if (!hash8Equal(lobbyHash8, frame.lobbyHash8)) return;
-      parts.set(frame.seq, frame.payload);
-      input.onStatus?.(`Found device… ${parts.size}/${frame.total}`);
-      const assembled = assembleChunks(frame.total, parts);
-      if (!assembled || !lobbyHash8) return;
-      cleanup();
-      resolve({ pubCompressed: assembled, lobbyHash8 });
-    });
-
-    void startCompanyScan().catch((e: unknown) => {
-      cleanup();
-      reject(e instanceof Error ? e : new Error("BLE scan failed"));
-    });
-
-    function cleanup() {
-      local.cancelled = true;
+    function cleanup(stopServer = true) {
+      if (cleaned) return;
+      cleaned = true;
       clearTimeout(timeout);
-      sub.remove();
       input.signal?.removeEventListener("abort", onAbort);
-      void stopAllBle();
+      for (const s of subs) s.remove();
+      if (stopServer) void gatt.stopServer().catch(() => undefined);
     }
   });
 }
 
-/** Device 1: advertise CIPHER chunks for ~window so Device 2 can reassemble. */
-export async function broadcastCipherReply(input: {
-  lobbyHash8: Uint8Array;
-  wireBytes: Uint8Array;
-  durationMs?: number;
+/** Device 2: notify Device 1 after decrypt+apply (or failure). Stops the GATT server. */
+export async function sendRequesterAck(ok: boolean, message?: string): Promise<void> {
+  if (Platform.OS !== "android") return;
+  const gatt = nativeGatt();
+  try {
+    await gatt.sendAck(ok, message ?? null);
+    // Brief pause so the central can receive the notification before we tear down.
+    await new Promise((r) => setTimeout(r, 400));
+  } finally {
+    await gatt.stopServer().catch(() => undefined);
+  }
+}
+
+/**
+ * Device 1: scan Basic pair service, connect, read lobby pub. Connection stays open for approve → send.
+ */
+export async function scanRequesterHello(input: {
   onStatus?: (msg: string) => void;
   signal?: AbortSignal;
-}): Promise<void> {
-  await prepareAdapter();
-  await stopAllBle();
+}): Promise<ApproverBleSession> {
+  const ok = await ensureBlePermissions();
+  if (!ok) throw new Error("Bluetooth permission required");
+  await waitForPoweredOn();
 
-  const frames = framesForMessage(MSG_CIPHER, input.lobbyHash8, input.wireBytes);
-  const local = { cancelled: false };
-  const onAbort = () => {
-    local.cancelled = true;
+  const m = manager();
+  input.onStatus?.("Scanning for nearby Basic…");
+
+  const device = await new Promise<Device>((resolve, reject) => {
+    let settled = false;
+    const timeout = setTimeout(() => {
+      finish();
+      reject(new Error("No nearby device found. Open Basic onboarding on the other phone."));
+    }, SCAN_TIMEOUT_MS);
+
+    const onAbort = () => {
+      finish();
+      reject(new Error("Pairing cancelled"));
+    };
+    input.signal?.addEventListener("abort", onAbort);
+
+    const sub = m.startDeviceScan(
+      [BASIC_PAIR_SERVICE_UUID],
+      { allowDuplicates: false },
+      (error: BleError | null, scanned: Device | null) => {
+        if (settled) return;
+        if (error) {
+          finish();
+          reject(new Error(error.message || "BLE scan failed"));
+          return;
+        }
+        if (!scanned) return;
+        finish();
+        resolve(scanned);
+      },
+    );
+
+    function finish() {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      input.signal?.removeEventListener("abort", onAbort);
+      try {
+        m.stopDeviceScan();
+      } catch {
+        /* ok */
+      }
+      void sub;
+    }
+  });
+
+  if (input.signal?.aborted) {
+    throw new Error("Pairing cancelled");
+  }
+
+  input.onStatus?.("Connecting…");
+  let connected = await device.connect({ autoConnect: false, timeout: 15_000 });
+  connected = await connected.discoverAllServicesAndCharacteristics();
+
+  let mtu = 23;
+  try {
+    connected = await connected.requestMTU(512);
+    mtu = connected.mtu ?? 512;
+  } catch {
+    mtu = connected.mtu ?? 23;
+  }
+
+  input.onStatus?.("Reading pairing code…");
+  const lobbyChar = await connected.readCharacteristicForService(
+    BASIC_PAIR_SERVICE_UUID,
+    BASIC_PAIR_LOBBY_UUID,
+  );
+  if (!lobbyChar.value) throw new Error("Nearby device sent an empty pairing key");
+  const pubCompressed = base64ToBytes(lobbyChar.value);
+  if (pubCompressed.length !== 33) {
+    throw new Error("Invalid pairing key from nearby device");
+  }
+  const lobbyHash8 = lobbyHash8FromPub(pubCompressed);
+
+  // Subscribe to ACK early so Device 2 can notify after apply (may arrive before we wait).
+  let ackResolve: ((v: { ok: boolean; message: string }) => void) | null = null;
+  let ackReject: ((e: Error) => void) | null = null;
+  let pendingAck: { ok: boolean; message: string } | null = null;
+
+  const ackSub = connected.monitorCharacteristicForService(
+    BASIC_PAIR_SERVICE_UUID,
+    BASIC_PAIR_ACK_UUID,
+    (error, characteristic) => {
+      if (error) {
+        const rej = ackReject;
+        ackReject = null;
+        rej?.(new Error(error.message || "ACK monitor failed"));
+        return;
+      }
+      if (!characteristic?.value) return;
+      const decoded = decodeAckPayload(base64ToBytes(characteristic.value));
+      if (ackResolve) {
+        const res = ackResolve;
+        ackResolve = null;
+        ackReject = null;
+        res(decoded);
+      } else {
+        pendingAck = decoded;
+      }
+    },
+  );
+
+  const sessionDeviceId = connected.id;
+  let cancelled = false;
+
+  const cancel = async () => {
+    cancelled = true;
+    try {
+      ackSub.remove();
+    } catch {
+      /* ok */
+    }
+    try {
+      await manager().cancelDeviceConnection(sessionDeviceId);
+    } catch {
+      /* ok */
+    }
   };
-  input.signal?.addEventListener("abort", onAbort);
 
-  let advertiseError: Error | null = null;
-  const rotator = rotateBroadcast(frames, local, (err) => {
-    advertiseError = new Error(`Bluetooth advertise failed: ${err}`);
-    local.cancelled = true;
+  input.signal?.addEventListener("abort", () => {
+    void cancel();
   });
-  input.onStatus?.("Sending encrypted login…");
 
-  const duration = input.durationMs ?? Math.min(PAIR_WINDOW_MS, Math.max(8_000, frames.length * BROADCAST_ROTATE_MS * 3));
+  const sendCipherAndWaitAck = async (sendInput: {
+    wireBytes: Uint8Array;
+    onStatus?: (msg: string) => void;
+    signal?: AbortSignal;
+  }) => {
+    if (cancelled || sendInput.signal?.aborted) throw new Error("Pairing cancelled");
 
-  await new Promise<void>((resolve) => {
-    const t = setTimeout(() => resolve(), duration);
-    input.signal?.addEventListener("abort", () => {
-      clearTimeout(t);
-      resolve();
+    const payloadMax =
+      mtu >= 100 ? GATT_CHUNK_PAYLOAD_LARGE : Math.max(GATT_CHUNK_PAYLOAD_DEFAULT, mtu - 7);
+    const chunks = chunkBytes(sendInput.wireBytes, payloadMax);
+    const total = chunks.length;
+    sendInput.onStatus?.(`Sending encrypted login… 0/${total}`);
+
+    for (let seq = 0; seq < total; seq++) {
+      if (cancelled || sendInput.signal?.aborted) throw new Error("Pairing cancelled");
+      const frame = encodeGattChunk(seq, total, chunks[seq]!);
+      await manager().writeCharacteristicWithResponseForDevice(
+        sessionDeviceId,
+        BASIC_PAIR_SERVICE_UUID,
+        BASIC_PAIR_CIPHER_UUID,
+        bytesToBase64(frame),
+      );
+      sendInput.onStatus?.(`Sending encrypted login… ${seq + 1}/${total}`);
+    }
+
+    sendInput.onStatus?.("Waiting for the other phone to finish…");
+
+    const ack = await new Promise<{ ok: boolean; message: string }>((resolve, reject) => {
+      if (pendingAck) {
+        const v = pendingAck;
+        pendingAck = null;
+        resolve(v);
+        return;
+      }
+      const t = setTimeout(() => {
+        ackResolve = null;
+        ackReject = null;
+        reject(new Error("The other phone did not confirm login. Try again."));
+      }, ACK_TIMEOUT_MS);
+      const onAbort = () => {
+        clearTimeout(t);
+        ackResolve = null;
+        ackReject = null;
+        reject(new Error("Pairing cancelled"));
+      };
+      sendInput.signal?.addEventListener("abort", onAbort);
+      ackResolve = (v) => {
+        clearTimeout(t);
+        sendInput.signal?.removeEventListener("abort", onAbort);
+        resolve(v);
+      };
+      ackReject = (e) => {
+        clearTimeout(t);
+        sendInput.signal?.removeEventListener("abort", onAbort);
+        reject(e);
+      };
     });
-  });
 
-  local.cancelled = true;
-  rotator.stop();
-  input.signal?.removeEventListener("abort", onAbort);
-  await stopAllBle();
-  if (advertiseError) throw advertiseError;
+    try {
+      ackSub.remove();
+    } catch {
+      /* ok */
+    }
+    try {
+      await manager().cancelDeviceConnection(sessionDeviceId);
+    } catch {
+      /* ok */
+    }
+
+    if (!ack.ok) {
+      throw new Error(ack.message || "The other phone failed to apply the login.");
+    }
+  };
+
+  return {
+    deviceId: sessionDeviceId,
+    pubCompressed,
+    lobbyHash8,
+    cancel,
+    sendCipherAndWaitAck,
+  };
+}
+
+/** @deprecated Use ApproverBleSession.sendCipherAndWaitAck — kept so old imports fail loudly if misused. */
+export async function broadcastCipherReply(): Promise<void> {
+  throw new Error("broadcastCipherReply removed — use GATT sendCipherAndWaitAck");
 }
 
 export async function cancelPairBle(): Promise<void> {
-  await stopAllBle();
+  try {
+    manager().stopDeviceScan();
+  } catch {
+    /* ok */
+  }
+  if (Platform.OS === "android") {
+    try {
+      await nativeGatt().stopServer();
+    } catch {
+      /* ok if module missing during metro */
+    }
+  }
 }
-
-/** Re-export frame type for tests. */
-export type { PairFrame };

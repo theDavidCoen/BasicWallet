@@ -16,10 +16,10 @@ import {
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
 import {
-  broadcastCipherReply,
   cancelPairBle,
   ensureBlePermissions,
   scanRequesterHello,
+  type ApproverBleSession,
 } from "../pair/pairBleTransport";
 import {
   assemblePairLoginPackage,
@@ -28,19 +28,18 @@ import {
 import {
   encodeWireEnvelope,
   encryptPairPayload,
-  verifyLobbyBind,
   lobbyIdFromPub,
+  verifyLobbyBind,
 } from "../pair/pairProtocol";
 import { requireUserPresence } from "../security/userPresence";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 import { useWallet } from "../wallet/WalletProvider";
 
-type Phase = "idle" | "scanning" | "confirm" | "sending" | "done";
+type Phase = "idle" | "scanning" | "confirm" | "approving" | "sending" | "done";
 
 type PendingHello = {
-  pubCompressed: Uint8Array;
-  lobbyHash8: Uint8Array;
+  session: ApproverBleSession;
   lobbyId: string;
 };
 
@@ -51,12 +50,15 @@ export function PairBluetoothScreen() {
   const [status, setStatus] = useState("");
   const [pending, setPending] = useState<PendingHello | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const approveLock = useRef(false);
 
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
+      void pending?.session.cancel();
       void cancelPairBle();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- unmount cleanup only
   }, []);
 
   async function onStart() {
@@ -65,8 +67,10 @@ export function PairBluetoothScreen() {
       return;
     }
     abortRef.current?.abort();
+    await pending?.session.cancel().catch(() => undefined);
     const ac = new AbortController();
     abortRef.current = ac;
+    approveLock.current = false;
     setPending(null);
     setPhase("scanning");
     setStatus("Requesting Bluetooth permission…");
@@ -83,22 +87,22 @@ export function PairBluetoothScreen() {
     }
     setStatus("Scanning for nearby Basic…");
     try {
-      const hello = await scanRequesterHello({
+      const session = await scanRequesterHello({
         onStatus: setStatus,
         signal: ac.signal,
       });
-      if (ac.signal.aborted) return;
+      if (ac.signal.aborted) {
+        await session.cancel();
+        return;
+      }
 
-      const lobbyId = lobbyIdFromPub(hello.pubCompressed);
-      if (!verifyLobbyBind(hello.pubCompressed, lobbyId)) {
+      const lobbyId = lobbyIdFromPub(session.pubCompressed);
+      if (!verifyLobbyBind(session.pubCompressed, lobbyId)) {
+        await session.cancel();
         throw new Error("Lobby id does not match the nearby key");
       }
 
-      setPending({
-        pubCompressed: hello.pubCompressed,
-        lobbyHash8: hello.lobbyHash8,
-        lobbyId,
-      });
+      setPending({ session, lobbyId });
       setPhase("confirm");
       setStatus("Compare this code with the new phone, then approve.");
     } catch (e) {
@@ -112,18 +116,24 @@ export function PairBluetoothScreen() {
   }
 
   async function onApprove() {
-    if (!pending) return;
+    if (!pending || approveLock.current) return;
+    if (phase !== "confirm") return;
+    approveLock.current = true;
+    setPhase("approving");
+    setStatus("Confirm with biometrics…");
+
     const ac = abortRef.current ?? new AbortController();
     abortRef.current = ac;
+    const { session, lobbyId } = pending;
+
     try {
       const auth = await requireUserPresence(
-        `Approve pairing code ${pending.lobbyId}? This unlocks your wallets on the other device.`,
+        `Approve pairing code ${lobbyId}? This unlocks your wallets on the other device.`,
       );
       if (!auth.ok) {
-        setPhase("idle");
-        setStatus("");
-        setPending(null);
-        await cancelPairBle();
+        approveLock.current = false;
+        setPhase("confirm");
+        setStatus("Compare this code with the new phone, then approve.");
         return;
       }
 
@@ -132,25 +142,26 @@ export function PairBluetoothScreen() {
       const pkg = await assemblePairLoginPackage();
       const { envelope } = encryptPairPayload(
         encodePairLoginPackage(pkg),
-        pending.pubCompressed,
+        session.pubCompressed,
       );
       const wire = encodeWireEnvelope(envelope);
-      await broadcastCipherReply({
-        lobbyHash8: pending.lobbyHash8,
+      await session.sendCipherAndWaitAck({
         wireBytes: wire,
         onStatus: setStatus,
         signal: ac.signal,
       });
       setPhase("done");
-      setStatus("Sent. Opening Home…");
+      setStatus("Paired. Opening Home…");
       setPending(null);
-      Alert.alert("Paired", "Encrypted login sent to the nearby device.");
+      Alert.alert("Paired", "The other phone confirmed login.");
       navigation.navigate("Home");
     } catch (e) {
       if (ac.signal.aborted) return;
+      approveLock.current = false;
       setPhase("idle");
       setStatus("");
       setPending(null);
+      await session.cancel().catch(() => undefined);
       Alert.alert("Pairing failed", e instanceof Error ? e.message : "Unknown error");
       await cancelPairBle();
     }
@@ -158,6 +169,8 @@ export function PairBluetoothScreen() {
 
   function onCancel() {
     abortRef.current?.abort();
+    approveLock.current = false;
+    void pending?.session.cancel();
     void cancelPairBle();
     setPhase("idle");
     setStatus("");
@@ -166,11 +179,13 @@ export function PairBluetoothScreen() {
 
   const scanning = phase === "scanning";
   const confirming = phase === "confirm";
+  const approving = phase === "approving";
   const sending = phase === "sending";
+  const busy = scanning || approving || sending;
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+      <ScrollView contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
         <Text style={ui.title}>PAIR WITH BLUETOOTH</Text>
         <Text style={ui.caption}>
           Move wallets to a nearby phone that is on the Basic welcome screen.
@@ -189,7 +204,7 @@ export function PairBluetoothScreen() {
           ))}
         </View>
 
-        {pending && confirming ? (
+        {pending && (confirming || approving) ? (
           <View style={styles.codeCard}>
             <Text style={styles.codeLabel}>Pairing code</Text>
             <Text style={styles.codeValue} selectable>
@@ -203,20 +218,29 @@ export function PairBluetoothScreen() {
 
         {status ? <Text style={styles.status}>{status}</Text> : null}
 
-        {confirming ? (
+        {confirming || approving ? (
           <>
-            <Pressable style={ui.primaryBtn} onPress={() => void onApprove()}>
-              <Text style={ui.primaryBtnText}>Approve this code</Text>
+            <Pressable
+              style={[ui.primaryBtn, (approving || sending) && { opacity: 0.6 }]}
+              disabled={approving || sending}
+              onPress={() => void onApprove()}
+              hitSlop={12}
+            >
+              {approving ? (
+                <ActivityIndicator color="#000" />
+              ) : (
+                <Text style={ui.primaryBtnText}>Approve this code</Text>
+              )}
             </Pressable>
-            <Pressable style={ui.secondaryBtn} onPress={onCancel}>
+            <Pressable style={ui.secondaryBtn} onPress={onCancel} disabled={sending}>
               <Text style={ui.secondaryBtnText}>Cancel</Text>
             </Pressable>
           </>
         ) : (
           <>
             <Pressable
-              style={[ui.primaryBtn, (scanning || sending) && { opacity: 0.6 }]}
-              disabled={scanning || sending}
+              style={[ui.primaryBtn, busy && { opacity: 0.6 }]}
+              disabled={busy}
               onPress={() => void onStart()}
             >
               {scanning || sending ? (

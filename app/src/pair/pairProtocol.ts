@@ -1,5 +1,5 @@
 /**
- * Bluetooth fast-login crypto + frame codec.
+ * Bluetooth fast-login crypto + GATT chunk codec.
  * Ephemeral secp256k1 ECDH → HKDF → AES-256-GCM.
  * Cleartext on air: lobbyId / pubs / ciphertext only (never nsec or seeds).
  */
@@ -12,17 +12,14 @@ import { bytesToHex, hexToBytes, utf8ToBytes } from "@noble/hashes/utils.js";
 import { base58 } from "@scure/base";
 import * as Crypto from "expo-crypto";
 
-/** Stable service UUID for Basic BLE pair advertise/scan. */
+/** Stable service UUID for Basic BLE pair GATT. */
 export const BASIC_PAIR_SERVICE_UUID = "ba51c001-0000-4000-8000-00805f9b34fb";
+export const BASIC_PAIR_LOBBY_UUID = "ba51c001-0001-4000-8000-00805f9b34fb";
+export const BASIC_PAIR_CIPHER_UUID = "ba51c001-0002-4000-8000-00805f9b34fb";
+export const BASIC_PAIR_ACK_UUID = "ba51c001-0003-4000-8000-00805f9b34fb";
 
-/** Manufacturer company id (Bluetooth SIG unassigned range for app use). */
+/** @deprecated Kept for reference; manufacturer-data transport removed in α37. */
 export const BASIC_PAIR_COMPANY_ID = 0x0ba5;
-
-const MAGIC0 = 0x42; // B
-const MAGIC1 = 0x50; // P
-const FRAME_VERSION = 1;
-export const MSG_HELLO = 0x01;
-export const MSG_CIPHER = 0x02;
 
 const HKDF_INFO = utf8ToBytes("basic.wallet.ble.pair.v1");
 const IV_LEN = 12;
@@ -82,7 +79,6 @@ function randomBytes(len: number): Uint8Array {
 /** Shared AES-256 key from ECDH(sk, peerPub). */
 export function derivePairAesKey(sk: Uint8Array, peerPubCompressed: Uint8Array): Uint8Array {
   const shared = secp256k1.getSharedSecret(sk, peerPubCompressed, true);
-  // Drop leading parity byte from compressed shared point → 32-byte x only if present.
   const ikm = shared.length === 33 ? shared.slice(1) : shared;
   return hkdf(sha256, ikm, undefined, HKDF_INFO, 32);
 }
@@ -97,7 +93,6 @@ export function encryptPairPayload(
   const iv = randomBytes(IV_LEN);
   const aes = gcm(key, iv);
   const ct = aes.encrypt(plaintext);
-  // Prepend IV to ciphertext for wire (single blob).
   const wire = new Uint8Array(iv.length + ct.length);
   wire.set(iv, 0);
   wire.set(ct, iv.length);
@@ -125,66 +120,41 @@ export function decryptPairPayload(
   return aes.decrypt(ct);
 }
 
-/** Bytes available for payload after fixed frame header (company-data only). */
-export const FRAME_HEADER_LEN = 14; // magic2+ver+type+hash8+seq+total
-/**
- * Keep manufacturer AD ≤ 31 bytes:
- * len(1)+type(1)+companyId(2)+header+payload ≤ 31 → payload ≤ 13.
- * Use 12 for a little headroom on picky stacks (MIUI).
- */
-export const FRAME_PAYLOAD_MAX = 12;
+/** GATT chunk header: seq u16 BE + total u16 BE. Payload fits under typical MTU−3. */
+export const GATT_CHUNK_HEADER_LEN = 4;
+/** Default payload per GATT write before MTU negotiation (safe for 23-byte ATT MTU). */
+export const GATT_CHUNK_PAYLOAD_DEFAULT = 18;
+/** Prefer larger writes after MTU exchange (MTU 512 → ~505 usable). */
+export const GATT_CHUNK_PAYLOAD_LARGE = 500;
 
-export type PairFrame = {
-  msgType: number;
-  lobbyHash8: Uint8Array;
-  seq: number;
-  total: number;
-  payload: Uint8Array;
-};
-
-export function encodePairFrame(frame: PairFrame): number[] {
-  if (frame.lobbyHash8.length !== 8) throw new Error("lobbyHash8 must be 8 bytes");
-  if (frame.payload.length > FRAME_PAYLOAD_MAX) throw new Error("Frame payload too large");
-  const out = new Uint8Array(FRAME_HEADER_LEN + frame.payload.length);
-  out[0] = MAGIC0;
-  out[1] = MAGIC1;
-  out[2] = FRAME_VERSION;
-  out[3] = frame.msgType & 0xff;
-  out.set(frame.lobbyHash8, 4);
-  out[12] = frame.seq & 0xff;
-  out[13] = frame.total & 0xff;
-  out.set(frame.payload, FRAME_HEADER_LEN);
-  return Array.from(out);
-}
-
-export function decodePairFrame(manufData: number[] | Uint8Array): PairFrame | null {
-  const bytes =
-    manufData instanceof Uint8Array ? manufData : Uint8Array.from(manufData);
-  if (bytes.length < FRAME_HEADER_LEN) return null;
-  if (bytes[0] !== MAGIC0 || bytes[1] !== MAGIC1) return null;
-  if (bytes[2] !== FRAME_VERSION) return null;
-  const msgType = bytes[3]!;
-  if (msgType !== MSG_HELLO && msgType !== MSG_CIPHER) return null;
-  const lobbyHash8 = bytes.slice(4, 12);
-  const seq = bytes[12]!;
-  const total = bytes[13]!;
-  if (total < 1 || seq >= total) return null;
-  return {
-    msgType,
-    lobbyHash8,
-    seq,
-    total,
-    payload: bytes.slice(FRAME_HEADER_LEN),
-  };
-}
-
-export function chunkBytes(data: Uint8Array, chunkSize = FRAME_PAYLOAD_MAX): Uint8Array[] {
+export function chunkBytes(data: Uint8Array, chunkSize: number): Uint8Array[] {
   if (data.length === 0) return [new Uint8Array(0)];
   const out: Uint8Array[] = [];
   for (let i = 0; i < data.length; i += chunkSize) {
     out.push(data.slice(i, i + chunkSize));
   }
   return out;
+}
+
+export function encodeGattChunk(seq: number, total: number, payload: Uint8Array): Uint8Array {
+  if (seq < 0 || total < 1 || seq >= total) throw new Error("Invalid GATT chunk index");
+  const out = new Uint8Array(GATT_CHUNK_HEADER_LEN + payload.length);
+  out[0] = (seq >> 8) & 0xff;
+  out[1] = seq & 0xff;
+  out[2] = (total >> 8) & 0xff;
+  out[3] = total & 0xff;
+  out.set(payload, GATT_CHUNK_HEADER_LEN);
+  return out;
+}
+
+export function decodeGattChunk(
+  bytes: Uint8Array,
+): { seq: number; total: number; payload: Uint8Array } | null {
+  if (bytes.length < GATT_CHUNK_HEADER_LEN) return null;
+  const seq = (bytes[0]! << 8) | bytes[1]!;
+  const total = (bytes[2]! << 8) | bytes[3]!;
+  if (total < 1 || seq >= total) return null;
+  return { seq, total, payload: bytes.slice(GATT_CHUNK_HEADER_LEN) };
 }
 
 export function assembleChunks(
@@ -229,4 +199,32 @@ export function hash8Equal(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
   return true;
+}
+
+export function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);
+  return globalThis.btoa(binary);
+}
+
+export function base64ToBytes(b64: string): Uint8Array {
+  const binary = globalThis.atob(b64);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+export function encodeAckPayload(ok: boolean, message = ""): Uint8Array {
+  const msg = utf8ToBytes(message);
+  const out = new Uint8Array(1 + msg.length);
+  out[0] = ok ? 0x01 : 0x02;
+  out.set(msg, 1);
+  return out;
+}
+
+export function decodeAckPayload(bytes: Uint8Array): { ok: boolean; message: string } {
+  if (bytes.length < 1) return { ok: false, message: "Empty ACK" };
+  const ok = bytes[0] === 0x01;
+  const message = bytes.length > 1 ? new TextDecoder().decode(bytes.slice(1)) : "";
+  return { ok, message };
 }

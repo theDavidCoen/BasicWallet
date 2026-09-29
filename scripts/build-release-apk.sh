@@ -166,9 +166,9 @@ PY
 
 mkdir -p "$DIST"
 rm -rf "$ANDROID/app/build/outputs/apk/release"
-# Keep react-native-ble-advertiser on modern compileSdk (upstream pins API 28).
-if [[ -x "$APP/scripts/patch-ble-advertiser.sh" ]]; then
-  bash "$APP/scripts/patch-ble-advertiser.sh"
+# Inject GATT peripheral native module (android/ is gitignored).
+if [[ -x "$APP/scripts/patch-pair-gatt-server.sh" ]]; then
+  bash "$APP/scripts/patch-pair-gatt-server.sh"
 fi
 # Android 12+ BLE runtime perms (android/ is gitignored; app.json alone may not land).
 if [[ -x "$APP/scripts/patch-android-ble-permissions.sh" ]]; then
