@@ -18,8 +18,9 @@ type BannerKind = "no-backup" | "passphrase" | null;
 /**
  * Bottom dialogs on Home only (never while a sheet is open):
  * - "No backup set up" — onboarding/pair skipped cloud backup
- * - "Enter your backup passphrase" — meta armed (e.g. BLE pair) but session
- *   passphrase missing; mutually exclusive with no-backup
+ * - "Enter your backup passphrase" — only after BLE pair sets
+ *   backupPassphraseNeededAfterPair (Device 2); never merely because meta is
+ *   enabled and the RAM session is empty (Device 1 / cold start must stay quiet)
  */
 export function BackupReminderBanner({
   navigationRef,
@@ -74,7 +75,7 @@ export function BackupReminderBanner({
     refresh();
   }, [refresh]);
 
-  // After app lock clears the RAM session, re-show passphrase banner.
+  // Refresh when session passphrase or after-pair flag changes.
   useEffect(() => {
     return onBackupPassphraseSessionChange(() => {
       refresh();

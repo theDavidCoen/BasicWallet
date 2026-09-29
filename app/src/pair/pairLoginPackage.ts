@@ -34,6 +34,7 @@ import {
 } from "../nostr/backupPackage";
 import { loadHomeServerCreds } from "../nostr/homeServerCreds";
 import { importAndStoreNsec, loadNostrKeyPairForCrypto } from "../nostr/identityStore";
+import { markBackupPassphraseNeededAfterPair } from "../nostr/backupSync";
 import { hasMnemonic, loadMnemonicForCrypto, storeMnemonic } from "../security/mnemonicStore";
 import {
   clearBackupReminder,
@@ -268,6 +269,8 @@ export async function applyPairLoginPackage(pkg: PairLoginPackage): Promise<Appl
       homeUser: pkg.backupArm.homeUser,
       homePassword: pkg.backupArm.homePassword,
     });
+    // Device 2: meta armed without session passphrase — show Home banner once.
+    await markBackupPassphraseNeededAfterPair();
     await clearBackupReminder();
     backupReArmed = true;
     channel = pkg.backupArm.channel;

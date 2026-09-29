@@ -1,7 +1,7 @@
 /**
  * Home bottom sheet: enter backup passphrase into ephemeral session only.
- * Used after BLE pair (or any armed-meta / missing-passphrase state).
- * Never writes SecureStore / Keystore.
+ * Shown after BLE pair sets backupPassphraseNeededAfterPair (Device 2).
+ * Never writes SecureStore / Keystore. Confirm clears the after-pair flag.
  */
 
 import { useEffect, useState } from "react";
@@ -15,6 +15,7 @@ import {
 } from "../nostr/backupPackage";
 import { loadNostrKeyPairForCrypto } from "../nostr/identityStore";
 import {
+  clearBackupPassphraseNeededAfterPair,
   scheduleEncryptedBackupSync,
   setSessionBackupPassphrase,
 } from "../nostr/backupSync";
@@ -67,6 +68,7 @@ export function BackupPassphraseSheet({
       }
       // Ephemeral only — never persistBackupPassphrase.
       setSessionBackupPassphrase(value);
+      await clearBackupPassphraseNeededAfterPair();
       setPassphrase("");
       onArmed();
       onDismiss();

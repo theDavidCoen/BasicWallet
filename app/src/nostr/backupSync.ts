@@ -30,6 +30,9 @@ import {
 
 const PASSPHRASE_KEY = "basic.wallet.backup.passphrase.v1";
 const DIRTY_KEY = "basic.wallet.backup.dirty.v1";
+/** Set only when BLE pair re-arms backup meta without a session passphrase. */
+const PASSPHRASE_NEEDED_AFTER_PAIR_KEY =
+  "basic.wallet.backup.passphraseNeededAfterPair.v1";
 
 const SECURE_OPTIONS: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
@@ -132,22 +135,34 @@ export async function getPersistedBackupPassphrase(): Promise<string | null> {
 }
 
 /**
- * True when Path C meta is armed (e.g. after BLE pair) but no passphrase is
- * in the RAM session and SecureStore has none. Device 2 must enter it
- * ephemerally via setSessionBackupPassphrase — never persist.
+ * Arm the Home passphrase banner after BLE pair re-arms backup meta without a
+ * session passphrase (Device 2 only). Not set on Device 1 / cold start / Recap.
+ */
+export async function markBackupPassphraseNeededAfterPair(): Promise<void> {
+  await AsyncStorage.setItem(PASSPHRASE_NEEDED_AFTER_PAIR_KEY, "1");
+  notifyBackupPassphraseSessionChange();
+}
+
+/** Clear after successful Confirm (or when backup is fully disabled). */
+export async function clearBackupPassphraseNeededAfterPair(): Promise<void> {
+  await AsyncStorage.removeItem(PASSPHRASE_NEEDED_AFTER_PAIR_KEY);
+  notifyBackupPassphraseSessionChange();
+}
+
+/**
+ * True only when BLE pair explicitly flagged passphrase entry AND meta is still
+ * armed AND the RAM session has no passphrase.
+ * Do NOT treat "backup meta enabled && !sessionPassphrase" alone as needing
+ * this banner — that would wrongly prompt Device 1 after restart/upgrade.
  * Does not mean "no backup set up".
  */
 export async function needsBackupPassphraseEntry(): Promise<boolean> {
+  if (hasSessionBackupPassphrase()) return false;
+  const flagged =
+    (await AsyncStorage.getItem(PASSPHRASE_NEEDED_AFTER_PAIR_KEY)) === "1";
+  if (!flagged) return false;
   const meta = await readBackupMeta();
   if (!meta?.enabled || !meta.channel) return false;
-  if (hasSessionBackupPassphrase()) return false;
-  // Peek at rest only — do not unlock here (avoids banner refresh notify loops).
-  try {
-    const v = await SecureStore.getItemAsync(PASSPHRASE_KEY, SECURE_OPTIONS);
-    if (v?.trim()) return false;
-  } catch {
-    /* missing ok */
-  }
   return true;
 }
 
@@ -167,6 +182,7 @@ export async function disableEncryptedBackupFully(): Promise<void> {
   await disablePackage();
   await clearPersistedBackupPassphrase();
   await clearBackupPackageDirty();
+  await clearBackupPassphraseNeededAfterPair();
 }
 
 /**
