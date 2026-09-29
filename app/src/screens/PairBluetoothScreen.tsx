@@ -31,7 +31,6 @@ import {
   lobbyIdFromPub,
   verifyLobbyBind,
 } from "../pair/pairProtocol";
-import { unlockBackupPassphraseSession } from "../nostr/backupSync";
 import { requireUserPresence } from "../security/userPresence";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
@@ -140,8 +139,6 @@ export function PairBluetoothScreen() {
 
       setPhase("sending");
       setStatus("Building encrypted login…");
-      // Presence may have briefly locked the RAM session; reload before packing.
-      await unlockBackupPassphraseSession();
       const pkg = await assemblePairLoginPackage();
       const { envelope } = encryptPairPayload(
         encodePairLoginPackage(pkg),

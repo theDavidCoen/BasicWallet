@@ -108,8 +108,8 @@ export function OnboardingCreateScreen() {
           Alert.alert(
             "Paired",
             applied.channel === "home"
-              ? "Home server backup is on."
-              : "Nostr backup is on.",
+              ? "Home server backup is on. Enter your backup passphrase when you Update & upload."
+              : "Nostr backup is on. Enter your backup passphrase when you Update & publish.",
           );
         }
         navigation.reset({ index: 0, routes: [{ name: "Home" }] });
