@@ -63,8 +63,13 @@ export async function setDisplayCurrencyEnabled(
   return next;
 }
 
-/** Spot BTC→fiat via CoinGecko (same source as fiatRate cache). */
+/**
+ * Spot BTC→fiat for Home.
+ * Prefer CoinGecko; fall back to mempool.space (CG often 403/429 from residential IP).
+ */
 export const SPOT_RATE_TTL_MS = 60_000;
+
+const MEMPOOL_PRICES_URL = "https://mempool.space/api/v1/prices";
 
 type SpotCache = {
   key: string;
@@ -78,6 +83,48 @@ let spotInflight: Promise<Partial<Record<DisplayCurrencyCode, number>>> | null =
 
 function spotKey(codes: DisplayCurrencyCode[]): string {
   return [...codes].sort().join(",");
+}
+
+function cachedOrEmpty(
+  key: string,
+): Partial<Record<DisplayCurrencyCode, number>> {
+  return spotCache?.key === key ? spotCache.rates : {};
+}
+
+async function fetchCoinGeckoSpot(
+  codes: DisplayCurrencyCode[],
+): Promise<Partial<Record<DisplayCurrencyCode, number>>> {
+  const vs = codes.map((c) => c.toLowerCase()).join(",");
+  const url = `https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=${encodeURIComponent(vs)}`;
+  const res = await fetch(url);
+  if (!res.ok) return {};
+  const json = (await res.json()) as { bitcoin?: Record<string, number> };
+  const btc = json.bitcoin ?? {};
+  const out: Partial<Record<DisplayCurrencyCode, number>> = {};
+  for (const code of codes) {
+    const rate = btc[code.toLowerCase()];
+    if (typeof rate === "number" && Number.isFinite(rate) && rate > 0) {
+      out[code] = rate;
+    }
+  }
+  return out;
+}
+
+/** Mempool public prices: `{ USD, EUR, GBP, JPY, … }` (uppercase keys). */
+async function fetchMempoolSpot(
+  codes: DisplayCurrencyCode[],
+): Promise<Partial<Record<DisplayCurrencyCode, number>>> {
+  const res = await fetch(MEMPOOL_PRICES_URL);
+  if (!res.ok) return {};
+  const json = (await res.json()) as Record<string, unknown>;
+  const out: Partial<Record<DisplayCurrencyCode, number>> = {};
+  for (const code of codes) {
+    const rate = json[code];
+    if (typeof rate === "number" && Number.isFinite(rate) && rate > 0) {
+      out[code] = rate;
+    }
+  }
+  return out;
 }
 
 export async function fetchSpotRates(
@@ -97,35 +144,28 @@ export async function fetchSpotRates(
   }
   if (spotInflight) return spotInflight;
 
-  const vs = codes.map((c) => c.toLowerCase()).join(",");
   spotInflight = (async () => {
     try {
-      const url = `https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=${encodeURIComponent(vs)}`;
-      const res = await fetch(url);
-      if (res.status === 429) {
-        // Keep last good rates; do not stamp a fresh TTL so the next tick can retry.
-        return spotCache?.key === key ? spotCache.rates : {};
-      }
-      if (!res.ok) {
-        return spotCache?.key === key ? spotCache.rates : {};
-      }
-      const json = (await res.json()) as { bitcoin?: Record<string, number> };
-      const btc = json.bitcoin ?? {};
-      const out: Partial<Record<DisplayCurrencyCode, number>> = {};
-      for (const code of codes) {
-        const rate = btc[code.toLowerCase()];
-        if (typeof rate === "number" && Number.isFinite(rate)) out[code] = rate;
+      let out = await fetchCoinGeckoSpot(codes);
+      if (Object.keys(out).length === 0) {
+        out = await fetchMempoolSpot(codes);
       }
       if (Object.keys(out).length > 0) {
         spotCache = { key, fetchedAt: Date.now(), rates: out };
+        return out;
       }
-      return Object.keys(out).length > 0
-        ? out
-        : spotCache?.key === key
-          ? spotCache.rates
-          : {};
+      return cachedOrEmpty(key);
     } catch {
-      return spotCache?.key === key ? spotCache.rates : {};
+      try {
+        const out = await fetchMempoolSpot(codes);
+        if (Object.keys(out).length > 0) {
+          spotCache = { key, fetchedAt: Date.now(), rates: out };
+          return out;
+        }
+      } catch {
+        /* keep cache */
+      }
+      return cachedOrEmpty(key);
     } finally {
       spotInflight = null;
     }

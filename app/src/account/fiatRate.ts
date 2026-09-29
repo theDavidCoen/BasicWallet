@@ -31,13 +31,28 @@ export function enqueueFiatCoverage(
 }
 
 async function fetchBtcRate(fiatCode: string): Promise<number | null> {
+  const code = fiatCode.toLowerCase();
   try {
-    const url = `https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=${encodeURIComponent(fiatCode)}`;
+    const url = `https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=${encodeURIComponent(code)}`;
     const res = await fetch(url);
+    if (res.ok) {
+      const json = (await res.json()) as { bitcoin?: Record<string, number> };
+      const rate = json.bitcoin?.[code];
+      if (typeof rate === "number" && Number.isFinite(rate) && rate > 0) {
+        return rate;
+      }
+    }
+  } catch {
+    /* fall through to mempool */
+  }
+  try {
+    const res = await fetch("https://mempool.space/api/v1/prices");
     if (!res.ok) return null;
-    const json = (await res.json()) as { bitcoin?: Record<string, number> };
-    const rate = json.bitcoin?.[fiatCode.toLowerCase()];
-    return typeof rate === "number" && Number.isFinite(rate) ? rate : null;
+    const json = (await res.json()) as Record<string, unknown>;
+    const rate = json[fiatCode.toUpperCase()];
+    return typeof rate === "number" && Number.isFinite(rate) && rate > 0
+      ? rate
+      : null;
   } catch {
     return null;
   }
