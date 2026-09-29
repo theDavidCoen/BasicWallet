@@ -34,8 +34,8 @@ export const USDT_MIN_BASE_SATS = 330;
 export const DEPIX_BTCBRL_FEED =
   "https://api.binance.com/api/v3/ticker/price?symbol=BTCBRL";
 
-export const USDT_BTCUSD_FEED =
-  "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd";
+/** Prefer mempool (CoinGecko often 403/429 from phone/residential IPs). */
+export const USDT_BTCUSD_FEED = "https://mempool.space/api/v1/prices";
 
 export type FiatStableKind = "brl" | "usd";
 
@@ -67,7 +67,7 @@ export function fiatStableForNetwork(networkId: ArkadeNetworkId): FiatStableInfo
       feeBps: USDT_FEE_BPS,
       minBaseSats: USDT_MIN_BASE_SATS,
       spotFeedUrl: USDT_BTCUSD_FEED,
-      spotPricePath: ["bitcoin", "usd"],
+      spotPricePath: ["USD"],
     };
   }
   return {
