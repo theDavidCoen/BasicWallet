@@ -1,18 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { AppState, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { NavigationContainerRefWithCurrent } from "@react-navigation/native";
 import type { RootStackParamList } from "./types";
+import { BackupPassphraseSheet } from "../components/BackupPassphraseSheet";
 import {
-  isBackupReminderPending,
-} from "../wallet/backupReminder";
+  needsBackupPassphraseEntry,
+  onBackupPassphraseSessionChange,
+} from "../nostr/backupSync";
+import { isBackupReminderPending } from "../wallet/backupReminder";
 import { colors } from "../theme/colors";
 import { useWallet } from "../wallet/WalletProvider";
 import { useSheets } from "./SheetHost";
 
+type BannerKind = "no-backup" | "passphrase" | null;
+
 /**
- * Bottom dialog only when onboarding backup was skipped.
- * Shown only on Home (never on other screens or while a sheet is open).
+ * Bottom dialogs on Home only (never while a sheet is open):
+ * - "No backup set up" — onboarding/pair skipped cloud backup
+ * - "Enter your backup passphrase" — meta armed (e.g. BLE pair) but session
+ *   passphrase missing; mutually exclusive with no-backup
  */
 export function BackupReminderBanner({
   navigationRef,
@@ -30,7 +37,8 @@ export function BackupReminderBanner({
     scanOpen,
     fiatModeSheetOpen,
   } = useSheets();
-  const [showNoBackup, setShowNoBackup] = useState(false);
+  const [bannerKind, setBannerKind] = useState<BannerKind>(null);
+  const [passphraseSheetOpen, setPassphraseSheetOpen] = useState(false);
   const [routeName, setRouteName] = useState<string | undefined>();
 
   const sheetOpen =
@@ -40,20 +48,44 @@ export function BackupReminderBanner({
     fundsSentOpen ||
     posOpen ||
     scanOpen ||
-    fiatModeSheetOpen;
+    fiatModeSheetOpen ||
+    passphraseSheetOpen;
 
   const refresh = useCallback(() => {
     void (async () => {
       if (!hasWallet) {
-        setShowNoBackup(false);
+        setBannerKind(null);
         return;
       }
-      setShowNoBackup(await isBackupReminderPending());
+      // Armed meta + missing passphrase wins over "no backup set up".
+      if (await needsBackupPassphraseEntry()) {
+        setBannerKind("passphrase");
+        return;
+      }
+      if (await isBackupReminderPending()) {
+        setBannerKind("no-backup");
+        return;
+      }
+      setBannerKind(null);
     })();
   }, [hasWallet]);
 
   useEffect(() => {
     refresh();
+  }, [refresh]);
+
+  // After app lock clears the RAM session, re-show passphrase banner.
+  useEffect(() => {
+    return onBackupPassphraseSessionChange(() => {
+      refresh();
+    });
+  }, [refresh]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (next) => {
+      if (next === "active") refresh();
+    });
+    return () => sub.remove();
   }, [refresh]);
 
   useEffect(() => {
@@ -68,33 +100,60 @@ export function BackupReminderBanner({
 
   const hidden =
     sheetOpen ||
-    !showNoBackup ||
+    bannerKind == null ||
     !hasWallet ||
     routeName !== "Home";
 
-  if (hidden) return null;
-
   return (
-    <View
-      pointerEvents="box-none"
-      style={[styles.overlay, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}
-    >
-      <Pressable
-        style={styles.dialog}
-        onPress={() => {
-          if (!navigationRef.isReady()) return;
-          navigationRef.navigate("AdvancedBackup");
+    <>
+      {!hidden ? (
+        <View
+          pointerEvents="box-none"
+          style={[styles.overlay, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}
+        >
+          {bannerKind === "passphrase" ? (
+            <Pressable
+              style={styles.dialog}
+              onPress={() => setPassphraseSheetOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Enter your backup passphrase"
+            >
+              <Text style={styles.title}>Enter your backup passphrase</Text>
+              <Text style={styles.body}>
+                Cloud backup is already set up. Tap to enter the passphrase so this
+                device can encrypt and upload updates. It stays in memory for this
+                session only.
+              </Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              style={styles.dialog}
+              onPress={() => {
+                if (!navigationRef.isReady()) return;
+                navigationRef.navigate("AdvancedBackup");
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="No backup set up"
+            >
+              <Text style={styles.title}>No backup set up</Text>
+              <Text style={styles.body}>
+                Your wallet is only on this device. Pairing does not move your passkey.
+                Tap to add Nostr, home server, or export your recovery phrase.
+              </Text>
+            </Pressable>
+          )}
+        </View>
+      ) : null}
+
+      <BackupPassphraseSheet
+        open={passphraseSheetOpen}
+        onDismiss={() => setPassphraseSheetOpen(false)}
+        onArmed={() => {
+          setBannerKind(null);
+          refresh();
         }}
-        accessibilityRole="button"
-        accessibilityLabel="No backup set up"
-      >
-        <Text style={styles.title}>No backup set up</Text>
-        <Text style={styles.body}>
-          Your wallet is only on this device. Pairing does not move your passkey. Tap to add Nostr,
-          home server, or export your recovery phrase.
-        </Text>
-      </Pressable>
-    </View>
+      />
+    </>
   );
 }
 

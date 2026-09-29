@@ -38,6 +38,27 @@ const SECURE_OPTIONS: SecureStore.SecureStoreOptions = {
 /** In-RAM only after app unlock. */
 let sessionPassphrase: string | null = null;
 
+type SessionListener = () => void;
+const sessionListeners = new Set<SessionListener>();
+
+function notifyBackupPassphraseSessionChange(): void {
+  for (const listener of sessionListeners) {
+    try {
+      listener();
+    } catch {
+      /* ignore listener errors */
+    }
+  }
+}
+
+/** Subscribe to RAM session set/clear (banner refresh after lock / pair entry). */
+export function onBackupPassphraseSessionChange(listener: SessionListener): () => void {
+  sessionListeners.add(listener);
+  return () => {
+    sessionListeners.delete(listener);
+  };
+}
+
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 let inFlight: Promise<BackupPackageMeta | null> | null = null;
 
@@ -46,11 +67,13 @@ export async function persistBackupPassphrase(passphrase: string): Promise<void>
   if (!trimmed) throw new Error("Backup passphrase required");
   await SecureStore.setItemAsync(PASSPHRASE_KEY, trimmed, SECURE_OPTIONS);
   sessionPassphrase = trimmed;
+  notifyBackupPassphraseSessionChange();
 }
 
 export async function clearPersistedBackupPassphrase(): Promise<void> {
   sessionPassphrase = null;
   clearSessionWrapKey();
+  notifyBackupPassphraseSessionChange();
   try {
     await SecureStore.deleteItemAsync(PASSPHRASE_KEY, SECURE_OPTIONS);
   } catch {
@@ -64,12 +87,15 @@ export async function unlockBackupPassphraseSession(): Promise<boolean> {
     const v = await SecureStore.getItemAsync(PASSPHRASE_KEY, SECURE_OPTIONS);
     if (!v?.trim()) {
       sessionPassphrase = null;
+      notifyBackupPassphraseSessionChange();
       return false;
     }
     sessionPassphrase = v.trim();
+    notifyBackupPassphraseSessionChange();
     return true;
   } catch {
     sessionPassphrase = null;
+    notifyBackupPassphraseSessionChange();
     return false;
   }
 }
@@ -78,17 +104,20 @@ export async function unlockBackupPassphraseSession(): Promise<boolean> {
 export function lockBackupPassphraseSession(): void {
   sessionPassphrase = null;
   clearSessionWrapKey();
+  notifyBackupPassphraseSessionChange();
 }
 
 export function setSessionBackupPassphrase(passphrase: string): void {
   const trimmed = passphrase.trim();
   if (!trimmed) throw new Error("Backup passphrase required");
   sessionPassphrase = trimmed;
+  notifyBackupPassphraseSessionChange();
 }
 
 export function clearSessionBackupPassphrase(): void {
   sessionPassphrase = null;
   clearSessionWrapKey();
+  notifyBackupPassphraseSessionChange();
 }
 
 export function hasSessionBackupPassphrase(): boolean {
@@ -104,6 +133,20 @@ export async function getPersistedBackupPassphrase(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * True when Path C meta is armed (e.g. after BLE pair) but no passphrase is
+ * in the RAM session (and SecureStore unlock did not load one). Device 2 must
+ * enter it ephemerally via setSessionBackupPassphrase — never persist.
+ * Does not mean "no backup set up".
+ */
+export async function needsBackupPassphraseEntry(): Promise<boolean> {
+  const meta = await readBackupMeta();
+  if (!meta?.enabled || !meta.channel) return false;
+  if (hasSessionBackupPassphrase()) return false;
+  await unlockBackupPassphraseSession();
+  return !hasSessionBackupPassphrase();
 }
 
 export async function markBackupPackageDirty(): Promise<void> {

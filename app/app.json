@@ -2,7 +2,7 @@
   "expo": {
     "name": "Basic",
     "slug": "basic-wallet",
-    "version": "0.7.0-alpha.38",
+    "version": "0.7.0-alpha.39",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "splash": {
@@ -63,7 +63,10 @@
         {
           "isBackgroundEnabled": false,
           "neverForLocation": true,
-          "modes": ["peripheral", "central"],
+          "modes": [
+            "peripheral",
+            "central"
+          ],
           "bluetoothAlwaysPermission": "Pair nearby Basic devices to move your wallets securely."
         }
       ],
@@ -115,5 +118,5 @@
       "passkeyRpId": "basic.davidcoen.it"
     }
   },
-  "version": "0.7.0-alpha.38"
+  "version": "0.7.0-alpha.39"
 }
