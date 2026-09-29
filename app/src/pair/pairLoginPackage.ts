@@ -38,7 +38,7 @@ import { loadHomeServerCreds } from "../nostr/homeServerCreds";
 import { importAndStoreNsec, loadNostrKeyPairForCrypto } from "../nostr/identityStore";
 import {
   clearBackupPassphraseNeededAfterPair,
-  getPersistedBackupPassphrase,
+  ensureBackupPassphraseForPair,
   persistBackupPassphrase,
 } from "../nostr/backupSync";
 import { hasMnemonic, loadMnemonicForCrypto, storeMnemonic } from "../security/mnemonicStore";
@@ -154,7 +154,8 @@ export async function assemblePairLoginPackage(): Promise<PairLoginPackage> {
     if (meta.channel === "home" && !meta.homeUrl?.trim()) {
       throw new Error("Home backup is enabled but server URL is missing");
     }
-    const passphrase = await getPersistedBackupPassphrase();
+    // Reload SecureStore after pair biometrics (UV can clear RAM session).
+    const passphrase = await ensureBackupPassphraseForPair();
     if (!passphrase?.trim()) {
       throw new Error(
         "Cloud backup is on, but the backup passphrase could not be read from this device. Unlock the app and try pairing again.",

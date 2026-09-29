@@ -88,20 +88,57 @@ export async function clearPersistedBackupPassphrase(): Promise<void> {
   }
 }
 
-/** After successful biometrics lock unlock — load passphrase into session. */
+/**
+ * After successful biometrics / AppLock unlock — load passphrase into session.
+ *
+ * Important: never wipe a warm RAM session on empty/throw SecureStore reads.
+ * Pair Approve UV can background the app and clear session via AppLockGate;
+ * a transient keystore miss right after the bio sheet must not also erase a
+ * session that still held the secret (α41 fail: loud error despite backup ON).
+ */
 export async function unlockBackupPassphraseSession(): Promise<boolean> {
   try {
     const v = await SecureStore.getItemAsync(PASSPHRASE_KEY, SECURE_OPTIONS);
     if (!v?.trim()) {
-      assignSessionPassphrase(null);
-      return false;
+      return !!sessionPassphrase?.trim();
     }
     assignSessionPassphrase(v.trim());
     return true;
   } catch {
-    assignSessionPassphrase(null);
-    return false;
+    return !!sessionPassphrase?.trim();
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Ensure the backup AEAD passphrase is available for BLE pair packing.
+ * Same SecureStore key as AppLock unlock (`basic.wallet.backup.passphrase.v1`).
+ * Retries after UV — OEM bio sheets can briefly race SecureStore reads.
+ * Returns null only when SecureStore is truly empty/unreadable (legacy/corrupt).
+ */
+export async function ensureBackupPassphraseForPair(): Promise<string | null> {
+  const existing = await getPersistedBackupPassphrase();
+  if (existing?.trim()) return existing.trim();
+
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) await sleep(80 * attempt);
+    await unlockBackupPassphraseSession();
+    const fromSession = sessionPassphrase?.trim();
+    if (fromSession) return fromSession;
+    try {
+      const v = await SecureStore.getItemAsync(PASSPHRASE_KEY, SECURE_OPTIONS);
+      if (v?.trim()) {
+        assignSessionPassphrase(v.trim());
+        return v.trim();
+      }
+    } catch {
+      /* retry */
+    }
+  }
+  return null;
 }
 
 /** Call when app re-locks (background / logout). */

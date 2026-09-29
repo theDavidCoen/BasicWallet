@@ -24,6 +24,7 @@ import {
 import {
   assemblePairLoginPackage,
   encodePairLoginPackage,
+  type PairLoginPackage,
 } from "../pair/pairLoginPackage";
 import {
   encodeWireEnvelope,
@@ -31,7 +32,11 @@ import {
   lobbyIdFromPub,
   verifyLobbyBind,
 } from "../pair/pairProtocol";
-import { unlockBackupPassphraseSession } from "../nostr/backupSync";
+import { ensureBackupPassphraseForPair } from "../nostr/backupSync";
+import {
+  beginPresencePrompt,
+  endPresencePrompt,
+} from "../security/presencePrompt";
 import { requireUserPresence } from "../security/userPresence";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
@@ -140,9 +145,16 @@ export function PairBluetoothScreen() {
 
       setPhase("sending");
       setStatus("Building encrypted login…");
-      // Warm SecureStore passphrase into session under the biometrics gate.
-      await unlockBackupPassphraseSession();
-      const pkg = await assemblePairLoginPackage();
+      // Keep AppLock from clearing the RAM session while we reload SecureStore
+      // and pack (UV bio sheet often backgrounds the app on Xiaomi/Samsung).
+      beginPresencePrompt();
+      let pkg: PairLoginPackage;
+      try {
+        await ensureBackupPassphraseForPair();
+        pkg = await assemblePairLoginPackage();
+      } finally {
+        endPresencePrompt();
+      }
       const { envelope } = encryptPairPayload(
         encodePairLoginPackage(pkg),
         session.pubCompressed,
