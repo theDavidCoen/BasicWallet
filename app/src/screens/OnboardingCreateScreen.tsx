@@ -108,8 +108,8 @@ export function OnboardingCreateScreen() {
           Alert.alert(
             "Paired",
             applied.channel === "home"
-              ? "Home server backup is on. Enter your backup passphrase when you Update & upload."
-              : "Nostr backup is on. Enter your backup passphrase when you Update & publish.",
+              ? "Home server backup is active on this phone."
+              : "Nostr backup is active on this phone.",
           );
         }
         navigation.reset({ index: 0, routes: [{ name: "Home" }] });
@@ -290,10 +290,11 @@ export function OnboardingCreateScreen() {
         ) : null}
         <Text style={[styles.sheetBody, { paddingBottom: sheetBottomPad }]}>
           Grant Bluetooth when prompted. Keep this screen open while the other
-          phone scans and connects. Transfer uses a short encrypted Bluetooth
-          link (not dozens of tiny ads). Passkeys are not transferred; enable
-          Backup afterward if the other phone did not already have Nostr or Home
-          backup on.
+          phone scans, matches this code, and approves. Wallets, nsec, and the
+          backup passphrase (if the other phone has cloud backup on) transfer
+          over encrypted Bluetooth. Backup stays fully active on this phone.
+          Passkeys are not transferred. If the other phone had no Nostr or Home
+          backup, you will see a reminder to set one up.
           {pairStatus ? `\n\n${pairStatus}` : ""}
         </Text>
       </InteractiveBottomSheet>

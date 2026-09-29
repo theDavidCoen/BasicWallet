@@ -18,9 +18,8 @@ type BannerKind = "no-backup" | "passphrase" | null;
 /**
  * Bottom dialogs on Home only (never while a sheet is open):
  * - "No backup set up" — onboarding/pair skipped cloud backup
- * - "Enter your backup passphrase" — only after BLE pair sets
- *   backupPassphraseNeededAfterPair (Device 2); never merely because meta is
- *   enabled and the RAM session is empty (Device 1 / cold start must stay quiet)
+ * - "Enter your backup passphrase" — legacy after-pair flag only
+ *   (α41+ happy path persists passphrase over BLE and never sets the flag)
  */
 export function BackupReminderBanner({
   navigationRef,

@@ -31,6 +31,7 @@ import {
   lobbyIdFromPub,
   verifyLobbyBind,
 } from "../pair/pairProtocol";
+import { unlockBackupPassphraseSession } from "../nostr/backupSync";
 import { requireUserPresence } from "../security/userPresence";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
@@ -139,6 +140,8 @@ export function PairBluetoothScreen() {
 
       setPhase("sending");
       setStatus("Building encrypted login…");
+      // Warm SecureStore passphrase into session under the biometrics gate.
+      await unlockBackupPassphraseSession();
       const pkg = await assemblePairLoginPackage();
       const { envelope } = encryptPairPayload(
         encodePairLoginPackage(pkg),
@@ -188,8 +191,12 @@ export function PairBluetoothScreen() {
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
         <Text style={ui.title}>PAIR WITH BLUETOOTH</Text>
         <Text style={ui.caption}>
-          Move wallets to a nearby phone that is on the Basic welcome screen.
-          {"\n"}Secrets stay encrypted over Bluetooth.
+          Move this account to a nearby phone on the Basic welcome screen.
+          {"\n"}Wallets, nsec, and the backup passphrase (if cloud backup is on)
+          transfer over encrypted Bluetooth. Passkeys are not transferred.
+          {"\n"}If this phone already has Nostr or Home backup, the new phone
+          gets backup fully active. If not, the new phone will remind you to
+          set one up.
         </Text>
 
         <View style={ui.cardMuted}>

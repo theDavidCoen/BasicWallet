@@ -123,7 +123,7 @@ export function hasSessionBackupPassphrase(): boolean {
   return !!sessionPassphrase;
 }
 
-/** Load passphrase from session or SecureStore (manual Update / sync). Never for BLE pair. */
+/** Load passphrase from session or SecureStore (manual Update / sync / BLE pair). */
 export async function getPersistedBackupPassphrase(): Promise<string | null> {
   if (sessionPassphrase?.trim()) return sessionPassphrase.trim();
   try {
@@ -135,8 +135,9 @@ export async function getPersistedBackupPassphrase(): Promise<string | null> {
 }
 
 /**
- * Arm the Home passphrase banner after BLE pair re-arms backup meta without a
- * session passphrase (Device 2 only). Not set on Device 1 / cold start / Recap.
+ * Legacy: arm the Home passphrase banner after BLE pair re-armed meta without
+ * a transferred passphrase. α41+ applyPairLoginPackage persists the passphrase
+ * and clears this flag instead — happy path never shows the banner.
  */
 export async function markBackupPassphraseNeededAfterPair(): Promise<void> {
   await AsyncStorage.setItem(PASSPHRASE_NEEDED_AFTER_PAIR_KEY, "1");

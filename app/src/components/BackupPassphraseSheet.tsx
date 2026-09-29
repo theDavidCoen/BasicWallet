@@ -1,7 +1,8 @@
 /**
  * Home bottom sheet: enter backup passphrase into ephemeral session only.
- * Shown after BLE pair sets backupPassphraseNeededAfterPair (Device 2).
- * Never writes SecureStore / Keystore. Confirm clears the after-pair flag.
+ * Legacy path for backupPassphraseNeededAfterPair (pre-α41 pair without
+ * transferred passphrase). Happy-path BLE pair persists the passphrase and
+ * does not open this sheet.
  */
 
 import { useEffect, useState } from "react";
