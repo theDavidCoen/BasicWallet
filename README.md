@@ -30,6 +30,7 @@ Basic (`app.basic.wallet`) is an experimental mobile wallet built with **Expo / 
 | **Lightning** | User-linked node (e.g. BTCPay / LNDHub) and Arkade↔Lightning **intents** (not Boltz) |
 | **Backup** | Passkey-oriented onboarding, Advanced Backup via Nostr and/or home server |
 | **Contacts** | Local encrypted contacts, share over Nostr gift wraps |
+| **Bluetooth pair** | Move an account to a nearby phone from the welcome screen (encrypted Bluetooth; no QR/NFC) |
 | **Ops hygiene** | Reproducible Android APK recipe, minimal permissions, SQLCipher for account DB |
 
 Network defaults: development tends toward Mutinynet; release builds target mainnet Arkade (`https://arkade.computer`), with Settings to switch network / custom ASP.
@@ -51,13 +52,14 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 - Set app PIN / biometrics gates for sensitive actions
 - Export recovery phrase only after presence checks (screen capture blocked where wired)
 - **Continue with passkey** (WebAuthn / Credential Manager PRF → Personal seed + Nostr identity)
+- **Pair with Bluetooth** — move wallets / nsec to a nearby phone on the welcome screen (lobby code + biometrics; passkeys stay on Device 1)
 - **Manage a Nostr identity**; Advanced Backup (Nostr relays and/or home server), including Fiat/Maxi prefs in the Path C package
 - Maintain **contacts** (npub, NIP-05, BIP-353, etc.) and share a contact over Nostr
 - Prefer mainnet or Mutinynet (and optional custom ASP) from Settings
 
 Expect bugs, incomplete screens, and breaking changes between `0.x` alphas.
 
-Gestures (Activity pull, POS/Scan swipes, Send Enter/Paste/My wallets/Scan, Fiat Mode icon): [`docs/how-to-use.md`](./docs/how-to-use.md#shortcuts--gestures).
+Gestures (Activity pull, POS/Scan swipes, Send Enter/Paste/My wallets/Scan, Fiat Mode icon): [`docs/how-to-use.md`](./docs/how-to-use.md#shortcuts--gestures). Bluetooth pair / fast login: [`docs/how-to-use.md`](./docs/how-to-use.md#bluetooth-pair--fast-login).
 
 ## Repository layout
 

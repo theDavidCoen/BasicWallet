@@ -7,8 +7,9 @@ This page covers everyday flows, gestures/shortcuts, and advanced options as of 
 ## First launch
 
 1. Create with **passkey** (recommended) or continue **without passkey** (device-only + Advanced Backup).
-2. Or **restore** from seed / Nostr package / home server (Settings → Restore, or onboarding footer).
-3. Prefer a backup before you receive funds: passkey and/or Advanced Backup (Nostr / home server).
+2. Or **restore** from seed / Nostr package / home server (onboarding **Restore options** chip, or Settings → Restore).
+3. Or **pair** from a logged-in nearby phone (onboarding **pair** chip) — see [Bluetooth pair / fast login](#bluetooth-pair--fast-login).
+4. Prefer a backup before you receive funds: passkey and/or Advanced Backup (Nostr / home server).
 
 Settings → About shows version + git commit for the APK you installed.
 
@@ -46,6 +47,7 @@ Settings → About shows version + git commit for the APK you installed.
 | Contacts | Private directory; Nostr share |
 | Backup | Passkey status, Nostr package, home server |
 | Restore | Seed / nsec package / home server |
+| Pair with Bluetooth | Move this account to a nearby phone on the welcome screen (Advanced) |
 | Network / ASP | Mainnet, Mutinynet, optional custom ASP |
 | About | Version, commit, ASP info |
 
@@ -114,6 +116,35 @@ Do not expect arkade.money-instant UX on every network; Mutinynet ASP timeouts c
 - Fiat Mode wins when active (inbound follows Fiat Mode rules).
 - Settings → Bitcoin Maxi Mode for status / future toggle.
 
+## Bluetooth pair / fast login
+
+Move an account to a **nearby phone** from the welcome screen over **encrypted Bluetooth** (no QR or NFC).
+
+### Where
+
+| Device | Entry |
+|--------|--------|
+| **Device 2** (new / welcome) | Onboarding footer chips: **pair** \| **Restore options** |
+| **Device 1** (already logged in) | Settings → Advanced → **Pair with Bluetooth** |
+
+### Flow
+
+1. On Device 2, tap **pair**, grant Bluetooth, keep the sheet open (it shows a short pairing code).
+2. On Device 1, open **Pair with Bluetooth**, start scan, match the same lobby code, then approve.
+3. Device 1 confirms with **biometrics** (presence gate). Both phones must show the same code before approve.
+
+### What transfers
+
+- Arkade wallets (seeds), Nostr **nsec**, and the **backup passphrase** when cloud backup (Nostr / Home) is already on Device 1.
+- **Passkeys are not transferred** — Device 2 does not inherit the WebAuthn / PRF credential.
+
+### Backup after pair
+
+- If Device 1 already had **Nostr or Home** Advanced Backup armed → Device 2 gets backup **fully active** (passphrase included on the wire).
+- If Device 1 had no cloud backup → Device 2 shows a **No backup set up** reminder on Home until you set one up.
+
+Both phones need Bluetooth (and nearby-devices) permission. Stay within range until Device 2 confirms login.
+
 ## Advanced features
 
 ### Backup and restore
@@ -121,6 +152,7 @@ Do not expect arkade.money-instant UX on every network; Mutinynet ASP timeouts c
 - **Passkey** — Personal seed + Nostr identity from PRF; rematerialize on a new device with the same passkey.
 - **Advanced Backup (Path C)** — passphrase-wrapped AEAD package (wallets, notes, contacts, Fiat/Maxi prefs) on Nostr relays and/or home server (WebDAV). Lose the passphrase → lose the package.
 - **Restore** — seed words, or nsec + backup passphrase (package), or home server download.
+- **Bluetooth pair** — nearby-phone fast login (see [above](#bluetooth-pair--fast-login)); complements restore when Device 1 is still unlocked.
 
 ### Contacts
 
