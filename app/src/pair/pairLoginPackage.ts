@@ -16,15 +16,22 @@ import { listContacts } from "../contacts/contactStore";
 import {
   armBackupMetaAfterRestore,
   readBackupMeta,
+  readCipherBlob,
   restoreContactsFromPackage,
   restorePrefsFromPackage,
   restoreTxMetaFromPackage,
+  storeCipherBlob,
   type BackupChannel,
   type BackupPackageMeta,
+  type CipherBlob,
   type DecryptedBackupPackage,
   type WalletPackageEntry,
 } from "../nostr/backupPackage";
-import { getPersistedBackupPassphrase, persistBackupPassphrase } from "../nostr/backupSync";
+import {
+  getPersistedBackupPassphrase,
+  persistBackupPassphrase,
+  unlockBackupPassphraseSession,
+} from "../nostr/backupSync";
 import { loadHomeServerCreds } from "../nostr/homeServerCreds";
 import { importAndStoreNsec, loadNostrKeyPairForCrypto } from "../nostr/identityStore";
 import { hasMnemonic, loadMnemonicForCrypto, storeMnemonic } from "../security/mnemonicStore";
@@ -36,12 +43,15 @@ import { setMnemonicSource } from "../wallet/mnemonicMeta";
 
 export type PairBackupArm = {
   channel: BackupChannel;
-  passphrase: string;
+  /** Omitted when SecureStore/session has no passphrase (e.g. post-reset rematerialize). */
+  passphrase?: string;
   relays?: string[];
   homeUrl?: string | null;
   homeToken?: string | null;
   homeUser?: string | null;
   homePassword?: string | null;
+  /** Local AEAD blob so Device 2 can Update without re-downloading. */
+  cipher?: CipherBlob | null;
 };
 
 /** Plaintext login package (encrypted on the wire via pairProtocol). */
@@ -131,19 +141,33 @@ export async function assemblePairLoginPackage(): Promise<PairLoginPackage> {
 
   let backupArm: PairBackupArm | undefined;
   const meta = await readBackupMeta();
-  if (meta?.enabled) {
+  if (meta?.enabled && meta.channel) {
+    // Biometrics / app-lock may have cleared the RAM session; reload SecureStore.
+    await unlockBackupPassphraseSession();
     const passphrase = await getPersistedBackupPassphrase();
-    if (passphrase) {
-      const homeCreds = await loadHomeServerCreds();
-      backupArm = {
-        channel: meta.channel,
-        passphrase,
-        relays: meta.relays,
-        homeUrl: meta.homeUrl,
-        homeToken: homeCreds.token ?? meta.homeToken,
-        homeUser: homeCreds.username ?? meta.homeUser,
-        homePassword: homeCreds.password,
-      };
+    const homeCreds = await loadHomeServerCreds();
+    const cipher = await readCipherBlob();
+    if (meta.channel === "home" && !meta.homeUrl?.trim()) {
+      throw new Error("Home backup is enabled but server URL is missing");
+    }
+    // Always pack arm when Device 1 has the channel ON — even if passphrase is
+    // missing (factory reset keeps meta/cipher but wipes passphrase SecureStore).
+    // Omitting arm used to force BackupReminderBanner on Device 2 incorrectly.
+    backupArm = {
+      channel: meta.channel,
+      ...(passphrase ? { passphrase } : {}),
+      relays: meta.relays,
+      homeUrl: meta.homeUrl,
+      homeToken: homeCreds.token ?? meta.homeToken,
+      homeUser: homeCreds.username ?? meta.homeUser,
+      homePassword: homeCreds.password,
+      cipher,
+    };
+    if (!passphrase) {
+      console.warn(
+        "[basic] pair package: backup channel armed without passphrase (Device 2 will need it for Update)",
+        meta.channel,
+      );
     }
   }
 
@@ -221,8 +245,13 @@ export async function applyPairLoginPackage(pkg: PairLoginPackage): Promise<Appl
 
   let backupReArmed = false;
   let channel: BackupChannel | null = null;
-  if (pkg.backupArm?.passphrase && pkg.backupArm.channel) {
-    await persistBackupPassphrase(pkg.backupArm.passphrase);
+  if (pkg.backupArm?.channel) {
+    if (pkg.backupArm.passphrase?.trim()) {
+      await persistBackupPassphrase(pkg.backupArm.passphrase);
+    }
+    if (pkg.backupArm.cipher?.saltHex && pkg.backupArm.cipher.ciphertextHex) {
+      await storeCipherBlob(pkg.backupArm.cipher);
+    }
     await armBackupMetaAfterRestore({
       channel: pkg.backupArm.channel,
       npub: pkg.npub,
