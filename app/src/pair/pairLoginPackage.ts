@@ -155,10 +155,12 @@ export async function assemblePairLoginPackage(): Promise<PairLoginPackage> {
       throw new Error("Home backup is enabled but server URL is missing");
     }
     // Reload SecureStore after pair biometrics (UV can clear RAM session).
+    // If still empty, PairBluetoothScreen prompts for passphrase (α43) —
+    // do not tell the user to "unlock and try again" (that was wrong for empty store).
     const passphrase = await ensureBackupPassphraseForPair();
     if (!passphrase?.trim()) {
       throw new Error(
-        "Cloud backup is on, but the backup passphrase could not be read from this device. Unlock the app and try pairing again.",
+        "Cloud backup is on, but no backup passphrase is available. Enter the passphrase when prompted, then approve again.",
       );
     }
     backupArm = {

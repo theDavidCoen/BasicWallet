@@ -117,12 +117,15 @@ function sleep(ms: number): Promise<void> {
  * Ensure the backup AEAD passphrase is available for BLE pair packing.
  * Same SecureStore key as AppLock unlock (`basic.wallet.backup.passphrase.v1`).
  * Retries after UV — OEM bio sheets can briefly race SecureStore reads.
- * Returns null only when SecureStore is truly empty/unreadable (legacy/corrupt).
+ * Returns null only when SecureStore is truly empty/unreadable (legacy path:
+ * α38 re-arm without transfer, or BackupPassphraseSheet session-only entry).
  */
 export async function ensureBackupPassphraseForPair(): Promise<string | null> {
   const existing = await getPersistedBackupPassphrase();
   if (existing?.trim()) return existing.trim();
 
+  let sawSecureStore = false;
+  let secureStoreThrows = 0;
   for (let attempt = 0; attempt < 4; attempt++) {
     if (attempt > 0) await sleep(80 * attempt);
     await unlockBackupPassphraseSession();
@@ -134,11 +137,24 @@ export async function ensureBackupPassphraseForPair(): Promise<string | null> {
         assignSessionPassphrase(v.trim());
         return v.trim();
       }
+      // Empty string / null = key absent, not a race.
+      sawSecureStore = true;
     } catch {
-      /* retry */
+      secureStoreThrows += 1;
     }
   }
+  console.warn("[basic] pair backup passphrase missing", {
+    sessionWarm: !!sessionPassphrase?.trim(),
+    secureStoreEmpty: sawSecureStore,
+    secureStoreThrows,
+  });
   return null;
+}
+
+/** True when cloud backup meta is armed (channel ON). */
+export async function isCloudBackupMetaArmed(): Promise<boolean> {
+  const meta = await readBackupMeta();
+  return !!(meta?.enabled && meta.channel);
 }
 
 /** Call when app re-locks (background / logout). */

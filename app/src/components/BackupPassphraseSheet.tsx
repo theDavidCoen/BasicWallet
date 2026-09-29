@@ -1,8 +1,11 @@
 /**
- * Home bottom sheet: enter backup passphrase into ephemeral session only.
- * Legacy path for backupPassphraseNeededAfterPair (pre-α41 pair without
- * transferred passphrase). Happy-path BLE pair persists the passphrase and
- * does not open this sheet.
+ * Bottom sheet: enter backup AEAD passphrase.
+ *
+ * Modes:
+ * - session (default): legacy Home banner after pair re-arm without transfer.
+ *   Sets RAM session only (does not write SecureStore).
+ * - pair: Device 1 Approve when backup meta is ON but SecureStore is empty.
+ *   Verifies cipher, persistBackupPassphrase, then continues pairing.
  */
 
 import { useEffect, useState } from "react";
@@ -17,24 +20,30 @@ import {
 import { loadNostrKeyPairForCrypto } from "../nostr/identityStore";
 import {
   clearBackupPassphraseNeededAfterPair,
+  persistBackupPassphrase,
   scheduleEncryptedBackupSync,
   setSessionBackupPassphrase,
 } from "../nostr/backupSync";
 import { colors } from "../theme/colors";
 import { sheetUi } from "../theme/sheetUi";
 
+export type BackupPassphraseSheetMode = "session" | "pair";
+
 export function BackupPassphraseSheet({
   open,
   onDismiss,
   onArmed,
+  mode = "session",
 }: {
   open: boolean;
   onDismiss: () => void;
-  /** Called after session passphrase is accepted (banner should hide). */
-  onArmed: () => void;
+  /** Called after passphrase is accepted (banner hide / pair continue). */
+  onArmed: (passphrase: string) => void;
+  mode?: BackupPassphraseSheetMode;
 }) {
   const [passphrase, setPassphrase] = useState("");
   const [busy, setBusy] = useState(false);
+  const pairMode = mode === "pair";
 
   useEffect(() => {
     if (!open) {
@@ -66,14 +75,29 @@ export function BackupPassphraseSheet({
           );
           return;
         }
+      } else if (pairMode) {
+        // Pair needs a real cipher to transfer; refuse empty/corrupt local package.
+        Alert.alert(
+          "Backup package missing",
+          "Cloud backup is marked on, but no encrypted package was found on this device.",
+        );
+        return;
       }
-      // Ephemeral only — never persistBackupPassphrase.
-      setSessionBackupPassphrase(value);
-      await clearBackupPassphraseNeededAfterPair();
+
+      if (pairMode) {
+        await persistBackupPassphrase(value);
+      } else {
+        // Ephemeral only — never persistBackupPassphrase (legacy banner path).
+        setSessionBackupPassphrase(value);
+        await clearBackupPassphraseNeededAfterPair();
+      }
+
       setPassphrase("");
-      onArmed();
+      onArmed(value.trim());
       onDismiss();
-      scheduleEncryptedBackupSync("pair-passphrase-session", 2_000);
+      if (!pairMode) {
+        scheduleEncryptedBackupSync("pair-passphrase-session", 2_000);
+      }
     } catch (e) {
       Alert.alert(
         "Could not unlock backup",
@@ -95,9 +119,9 @@ export function BackupPassphraseSheet({
       <View style={styles.body}>
         <Text style={sheetUi.title}>Backup passphrase</Text>
         <Text style={sheetUi.caption}>
-          Backup is already set up on this wallet. Enter the passphrase to reactivate
-          encrypted uploads on this device. It stays in memory only for this session —
-          Basic never stores it on disk.
+          {pairMode
+            ? "Cloud backup is on, but this phone does not have the passphrase stored. Enter it once to continue pairing — Basic saves it securely and sends it to the other phone."
+            : "Backup is already set up on this wallet. Enter the passphrase to reactivate encrypted uploads on this device. It stays in memory only for this session — Basic never stores it on disk."}
         </Text>
 
         <Text style={sheetUi.label}>Passphrase</Text>

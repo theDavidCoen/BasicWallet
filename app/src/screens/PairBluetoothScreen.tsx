@@ -14,6 +14,7 @@ import {
   View,
 } from "react-native";
 import type { RootNav } from "../navigation/types";
+import { BackupPassphraseSheet } from "../components/BackupPassphraseSheet";
 import { ScreenChrome } from "../components/ScreenChrome";
 import {
   cancelPairBle,
@@ -32,7 +33,10 @@ import {
   lobbyIdFromPub,
   verifyLobbyBind,
 } from "../pair/pairProtocol";
-import { ensureBackupPassphraseForPair } from "../nostr/backupSync";
+import {
+  ensureBackupPassphraseForPair,
+  isCloudBackupMetaArmed,
+} from "../nostr/backupSync";
 import {
   beginPresencePrompt,
   endPresencePrompt,
@@ -42,7 +46,14 @@ import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 import { useWallet } from "../wallet/WalletProvider";
 
-type Phase = "idle" | "scanning" | "confirm" | "approving" | "sending" | "done";
+type Phase =
+  | "idle"
+  | "scanning"
+  | "confirm"
+  | "approving"
+  | "passphrase"
+  | "sending"
+  | "done";
 
 type PendingHello = {
   session: ApproverBleSession;
@@ -55,17 +66,48 @@ export function PairBluetoothScreen() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [status, setStatus] = useState("");
   const [pending, setPending] = useState<PendingHello | null>(null);
+  const [passphraseSheetOpen, setPassphraseSheetOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const approveLock = useRef(false);
+  const passphraseWaitRef = useRef<{
+    resolve: (passphrase: string) => void;
+    reject: (err: Error) => void;
+  } | null>(null);
 
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
       void pending?.session.cancel();
       void cancelPairBle();
+      passphraseWaitRef.current?.reject(new Error("Pairing cancelled"));
+      passphraseWaitRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- unmount cleanup only
   }, []);
+
+  function promptBackupPassphraseForPair(): Promise<string> {
+    setPassphraseSheetOpen(true);
+    setPhase("passphrase");
+    setStatus("Enter your backup passphrase to continue pairing…");
+    return new Promise((resolve, reject) => {
+      passphraseWaitRef.current = { resolve, reject };
+    });
+  }
+
+  function onPassphraseArmed(passphrase: string) {
+    const wait = passphraseWaitRef.current;
+    passphraseWaitRef.current = null;
+    setPassphraseSheetOpen(false);
+    wait?.resolve(passphrase);
+  }
+
+  function onPassphraseDismiss() {
+    setPassphraseSheetOpen(false);
+    const wait = passphraseWaitRef.current;
+    if (!wait) return;
+    passphraseWaitRef.current = null;
+    wait.reject(new Error("Pairing cancelled — backup passphrase was not entered."));
+  }
 
   async function onStart() {
     if (!hasWallet) {
@@ -150,7 +192,20 @@ export function PairBluetoothScreen() {
       beginPresencePrompt();
       let pkg: PairLoginPackage;
       try {
-        await ensureBackupPassphraseForPair();
+        let passphrase = await ensureBackupPassphraseForPair();
+        if (!passphrase && (await isCloudBackupMetaArmed())) {
+          // Empty SecureStore (not a UV race): prompt once, persist, continue.
+          // Hold presence latch across the sheet so AppLock cannot wipe the
+          // freshly persisted session before assemble reads it.
+          console.warn(
+            "[basic] pair: backup ON but SecureStore passphrase empty — prompting Device 1",
+          );
+          setStatus("Enter your backup passphrase…");
+          passphrase = await promptBackupPassphraseForPair();
+          setPhase("sending");
+          setStatus("Building encrypted login…");
+        }
+        void passphrase;
         pkg = await assemblePairLoginPackage();
       } finally {
         endPresencePrompt();
@@ -173,6 +228,8 @@ export function PairBluetoothScreen() {
     } catch (e) {
       if (ac.signal.aborted) return;
       approveLock.current = false;
+      setPassphraseSheetOpen(false);
+      passphraseWaitRef.current = null;
       setPhase("idle");
       setStatus("");
       setPending(null);
@@ -185,6 +242,11 @@ export function PairBluetoothScreen() {
   function onCancel() {
     abortRef.current?.abort();
     approveLock.current = false;
+    if (passphraseWaitRef.current) {
+      passphraseWaitRef.current.reject(new Error("Pairing cancelled"));
+      passphraseWaitRef.current = null;
+    }
+    setPassphraseSheetOpen(false);
     void pending?.session.cancel();
     void cancelPairBle();
     setPhase("idle");
@@ -195,8 +257,9 @@ export function PairBluetoothScreen() {
   const scanning = phase === "scanning";
   const confirming = phase === "confirm";
   const approving = phase === "approving";
+  const needingPassphrase = phase === "passphrase";
   const sending = phase === "sending";
-  const busy = scanning || approving || sending;
+  const busy = scanning || approving || sending || needingPassphrase;
 
   return (
     <ScreenChrome logoScale={0.77}>
@@ -223,7 +286,7 @@ export function PairBluetoothScreen() {
           ))}
         </View>
 
-        {pending && (confirming || approving) ? (
+        {pending && (confirming || approving || needingPassphrase) ? (
           <View style={styles.codeCard}>
             <Text style={styles.codeLabel}>Pairing code</Text>
             <Text style={styles.codeValue} selectable>
@@ -237,21 +300,28 @@ export function PairBluetoothScreen() {
 
         {status ? <Text style={styles.status}>{status}</Text> : null}
 
-        {confirming || approving ? (
+        {confirming || approving || needingPassphrase ? (
           <>
             <Pressable
-              style={[ui.primaryBtn, (approving || sending) && { opacity: 0.6 }]}
-              disabled={approving || sending}
+              style={[
+                ui.primaryBtn,
+                (approving || sending || needingPassphrase) && { opacity: 0.6 },
+              ]}
+              disabled={approving || sending || needingPassphrase}
               onPress={() => void onApprove()}
               hitSlop={12}
             >
-              {approving ? (
+              {approving || needingPassphrase ? (
                 <ActivityIndicator color="#000" />
               ) : (
                 <Text style={ui.primaryBtnText}>Approve this code</Text>
               )}
             </Pressable>
-            <Pressable style={ui.secondaryBtn} onPress={onCancel} disabled={sending}>
+            <Pressable
+              style={ui.secondaryBtn}
+              onPress={onCancel}
+              disabled={sending && !needingPassphrase}
+            >
               <Text style={ui.secondaryBtnText}>Cancel</Text>
             </Pressable>
           </>
@@ -277,6 +347,13 @@ export function PairBluetoothScreen() {
           </>
         )}
       </ScrollView>
+
+      <BackupPassphraseSheet
+        open={passphraseSheetOpen}
+        mode="pair"
+        onDismiss={onPassphraseDismiss}
+        onArmed={onPassphraseArmed}
+      />
     </ScreenChrome>
   );
 }
