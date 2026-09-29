@@ -24,6 +24,7 @@ type NavTarget =
   | "Privacy"
   | "ConnectedNode"
   | "ArkadeSettings"
+  | "PairBluetooth"
   | "About";
 
 type Row = {
@@ -58,6 +59,7 @@ const BLOCKS: Block[] = [
   { kind: "row", row: { label: "Hardware wallet", stub: true } },
   { kind: "row", row: { label: "Multisig", stub: true } },
   { kind: "row", row: { label: "Backup", on: "AdvancedBackup" } },
+  { kind: "row", row: { label: "Pair with Bluetooth", on: "PairBluetooth" } },
   { kind: "row", row: { label: "Reset app", on: "ResetApp", danger: true } },
 
   { kind: "row", row: { label: "About", on: "About" } },

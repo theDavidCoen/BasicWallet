@@ -30,6 +30,9 @@ import {
 
 const PASSPHRASE_KEY = "basic.wallet.backup.passphrase.v1";
 const DIRTY_KEY = "basic.wallet.backup.dirty.v1";
+/** Set only when BLE pair re-arms backup meta without a session passphrase. */
+const PASSPHRASE_NEEDED_AFTER_PAIR_KEY =
+  "basic.wallet.backup.passphraseNeededAfterPair.v1";
 
 const SECURE_OPTIONS: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
@@ -38,6 +41,34 @@ const SECURE_OPTIONS: SecureStore.SecureStoreOptions = {
 /** In-RAM only after app unlock. */
 let sessionPassphrase: string | null = null;
 
+type SessionListener = () => void;
+const sessionListeners = new Set<SessionListener>();
+
+function notifyBackupPassphraseSessionChange(): void {
+  for (const listener of sessionListeners) {
+    try {
+      listener();
+    } catch {
+      /* ignore listener errors */
+    }
+  }
+}
+
+/** Subscribe to RAM session set/clear (banner refresh after lock / pair entry). */
+export function onBackupPassphraseSessionChange(listener: SessionListener): () => void {
+  sessionListeners.add(listener);
+  return () => {
+    sessionListeners.delete(listener);
+  };
+}
+
+function assignSessionPassphrase(next: string | null): void {
+  if (sessionPassphrase === next) return;
+  sessionPassphrase = next;
+  if (!next) clearSessionWrapKey();
+  notifyBackupPassphraseSessionChange();
+}
+
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 let inFlight: Promise<BackupPackageMeta | null> | null = null;
 
@@ -45,12 +76,11 @@ export async function persistBackupPassphrase(passphrase: string): Promise<void>
   const trimmed = passphrase.trim();
   if (!trimmed) throw new Error("Backup passphrase required");
   await SecureStore.setItemAsync(PASSPHRASE_KEY, trimmed, SECURE_OPTIONS);
-  sessionPassphrase = trimmed;
+  assignSessionPassphrase(trimmed);
 }
 
 export async function clearPersistedBackupPassphrase(): Promise<void> {
-  sessionPassphrase = null;
-  clearSessionWrapKey();
+  assignSessionPassphrase(null);
   try {
     await SecureStore.deleteItemAsync(PASSPHRASE_KEY, SECURE_OPTIONS);
   } catch {
@@ -58,41 +88,136 @@ export async function clearPersistedBackupPassphrase(): Promise<void> {
   }
 }
 
-/** After successful biometrics lock unlock — load passphrase into session. */
+/**
+ * After successful biometrics / AppLock unlock — load passphrase into session.
+ *
+ * Important: never wipe a warm RAM session on empty/throw SecureStore reads.
+ * Pair Approve UV can background the app and clear session via AppLockGate;
+ * a transient keystore miss right after the bio sheet must not also erase a
+ * session that still held the secret (α41 fail: loud error despite backup ON).
+ */
 export async function unlockBackupPassphraseSession(): Promise<boolean> {
   try {
     const v = await SecureStore.getItemAsync(PASSPHRASE_KEY, SECURE_OPTIONS);
     if (!v?.trim()) {
-      sessionPassphrase = null;
-      return false;
+      return !!sessionPassphrase?.trim();
     }
-    sessionPassphrase = v.trim();
+    assignSessionPassphrase(v.trim());
     return true;
   } catch {
-    sessionPassphrase = null;
-    return false;
+    return !!sessionPassphrase?.trim();
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Ensure the backup AEAD passphrase is available for BLE pair packing.
+ * Same SecureStore key as AppLock unlock (`basic.wallet.backup.passphrase.v1`).
+ * Retries after UV — OEM bio sheets can briefly race SecureStore reads.
+ * Returns null only when SecureStore is truly empty/unreadable (legacy path:
+ * α38 re-arm without transfer, or BackupPassphraseSheet session-only entry).
+ */
+export async function ensureBackupPassphraseForPair(): Promise<string | null> {
+  const existing = await getPersistedBackupPassphrase();
+  if (existing?.trim()) return existing.trim();
+
+  let sawSecureStore = false;
+  let secureStoreThrows = 0;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) await sleep(80 * attempt);
+    await unlockBackupPassphraseSession();
+    const fromSession = sessionPassphrase?.trim();
+    if (fromSession) return fromSession;
+    try {
+      const v = await SecureStore.getItemAsync(PASSPHRASE_KEY, SECURE_OPTIONS);
+      if (v?.trim()) {
+        assignSessionPassphrase(v.trim());
+        return v.trim();
+      }
+      // Empty string / null = key absent, not a race.
+      sawSecureStore = true;
+    } catch {
+      secureStoreThrows += 1;
+    }
+  }
+  console.warn("[basic] pair backup passphrase missing", {
+    sessionWarm: !!sessionPassphrase?.trim(),
+    secureStoreEmpty: sawSecureStore,
+    secureStoreThrows,
+  });
+  return null;
+}
+
+/** True when cloud backup meta is armed (channel ON). */
+export async function isCloudBackupMetaArmed(): Promise<boolean> {
+  const meta = await readBackupMeta();
+  return !!(meta?.enabled && meta.channel);
 }
 
 /** Call when app re-locks (background / logout). */
 export function lockBackupPassphraseSession(): void {
-  sessionPassphrase = null;
-  clearSessionWrapKey();
+  assignSessionPassphrase(null);
 }
 
 export function setSessionBackupPassphrase(passphrase: string): void {
   const trimmed = passphrase.trim();
   if (!trimmed) throw new Error("Backup passphrase required");
-  sessionPassphrase = trimmed;
+  assignSessionPassphrase(trimmed);
 }
 
 export function clearSessionBackupPassphrase(): void {
-  sessionPassphrase = null;
-  clearSessionWrapKey();
+  assignSessionPassphrase(null);
 }
 
 export function hasSessionBackupPassphrase(): boolean {
   return !!sessionPassphrase;
+}
+
+/** Load passphrase from session or SecureStore (manual Update / sync / BLE pair). */
+export async function getPersistedBackupPassphrase(): Promise<string | null> {
+  if (sessionPassphrase?.trim()) return sessionPassphrase.trim();
+  try {
+    const v = await SecureStore.getItemAsync(PASSPHRASE_KEY, SECURE_OPTIONS);
+    return v?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Legacy: arm the Home passphrase banner after BLE pair re-armed meta without
+ * a transferred passphrase. α41+ applyPairLoginPackage persists the passphrase
+ * and clears this flag instead — happy path never shows the banner.
+ */
+export async function markBackupPassphraseNeededAfterPair(): Promise<void> {
+  await AsyncStorage.setItem(PASSPHRASE_NEEDED_AFTER_PAIR_KEY, "1");
+  notifyBackupPassphraseSessionChange();
+}
+
+/** Clear after successful Confirm (or when backup is fully disabled). */
+export async function clearBackupPassphraseNeededAfterPair(): Promise<void> {
+  await AsyncStorage.removeItem(PASSPHRASE_NEEDED_AFTER_PAIR_KEY);
+  notifyBackupPassphraseSessionChange();
+}
+
+/**
+ * True only when BLE pair explicitly flagged passphrase entry AND meta is still
+ * armed AND the RAM session has no passphrase.
+ * Do NOT treat "backup meta enabled && !sessionPassphrase" alone as needing
+ * this banner — that would wrongly prompt Device 1 after restart/upgrade.
+ * Does not mean "no backup set up".
+ */
+export async function needsBackupPassphraseEntry(): Promise<boolean> {
+  if (hasSessionBackupPassphrase()) return false;
+  const flagged =
+    (await AsyncStorage.getItem(PASSPHRASE_NEEDED_AFTER_PAIR_KEY)) === "1";
+  if (!flagged) return false;
+  const meta = await readBackupMeta();
+  if (!meta?.enabled || !meta.channel) return false;
+  return true;
 }
 
 export async function markBackupPackageDirty(): Promise<void> {
@@ -111,6 +236,7 @@ export async function disableEncryptedBackupFully(): Promise<void> {
   await disablePackage();
   await clearPersistedBackupPassphrase();
   await clearBackupPackageDirty();
+  await clearBackupPassphraseNeededAfterPair();
 }
 
 /**

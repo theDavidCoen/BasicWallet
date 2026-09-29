@@ -166,6 +166,14 @@ PY
 
 mkdir -p "$DIST"
 rm -rf "$ANDROID/app/build/outputs/apk/release"
+# Inject GATT peripheral native module (android/ is gitignored).
+if [[ -x "$APP/scripts/patch-pair-gatt-server.sh" ]]; then
+  bash "$APP/scripts/patch-pair-gatt-server.sh"
+fi
+# Android 12+ BLE runtime perms (android/ is gitignored; app.json alone may not land).
+if [[ -x "$APP/scripts/patch-android-ble-permissions.sh" ]]; then
+  bash "$APP/scripts/patch-android-ble-permissions.sh"
+fi
 cd "$ANDROID"
 GRADLE_ARGS=(:app:assembleRelease --no-daemon)
 if [[ "$ABI_MODE" != "universal" ]]; then

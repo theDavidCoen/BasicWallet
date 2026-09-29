@@ -1,14 +1,33 @@
 import { useNavigation } from "@react-navigation/native";
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Svg, { Path } from "react-native-svg";
 import * as Passkeys from "react-native-passkeys";
 import type { RootNav } from "../navigation/types";
 import { BasicLogo } from "../components/BasicLogo";
+import { InteractiveBottomSheet } from "../components/sheet/InteractiveBottomSheet";
 import { colors } from "../theme/colors";
 import { PasskeyPrfUnavailableError } from "../onboarding/passkeyPrf";
 import { needsOnboardingSecurityGate } from "../security/onboardingSecurityGate";
 import type { OnboardingContinueTo } from "../security/onboardingSecurityGate";
+import {
+  cancelPairBle,
+  ensureBlePermissions,
+  runRequesterBleSession,
+  sendRequesterAck,
+} from "../pair/pairBleTransport";
+import {
+  applyPairLoginPackage,
+  decodePairLoginPackage,
+} from "../pair/pairLoginPackage";
+import {
+  decodeWireEnvelope,
+  decryptPairPayload,
+  generatePairEphemeralKeypair,
+  type PairEphemeralKeypair,
+} from "../pair/pairProtocol";
+import { useWallet } from "../wallet/WalletProvider";
 
 /**
  * Penpot `11 Onboarding Create` (390×844):
@@ -29,12 +48,121 @@ const PENPOT = {
 /** Matches BasicLogo height math (VIEW_H * 0.55 * scale). */
 const LOGO_H = Math.round(62 * 0.55 * PENPOT.logoScale);
 
+function BluetoothIcon({ size = 18, color = colors.fg }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" accessibilityElementsHidden>
+      <Path
+        d="M17.71 7.71L12 2h-1v7.59L6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 11 14.41V22h1l5.71-5.71-4.3-4.29 4.3-4.29zM13 5.83l1.88 1.88L13 9.59V5.83zm1.88 10.46L13 18.17v-3.76l1.88 1.88z"
+        fill={color}
+      />
+    </Svg>
+  );
+}
+
 export function OnboardingCreateScreen() {
   const navigation = useNavigation<RootNav>();
   const insets = useSafeAreaInsets();
+  const { beginQuietImportSync, selectWallet } = useWallet();
   const [busy, setBusy] = useState(false);
+  const [pairInfoOpen, setPairInfoOpen] = useState(false);
+  const [pairStatus, setPairStatus] = useState("Waiting for nearby device…");
+  const [pairBusy, setPairBusy] = useState(false);
+  const [lobbyId, setLobbyId] = useState<string | null>(null);
+  const [sessionKey, setSessionKey] = useState(0);
+  const ephRef = useRef<PairEphemeralKeypair | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (!pairInfoOpen || !ephRef.current || sessionKey === 0) return;
+    const eph = ephRef.current;
+
+    let cancelled = false;
+    const ac = new AbortController();
+    abortRef.current = ac;
+
+    void (async () => {
+      setPairBusy(true);
+      try {
+        setPairStatus("Waiting for nearby device…");
+        const wire = await runRequesterBleSession({
+          lobbyHash8: eph.lobbyHash8,
+          pubCompressed: eph.pubCompressed,
+          onStatus: (msg) => {
+            if (!cancelled) setPairStatus(msg);
+          },
+          signal: ac.signal,
+        });
+        if (cancelled || ac.signal.aborted) return;
+        setPairStatus("Decrypting…");
+        const envelope = decodeWireEnvelope(wire);
+        const plain = decryptPairPayload(envelope, eph.sk);
+        const pkg = decodePairLoginPackage(plain);
+        setPairStatus("Applying login…");
+        const applied = await applyPairLoginPackage(pkg);
+        beginQuietImportSync();
+        await selectWallet(applied.preferredWalletId);
+        if (cancelled || ac.signal.aborted) return;
+        setPairStatus("Confirming with the other phone…");
+        await sendRequesterAck(true);
+        if (applied.backupReArmed) {
+          Alert.alert(
+            "Paired",
+            applied.channel === "home"
+              ? "Home server backup is active on this phone."
+              : "Nostr backup is active on this phone.",
+          );
+        }
+        navigation.reset({ index: 0, routes: [{ name: "Home" }] });
+      } catch (e) {
+        if (cancelled || ac.signal.aborted) return;
+        const msg = e instanceof Error ? e.message : "Pairing failed";
+        try {
+          await sendRequesterAck(false, msg);
+        } catch {
+          /* best-effort NACK */
+        }
+        setPairStatus(msg);
+      } finally {
+        if (!cancelled) setPairBusy(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      ac.abort();
+      void cancelPairBle();
+    };
+  }, [pairInfoOpen, sessionKey, beginQuietImportSync, navigation, selectWallet]);
+
+  async function openPairInfo() {
+    setPairInfoOpen(true);
+    const ok = await ensureBlePermissions();
+    if (!ok) {
+      setLobbyId(null);
+      setPairStatus("Bluetooth permission needed to pair nearby");
+      return;
+    }
+    try {
+      const eph = await generatePairEphemeralKeypair();
+      ephRef.current = eph;
+      setLobbyId(eph.lobbyId);
+      setPairStatus("Waiting for nearby device…");
+      setSessionKey((k) => k + 1);
+    } catch (e) {
+      setLobbyId(null);
+      setPairStatus(e instanceof Error ? e.message : "Could not start pairing");
+    }
+  }
+
+  function dismissPairInfo() {
+    setPairInfoOpen(false);
+    abortRef.current?.abort();
+    void cancelPairBle();
+  }
 
   async function goCreate(continueTo: OnboardingContinueTo) {
+    abortRef.current?.abort();
+    void cancelPairBle();
     if (await needsOnboardingSecurityGate()) {
       navigation.navigate("OnboardingSecurity", { continueTo });
       return;
@@ -75,6 +203,7 @@ export function OnboardingCreateScreen() {
   const tagMarginTop = PENPOT.tagY - PENPOT.logoY - LOGO_H;
   const btnMarginTop = PENPOT.btn1Y - PENPOT.tagY - 48;
   const btnGap = PENPOT.btn2Y - PENPOT.btn1Y - PENPOT.btnH;
+  const sheetBottomPad = Math.max(insets.bottom, 48) + 20;
 
   return (
     <View
@@ -119,12 +248,56 @@ export function OnboardingCreateScreen() {
 
       <View style={{ flex: 1 }} />
 
-      <Text
-        style={styles.footer}
-        onPress={() => void goCreate("restore")}
+      <View style={styles.footerChips}>
+        <Pressable
+          style={styles.chip}
+          onPress={() => void openPairInfo()}
+          accessibilityRole="button"
+          accessibilityLabel="pair"
+          accessibilityHint={pairBusy ? pairStatus : "Pair account with Bluetooth"}
+        >
+          <BluetoothIcon />
+          <Text style={styles.chipText}>pair</Text>
+        </Pressable>
+        <Pressable
+          style={styles.chip}
+          onPress={() => void goCreate("restore")}
+          accessibilityRole="button"
+          accessibilityLabel="Restore options"
+        >
+          <Text style={styles.chipText}>Restore options</Text>
+        </Pressable>
+      </View>
+
+      <InteractiveBottomSheet
+        open={pairInfoOpen}
+        onDismiss={dismissPairInfo}
+        visibleFraction={0.62}
+        fitContent
+        portal
       >
-        Seed phrase or nsec? Restore here.
-      </Text>
+        <Text style={styles.sheetTitle}>Pair account with Bluetooth</Text>
+        {lobbyId ? (
+          <View style={styles.codeBlock}>
+            <Text style={styles.codeLabel}>Your pairing code</Text>
+            <Text style={styles.codeValue} selectable>
+              {lobbyId}
+            </Text>
+            <Text style={styles.codeHint}>
+              Show this code on the logged-in phone and approve only if it matches.
+            </Text>
+          </View>
+        ) : null}
+        <Text style={[styles.sheetBody, { paddingBottom: sheetBottomPad }]}>
+          Grant Bluetooth when prompted. Keep this screen open while the other
+          phone scans, matches this code, and approves. Wallets, nsec, and the
+          backup passphrase (if the other phone has cloud backup on) transfer
+          over encrypted Bluetooth. Backup stays fully active on this phone.
+          Passkeys are not transferred. If the other phone had no Nostr or Home
+          backup, you will see a reminder to set one up.
+          {pairStatus ? `\n\n${pairStatus}` : ""}
+        </Text>
+      </InteractiveBottomSheet>
     </View>
   );
 }
@@ -168,12 +341,74 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingVertical: 8,
   },
-  footer: {
+  footerChips: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 10,
+    paddingBottom: 8,
+  },
+  chip: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    minHeight: 44,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  chipText: {
     fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 14,
+    fontSize: 13,
+    color: colors.fg,
+  },
+  sheetTitle: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 16,
+    color: colors.fg,
+    textAlign: "center",
+    marginBottom: 10,
+  },
+  codeBlock: {
+    alignItems: "center",
+    marginBottom: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.fg,
+    backgroundColor: colors.card,
+  },
+  codeLabel: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.caption,
+    marginBottom: 8,
+  },
+  codeValue: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 22,
+    color: colors.fg,
+    letterSpacing: 1,
+    textAlign: "center",
+  },
+  codeHint: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
     color: colors.caption,
     textAlign: "center",
-    // Penpot restore ≈ y 780 → ~40px above frame bottom before system inset
-    paddingBottom: 8,
+    marginTop: 10,
+    lineHeight: 17,
+  },
+  sheetBody: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 13,
+    color: colors.caption,
+    textAlign: "center",
+    lineHeight: 18,
   },
 });

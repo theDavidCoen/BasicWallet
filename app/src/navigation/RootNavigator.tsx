@@ -17,6 +17,7 @@ import { AddWalletScreen } from "../screens/AddWalletScreen";
 import { ReceiveScreen } from "../screens/ReceiveScreen";
 import { SendScreen } from "../screens/SendScreen";
 import { SettingsScreen } from "../screens/SettingsScreen";
+import { PairBluetoothScreen } from "../screens/PairBluetoothScreen";
 import { ArkadeSettingsScreen } from "../screens/ArkadeSettingsScreen";
 import { ArkadeNetworkScreen } from "../screens/ArkadeNetworkScreen";
 import { DisplayCurrenciesScreen } from "../screens/DisplayCurrenciesScreen";
@@ -128,6 +129,7 @@ export function RootNavigator() {
             <Stack.Screen name="Receive" component={ReceiveScreen} />
             <Stack.Screen name="Send" component={SendScreen} />
             <Stack.Screen name="Settings" component={SettingsScreen} />
+            <Stack.Screen name="PairBluetooth" component={PairBluetoothScreen} />
             <Stack.Screen name="ArkadeSettings" component={ArkadeSettingsScreen} />
             <Stack.Screen name="ArkadeNetwork" component={ArkadeNetworkScreen} />
             <Stack.Screen name="DisplayCurrencies" component={DisplayCurrenciesScreen} />
