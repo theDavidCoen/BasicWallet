@@ -78,10 +78,12 @@ export type RootStackParamList = {
   ExportRecoveryPhrase: { walletId?: string } | undefined;
   NostrIdentity: undefined;
   ArchivedWallets: undefined;
-  /** Private contacts directory */
-  Contacts: undefined;
+  /** Private contacts directory. From Chat & Pay: selectForChat opens thread on tap. */
+  Contacts: { selectForChat?: boolean } | undefined;
   /** Chat & Pay hub (Penpot 15g) — recent threads / choose contact */
   PayHub: undefined;
+  /** 1:1 Pay in Chat thread (Penpot 15 / 15f) */
+  ChatThread: { contactId: string; focusRequestId?: string };
   ContactEdit: { contactId?: string } | undefined;
   /** Incoming Nostr contact share offer */
   ContactShareOffer: { offerId: string };

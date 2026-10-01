@@ -30,7 +30,7 @@ export function PayHubScreen() {
 
       <Pressable
         style={ui.secondaryBtn}
-        onPress={() => navigation.navigate("Contacts")}
+        onPress={() => navigation.navigate("Contacts", { selectForChat: true })}
         accessibilityRole="button"
         accessibilityLabel="Open contacts"
       >
