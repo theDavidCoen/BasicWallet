@@ -5,7 +5,7 @@
 
 import { useFocusEffect, useNavigation, useRoute } from "@react-navigation/native";
 import type { RouteProp } from "@react-navigation/native";
-import { useCallback, useMemo, useState } from "react";
+import { startTransition, useCallback, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput } from "react-native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
@@ -47,7 +47,10 @@ export function ContactsListScreen() {
 
   const openChat = useCallback(
     (c: Contact) => {
-      navigation.navigate("ChatThread", { contactId: c.id });
+      // Navigate immediately; ChatThread loads messages async after interactions.
+      startTransition(() => {
+        navigation.navigate("ChatThread", { contactId: c.id });
+      });
     },
     [navigation],
   );

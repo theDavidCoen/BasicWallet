@@ -24,6 +24,7 @@ type ThreadRow = {
   peer_pubkey: string | null;
   last_message_at: number | null;
   unread_count: number;
+  archived: number | null;
   created_at: number;
   updated_at: number;
 };
@@ -70,6 +71,7 @@ function rowToThread(r: ThreadRow): ChatThread {
     peerPubkey: r.peer_pubkey,
     lastMessageAt: r.last_message_at,
     unreadCount: r.unread_count,
+    archived: (r.archived ?? 0) !== 0,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -121,8 +123,8 @@ export function ensureChatThread(
     return rowToThread(existing);
   }
   database.runSync(
-    `INSERT INTO chat_thread (contact_id, peer_pubkey, last_message_at, unread_count, created_at, updated_at)
-     VALUES (?, ?, NULL, 0, ?, ?)`,
+    `INSERT INTO chat_thread (contact_id, peer_pubkey, last_message_at, unread_count, archived, created_at, updated_at)
+     VALUES (?, ?, NULL, 0, 0, ?, ?)`,
     [contactId, peerPubkey?.toLowerCase() ?? null, now, now],
   );
   notify();
@@ -131,16 +133,37 @@ export function ensureChatThread(
     peerPubkey: peerPubkey?.toLowerCase() ?? null,
     lastMessageAt: null,
     unreadCount: 0,
+    archived: false,
     createdAt: now,
     updatedAt: now,
   };
 }
 
-export function listChatThreads(): ChatThread[] {
+export function listChatThreads(opts?: { archived?: boolean }): ChatThread[] {
+  const archived = opts?.archived === true ? 1 : 0;
   const rows = db().getAllSync<ThreadRow>(
-    `SELECT * FROM chat_thread ORDER BY COALESCE(last_message_at, updated_at) DESC`,
+    `SELECT * FROM chat_thread
+     WHERE COALESCE(archived, 0) = ?
+     ORDER BY COALESCE(last_message_at, updated_at) DESC`,
+    [archived],
   );
   return rows.map(rowToThread);
+}
+
+export function setChatThreadArchived(contactId: string, archived: boolean): void {
+  ensureChatThread(contactId);
+  db().runSync(
+    `UPDATE chat_thread SET archived = ?, updated_at = ? WHERE contact_id = ?`,
+    [archived ? 1 : 0, Date.now(), contactId],
+  );
+  notify();
+}
+
+export function countArchivedChatThreads(): number {
+  const row = db().getFirstSync<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM chat_thread WHERE COALESCE(archived, 0) = 1`,
+  );
+  return row?.n ?? 0;
 }
 
 export function getChatThread(contactId: string): ChatThread | null {

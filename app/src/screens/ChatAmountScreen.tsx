@@ -1,11 +1,12 @@
 /**
- * Full-screen amount keypad for chat Send / Request / Pay (Penpot 15h/15i).
- * Confirm send + biometrics — never instant-send.
+ * Chat amount entry:
+ * - Request → POS-style keypad (ReceivePosPanel chat-request), then Nostr pay-request
+ * - Send / Pay → full-screen sats keypad + Confirm send + biometrics
  */
 
 import { useNavigation, useRoute } from "@react-navigation/native";
 import type { RouteProp } from "@react-navigation/native";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -15,6 +16,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { isValidArkAddress } from "@arkade-os/sdk";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
 import { sendPayRequest } from "../chat/chatActions";
@@ -26,10 +28,11 @@ import {
 import { getContact } from "../contacts/contactStore";
 import { contactDisplayName, midEllipsis } from "../contacts/types";
 import { getNetworkConfig } from "../config/network";
+import { useFiatMode } from "../fiat/FiatModeProvider";
 import { useWallet } from "../wallet/WalletProvider";
 import { formatSatsLabel } from "../wallet/formatSats";
 import { colors } from "../theme/colors";
-import { isValidArkAddress } from "@arkade-os/sdk";
+import { ReceivePosPanel } from "./ReceivePosPanel";
 
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"] as const;
 
@@ -45,6 +48,7 @@ export function ChatAmountScreen() {
   const { contactId, mode, requestId, amountSats: prefill, memo: prefillMemo } =
     route.params;
   const contact = useMemo(() => getContact(contactId), [contactId]);
+  const { fiatMode } = useFiatMode();
   const {
     wallet,
     selectedWallet,
@@ -73,17 +77,13 @@ export function ChatAmountScreen() {
   const bal = formatSatsLabel(spendable, balanceHidden);
   const destArk = contact ? contactArkAddress(contact) : null;
 
-  const title =
-    mode === "request" ? "REQUEST" : mode === "pay" ? "PAY REQUEST" : "SEND";
-  const primaryLabel =
-    mode === "request" ? "Send request" : confirmOpen ? "Confirm send" : "Continue";
+  const title = mode === "pay" ? "PAY REQUEST" : "SEND";
+  const primaryLabel = confirmOpen ? "Confirm send" : "Continue";
 
   const canContinue =
     amount != null &&
     !busy &&
-    (mode === "request" ||
-      spendable == null ||
-      amount <= spendable);
+    (spendable == null || amount <= spendable);
 
   function onKey(k: string) {
     if (k === "") return;
@@ -115,28 +115,39 @@ export function ChatAmountScreen() {
     return undefined;
   }
 
-  async function onPrimary() {
-    if (!amount || !contact) return;
-
-    if (mode === "request") {
+  const onChatRequestConfirm = useCallback(
+    async (amountSats: number) => {
+      if (!contact || busy) return;
       setBusy(true);
       try {
         const preferredReceive = await ensurePreferredReceive();
         await sendPayRequest({
           contactId,
-          amountSats: amount,
-          memo: memo.trim() || undefined,
+          amountSats,
           asset: "btc",
           preferredReceive,
         });
-        navigation.navigate("ChatThread", { contactId });
+        // Pop amount screen so thread shows the pending request card.
+        if (navigation.canGoBack()) {
+          navigation.goBack();
+        } else {
+          navigation.navigate("ChatThread", { contactId });
+        }
       } catch (e) {
-        Alert.alert("Request failed", e instanceof Error ? e.message : "Unknown error");
+        Alert.alert(
+          "Request failed",
+          e instanceof Error ? e.message : "Unknown error",
+        );
       } finally {
         setBusy(false);
       }
-      return;
-    }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- wallet helpers stable enough for one-shot confirm
+    [busy, contact, contactId, navigation, arkAddress, rotateReceiveAddress],
+  );
+
+  async function onPrimary() {
+    if (!amount || !contact) return;
 
     // Send / Pay — Continue → Confirm send (+ biometrics inside execute)
     if (!confirmOpen) {
@@ -180,7 +191,11 @@ export function ChatAmountScreen() {
           bumpActivity,
         },
       });
-      navigation.navigate("ChatThread", { contactId });
+      if (navigation.canGoBack()) {
+        navigation.goBack();
+      } else {
+        navigation.navigate("ChatThread", { contactId });
+      }
     } catch (e) {
       Alert.alert("Send failed", e instanceof Error ? e.message : "Unknown error");
       setConfirmOpen(false);
@@ -198,13 +213,29 @@ export function ChatAmountScreen() {
     );
   }
 
+  if (mode === "request") {
+    return (
+      <View style={styles.posFill}>
+        <ReceivePosPanel
+          bip21Uri={null}
+          onClose={() => navigation.goBack()}
+          onRequestUri={() => null}
+          variant="chat-request"
+          contactLabel={name}
+          onChatRequestConfirm={onChatRequestConfirm}
+          chatRequestBusy={busy}
+          fiatMode={fiatMode}
+          active
+        />
+      </View>
+    );
+  }
+
   return (
     <ScreenChrome logoScale={0.77}>
       <Text style={styles.title}>{title}</Text>
       <Text style={styles.caption}>
-        {mode === "request"
-          ? `Ask ${name} via encrypted Nostr request`
-          : `To ${name}${destArk ? ` · ${midEllipsis(destArk, 8, 6)}` : ""}`}
+        {`To ${name}${destArk ? ` · ${midEllipsis(destArk, 8, 6)}` : ""}`}
       </Text>
 
       <Pressable onPress={() => {}}>
@@ -282,6 +313,7 @@ export function ChatAmountScreen() {
 }
 
 const styles = StyleSheet.create({
+  posFill: { flex: 1, backgroundColor: colors.bg },
   title: {
     fontFamily: "JetBrainsMono_700Bold",
     fontSize: 22,

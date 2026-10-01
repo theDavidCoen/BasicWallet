@@ -5,11 +5,19 @@
 
 import { useFocusEffect, useNavigation, useRoute } from "@react-navigation/native";
 import type { RouteProp } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
+  InteractionManager,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -32,7 +40,9 @@ import {
 import {
   clearThreadUnread,
   ensureChatThread,
+  getChatThread,
   listChatMessages,
+  setChatThreadArchived,
   subscribeChatStore,
 } from "../chat/chatStore";
 import type { ChatMessage } from "../chat/types";
@@ -65,6 +75,7 @@ export function ChatThreadScreen() {
   const [sending, setSending] = useState(false);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [hasIdentity, setHasIdentity] = useState(true);
+  const [archived, setArchived] = useState(false);
   const listRef = useRef<FlatList<ChatMessage>>(null);
 
   const name = contact ? contactDisplayName(contact) : "Unknown";
@@ -75,16 +86,33 @@ export function ChatThreadScreen() {
       messages.some((m) => m.kind === "request" && !!m.payToJson)
     : false;
 
-  const reload = useCallback(() => {
-    ensureChatThread(contactId);
-    setMessages(listChatMessages(contactId));
-    clearThreadUnread(contactId);
+  const reloadLight = useCallback(() => {
+    // Keep first paint cheap: only read messages after the transition starts.
+    startTransition(() => {
+      ensureChatThread(contactId);
+      setMessages(listChatMessages(contactId));
+      setArchived(getChatThread(contactId)?.archived === true);
+      clearThreadUnread(contactId);
+    });
   }, [contactId]);
 
   useEffect(() => {
-    reload();
-    return subscribeChatStore(reload);
-  }, [reload]);
+    const task = InteractionManager.runAfterInteractions(() => {
+      reloadLight();
+    });
+    return () => {
+      task.cancel();
+    };
+  }, [reloadLight]);
+
+  useEffect(() => {
+    return subscribeChatStore(() => {
+      startTransition(() => {
+        setMessages(listChatMessages(contactId));
+        setArchived(getChatThread(contactId)?.archived === true);
+      });
+    });
+  }, [contactId]);
 
   useEffect(() => {
     void hasNostrIdentity().then(setHasIdentity);
@@ -92,10 +120,18 @@ export function ChatThreadScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      reload();
-      void catchUpGiftWraps({ force: true });
-      void flushChatOutbox();
-    }, [reload]),
+      // Defer network catch-up so navigation / first paint stay snappy.
+      const task = InteractionManager.runAfterInteractions(() => {
+        startTransition(() => {
+          ensureChatThread(contactId);
+          setMessages(listChatMessages(contactId));
+          clearThreadUnread(contactId);
+        });
+        void catchUpGiftWraps({ force: true });
+        void flushChatOutbox();
+      });
+      return () => task.cancel();
+    }, [contactId]),
   );
 
   useEffect(() => {
@@ -182,6 +218,29 @@ export function ChatThreadScreen() {
     });
   }
 
+  function onArchiveToggle() {
+    const next = !archived;
+    Alert.alert(
+      next ? "Archive chat?" : "Unarchive chat?",
+      next
+        ? `Hide this chat with ${name} from Chat & Pay. History is kept.`
+        : `Show this chat with ${name} in Chat & Pay again.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: next ? "Archive" : "Unarchive",
+          onPress: () => {
+            setChatThreadArchived(contactId, next);
+            setArchived(next);
+            if (next && navigation.canGoBack()) {
+              navigation.goBack();
+            }
+          },
+        },
+      ],
+    );
+  }
+
   if (!contact) {
     return (
       <ScreenChrome logoScale={0.77}>
@@ -215,9 +274,21 @@ export function ChatThreadScreen() {
               {name}
             </Text>
             <Text style={styles.headerSub}>
-              {canNostr ? "Private · encrypted" : "Add npub for encrypted chat"}
+              {archived
+                ? "Archived"
+                : canNostr
+                  ? "Private · encrypted"
+                  : "Add npub for encrypted chat"}
             </Text>
           </View>
+          <Pressable
+            onPress={onArchiveToggle}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={archived ? `Unarchive ${name}` : `Archive ${name}`}
+          >
+            <Text style={styles.editLink}>{archived ? "Unarchive" : "Archive"}</Text>
+          </Pressable>
           <Pressable
             onPress={() => navigation.navigate("ContactEdit", { contactId })}
             hitSlop={8}

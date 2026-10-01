@@ -173,10 +173,18 @@ function migrate(database: SQLite.SQLiteDatabase): void {
       peer_pubkey TEXT,
       last_message_at INTEGER,
       unread_count INTEGER NOT NULL DEFAULT 0,
+      archived INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
   `);
+  try {
+    database.execSync(
+      `ALTER TABLE chat_thread ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`,
+    );
+  } catch {
+    /* already present */
+  }
   database.execSync(`
     CREATE TABLE IF NOT EXISTS chat_message (
       id TEXT PRIMARY KEY NOT NULL,

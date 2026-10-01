@@ -31,6 +31,25 @@ import {
   newChatId,
 } from "./types";
 
+/** Relays can hang forever; never block the UI spinner on publish. */
+const PUBLISH_TIMEOUT_MS = 12_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
+
 async function publishOrQueue(opts: {
   contactId: string;
   recipientPubkey: string;
@@ -38,7 +57,11 @@ async function publishOrQueue(opts: {
   localMessageId: string;
 }): Promise<"sent" | "pending_out"> {
   try {
-    const pub = await publishChatEnvelope(opts.recipientPubkey, opts.envelope);
+    const pub = await withTimeout(
+      publishChatEnvelope(opts.recipientPubkey, opts.envelope),
+      PUBLISH_TIMEOUT_MS,
+      "Chat publish",
+    );
     updateChatMessage(opts.localMessageId, {
       status: "sent",
       nostrEventId: pub.eventId,

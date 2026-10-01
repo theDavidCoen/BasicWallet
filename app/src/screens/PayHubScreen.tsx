@@ -1,19 +1,22 @@
 /**
- * Chat & Pay hub (Penpot 15g) — recent threads + open contacts.
+ * Chat & Pay hub (Penpot 15g) — recent threads + open contacts + archived.
  */
 
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
-import { useCallback, useMemo, useState } from "react";
+import { startTransition, useCallback, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
 import {
+  countArchivedChatThreads,
   listChatThreads,
+  setChatThreadArchived,
   subscribeChatStore,
 } from "../chat/chatStore";
 import type { ChatThread } from "../chat/types";
 import { getContact, listContacts } from "../contacts/contactStore";
 import { contactDisplayName, contactInitials } from "../contacts/types";
+import type { Contact } from "../contacts/types";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -29,13 +32,75 @@ function formatDay(ms: number | null): string {
   }
 }
 
+type Row = { thread: ChatThread; contact: Contact };
+
+function ThreadRow({
+  row,
+  onOpen,
+  onLongPress,
+}: {
+  row: Row;
+  onOpen: () => void;
+  onLongPress?: () => void;
+}) {
+  const name = contactDisplayName(row.contact);
+  return (
+    <Pressable
+      style={styles.row}
+      onPress={onOpen}
+      onLongPress={onLongPress}
+      delayLongPress={350}
+      accessibilityRole="button"
+      accessibilityLabel={`Open chat with ${name}`}
+    >
+      <View style={styles.avatar}>
+        <Text style={styles.avatarText}>{contactInitials(row.contact)}</Text>
+      </View>
+      <View style={styles.rowMeta}>
+        <Text style={styles.rowName} numberOfLines={1}>
+          {name}
+        </Text>
+        <Text style={styles.rowSub} numberOfLines={1}>
+          {row.thread.unreadCount > 0
+            ? `${row.thread.unreadCount} unread`
+            : row.thread.archived
+              ? "Archived · long-press to unarchive"
+              : "Private chat"}
+        </Text>
+      </View>
+      <View style={styles.rowRight}>
+        <Text style={styles.rowDate}>{formatDay(row.thread.lastMessageAt)}</Text>
+        {row.thread.unreadCount > 0 ? (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>
+              {row.thread.unreadCount > 9 ? "9+" : String(row.thread.unreadCount)}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+}
+
 export function PayHubScreen() {
   const navigation = useNavigation<RootNav>();
-  const [threads, setThreads] = useState<ChatThread[]>(() => listChatThreads());
-  const contacts = useMemo(() => listContacts(), [threads]);
+  const [threads, setThreads] = useState<ChatThread[]>(() =>
+    listChatThreads({ archived: false }),
+  );
+  const [archivedThreads, setArchivedThreads] = useState<ChatThread[]>(() =>
+    listChatThreads({ archived: true }),
+  );
+  const [archivedCount, setArchivedCount] = useState(() => countArchivedChatThreads());
+  const [showArchived, setShowArchived] = useState(false);
+  const [contactCount, setContactCount] = useState(() => listContacts().length);
 
   const reload = useCallback(() => {
-    setThreads(listChatThreads());
+    startTransition(() => {
+      setThreads(listChatThreads({ archived: false }));
+      setArchivedThreads(listChatThreads({ archived: true }));
+      setArchivedCount(countArchivedChatThreads());
+      setContactCount(listContacts().length);
+    });
   }, []);
 
   useFocusEffect(
@@ -45,13 +110,27 @@ export function PayHubScreen() {
     }, [reload]),
   );
 
-  const rows = threads
+  const rows: Row[] = threads
     .map((t) => {
       const c = getContact(t.contactId);
       if (!c) return null;
       return { thread: t, contact: c };
     })
-    .filter((r): r is NonNullable<typeof r> => r != null);
+    .filter((r): r is Row => r != null);
+
+  const archivedRows: Row[] = archivedThreads
+    .map((t) => {
+      const c = getContact(t.contactId);
+      if (!c) return null;
+      return { thread: t, contact: c };
+    })
+    .filter((r): r is Row => r != null);
+
+  function openThread(contactId: string) {
+    startTransition(() => {
+      navigation.navigate("ChatThread", { contactId });
+    });
+  }
 
   return (
     <ScreenChrome logoScale={0.77}>
@@ -74,49 +153,49 @@ export function PayHubScreen() {
             </Text>
           </View>
         ) : (
-          rows.map(({ thread, contact }) => {
-            const name = contactDisplayName(contact);
-            return (
-              <Pressable
-                key={thread.contactId}
-                style={styles.row}
-                onPress={() =>
-                  navigation.navigate("ChatThread", { contactId: thread.contactId })
-                }
-                accessibilityRole="button"
-                accessibilityLabel={`Open chat with ${name}`}
-              >
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>{contactInitials(contact)}</Text>
-                </View>
-                <View style={styles.rowMeta}>
-                  <Text style={styles.rowName} numberOfLines={1}>
-                    {name}
-                  </Text>
-                  <Text style={styles.rowSub} numberOfLines={1}>
-                    {thread.unreadCount > 0
-                      ? `${thread.unreadCount} unread`
-                      : "Private chat"}
-                  </Text>
-                </View>
-                <View style={styles.rowRight}>
-                  <Text style={styles.rowDate}>{formatDay(thread.lastMessageAt)}</Text>
-                  {thread.unreadCount > 0 ? (
-                    <View style={styles.badge}>
-                      <Text style={styles.badgeText}>
-                        {thread.unreadCount > 9 ? "9+" : String(thread.unreadCount)}
-                      </Text>
-                    </View>
-                  ) : null}
-                </View>
-              </Pressable>
-            );
-          })
+          rows.map((row) => (
+            <ThreadRow
+              key={row.thread.contactId}
+              row={row}
+              onOpen={() => openThread(row.thread.contactId)}
+              onLongPress={() => {
+                setChatThreadArchived(row.thread.contactId, true);
+              }}
+            />
+          ))
         )}
 
-        {contacts.length > 0 && rows.length === 0 ? (
+        {archivedCount > 0 ? (
+          <Pressable
+            style={styles.archivedToggle}
+            onPress={() => setShowArchived((v) => !v)}
+            accessibilityRole="button"
+            accessibilityLabel={
+              showArchived ? "Hide archived chats" : "Show archived chats"
+            }
+          >
+            <Text style={styles.archivedToggleText}>
+              {showArchived ? "▾" : "▸"} Archived ({archivedCount})
+            </Text>
+          </Pressable>
+        ) : null}
+
+        {showArchived
+          ? archivedRows.map((row) => (
+              <ThreadRow
+                key={`a-${row.thread.contactId}`}
+                row={row}
+                onOpen={() => openThread(row.thread.contactId)}
+                onLongPress={() => {
+                  setChatThreadArchived(row.thread.contactId, false);
+                }}
+              />
+            ))
+          : null}
+
+        {contactCount > 0 && rows.length === 0 ? (
           <Text style={styles.hint}>
-            {contacts.length} contact{contacts.length === 1 ? "" : "s"} available
+            {contactCount} contact{contactCount === 1 ? "" : "s"} available
           </Text>
         ) : null}
       </ScrollView>
@@ -211,6 +290,16 @@ const styles = StyleSheet.create({
     fontFamily: "JetBrainsMono_700Bold",
     fontSize: 11,
     color: "#000",
+  },
+  archivedToggle: {
+    marginTop: 18,
+    marginBottom: 4,
+    paddingVertical: 8,
+  },
+  archivedToggleText: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 12,
+    color: colors.caption,
   },
   hint: {
     marginTop: 16,

@@ -101,6 +101,8 @@ export type ChatThread = {
   peerPubkey: string | null;
   lastMessageAt: number | null;
   unreadCount: number;
+  /** Local-only: hidden from Pay hub main list until unarchived. */
+  archived: boolean;
   createdAt: number;
   updatedAt: number;
 };
