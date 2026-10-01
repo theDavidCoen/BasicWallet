@@ -6,19 +6,24 @@
 **Penpot:** file `0d808482-264d-8195-8008-a46d9fbf8810`, page **Pay in Chat** (`97cefe33-8926-46c5-adc6-31a445d3ce35`) on `http://192.168.1.104:9001`  
 **Design source:** `prototype/penpot_pay_in_chat.py` + yellow notes on the live page  
 **Product UX (canonical prose):** `prototype/docs/ux-ui-spec.md` §11–§12  
-**Date:** 2026-10-01
+**Date:** 2026-10-01  
+**Decisions locked:** 2026-10-01 (David)
 
 ---
 
 ## 1. Executive summary
 
-Pay in Chat is a Revolut-inspired **1:1 P2P thread** where text, payment cards, and payment requests live together. Visual language stays Basic (black canvas, JetBrains Mono, white primary CTAs, outlined secondaries). It does **not** replace classic Send (`03*` / `SendScreen`) for paste, QR, or multi-recipient flows.
+Pay in Chat is a Revolut-inspired **1:1 P2P thread** where text, payment cards, and payment requests live together. Visual language stays Basic (black canvas, JetBrains Mono, white primary CTAs, outlined secondaries). It does **not** replace classic Send (`03*` / `SendScreen`) for paste, QR, or multi-recipient flows. Classic Send stays classic Send: picking a contact there does **not** divert into chat.
 
-**MVP:** BTC-only, private Contacts directory, Nostr **NIP-17 gift-wrap** for async request/pay signaling (same family as contact share + planned `09*`), payment cards in an encrypted local chat store, Request · Send above the composer, **never** instant-send (slide / confirm gate), resume-sync when app opens (push later, opt-in, opaque).
+**MVP:** BTC-only, private Contacts directory, Nostr **NIP-17 gift-wrap** for async request/pay signaling (same family as contact share + planned `09*`), payment cards in an encrypted local chat store, Request · Send above the composer, **never** instant-send (**classic Confirm send** + **biometrics after**, same family as SendScreen; Penpot `15d` slide-to-send is **not** the chat confirm for MVP), resume-sync when app opens as the default closed-app path (push/sidecar still open for first release).
+
+**Entry:** **Pay hub** from Home (`15g`); icon/position still TBD. Amount UI: **full-screen keypad** (`15h`/`15i`) like classic Send; sheet `15b` is not primary.
+
+**Pay destination:** use the **contact’s stored ark address** when present; if missing, **round-trip** (request reply with a fresh ark address). **Decline** publishes `pay_decline` on Nostr. Chat history is recovered from **Nostr**, not transferred via Bluetooth pair.
 
 **Reuse heavily:** Contacts (`08*`), contact share gift-wrap (`contactShare.ts` / `contactShareWatch.ts`), Send amount + destination resolution, Arkade HD send + LN intents, fiat captions, SQLCipher account DB.
 
-**Do not build yet:** multi-asset corridors (`15j` USDT / EUR*), GIF/stickers, OS contacts, a Basic plaintext chat server, background poll as the closed-app solution.
+**Do not build yet:** multi-asset corridors (`15j` USDT / EUR*), GIF/stickers, OS contacts, a Basic plaintext chat server, background poll as the closed-app solution. EUR* display-name freeze vs hide multi-asset until later is still open.
 
 ---
 
@@ -29,19 +34,19 @@ Logged into Penpot on `.104` (2026-10-01). Page **Pay in Chat** exists with **10
 | Board | Purpose (from yellow notes + frames) |
 | ----- | ------------------------------------ |
 | **15 Pay in Chat** | Thread: text bubbles + payment cards (`You sent` / `You received`) + Request · Send + composer |
-| **15b Send amount** | Bottom sheet over dimmed thread: amount + memo → Continue |
+| **15b Send amount** | Bottom sheet over dimmed thread: amount + memo → Continue (**not primary MVP**; keypad wins) |
 | **15c Request** | Sheet: amount + memo; subtitle `NIP-17 gift wrap · Bitcoin only` → Send request |
-| **15d Slide confirm** | Scrim + sheet: amount, `to Alice · ark…`, elastic **slide to send** |
+| **15d Slide confirm** | Scrim + sheet: amount, `to Alice · ark…`, elastic **slide to send** (**Penpot reference only**; chat MVP uses classic Confirm send + biometrics, not slide) |
 | **15e Incoming request** | Card `Request · pending` + **Decline** / **Pay** |
 | **15f Empty thread** | First open: “No messages yet” + privacy hint |
 | **15g Choose contact** | Pay hub: search, +, recent rows (name, last activity, date, unread badge) |
-| **15h Amount** | Full-screen keypad, amount `0`, Send disabled, balance pill |
+| **15h Amount** | Full-screen keypad, amount `0`, Send disabled, balance pill (**MVP primary**) |
 | **15i Amount ready** | Amount entered, Send enabled, fiat caption |
 | **15j Choose asset** | Future: BTC · USDT · EUR* chips + Personal balances |
 
 ### Key copy (from boards)
 
-- CTAs: `← Request`, `Send →`, `Continue`, `Send request`, `slide to send`, `Pay`, `Decline`, `Done`
+- CTAs: `← Request`, `Send →`, `Continue`, `Send request`, `Confirm send` (chat MVP; Penpot also has `slide to send` on `15d`, not used for chat), `Pay`, `Decline`, `Done`
 - Payment cards: `You sent` / `You received` + sats primary + `≈ EUR …` + optional memo + time
 - Empty: `Private chat with Bob. Encrypted with your account data. Send or request sats anytime.`
 - Request sheet: `Ask Alice for a receive address via encrypted Nostr request`
@@ -59,21 +64,22 @@ RPC PNG export (`export-binfile` / `export-shape`) returned 400/404 from this Pe
 ### Goals
 
 1. Make paying a **known contact** feel like chatting: one thread, payments as first-class messages.
-2. Keep Basic’s **honesty** (fees, offline, expired requests) and **never instant-send**.
+2. Keep Basic’s **honesty** (fees, offline, expired requests) and **never instant-send** (Confirm send + biometrics after).
 3. Stay a **Bitcoin payment app** with a thin social layer (no GIF chrome, no Revolut blue).
 4. Preserve privacy: private Contacts only; encrypted-at-rest history; relays see ciphertext / metadata only.
 
 ### Non-goals (UX)
 
 - Group chats, broadcast channels, public profiles.
-- Replacing classic Send for QR / paste / Multisend.
+- Replacing classic Send for QR / paste / Multisend; do not divert classic Send into chat.
 - Shipping multi-asset pay from chat before corridors are live.
+- Penpot slide-to-send as the chat confirm gate (classic Confirm send wins for chat MVP).
 
 ### Visual rules (align Penpot + `ux-ui-spec` §1)
 
 - JetBrains Mono; logo tap → Home; muted captions `#B3B3B3` / `#999999`.
 - Outgoing: white bubbles/cards; incoming: `#0D0D0D` + `#333` stroke.
-- Persistent dual CTA above composer; composer placeholder `Type a message…`.
+- Persistent dual CTA above composer; composer placeholder `Type a message…` (composer MVP scope still open: text vs cards-only).
 
 ---
 
@@ -82,14 +88,16 @@ RPC PNG export (`export-binfile` / `export-shape`) returned 400/404 from this Pe
 ### 4.1 Entry
 
 ```
-A) Settings → Contacts → (future) open chat affordance
-   or Pay hub 15g → tap contact → thread (15 / 15f)
+A) Home → Pay hub (15g) → tap contact → thread (15 / 15f)
+   Pay hub icon / position on Home: TBD (open)
 
-B) Home → Send → pick contact that has chat history
-   → optional: land on thread instead of classic Send
-   (product choice — see open questions)
+B) Settings → Contacts → (optional) open chat affordance
+   → thread (secondary to Pay hub)
 
-C) Deep link / notification (post-MVP opt-in push)
+C) Classic Send stays classic Send
+   Picking a contact from Send does NOT open the chat thread
+
+D) Deep link / notification (post-MVP or if push ships)
    → thread focused on request / payment card
 ```
 
@@ -97,11 +105,11 @@ C) Deep link / notification (post-MVP opt-in push)
 
 1. Open thread with Alice (npub / NIP-05 / ark / lnurl as stored).
 2. Tap **Send →**.
-3. Amount UI: prefer full keypad `15h`/`15i` **or** compact sheet `15b` (pick one primary for MVP; keep the other as polish). Destination is **locked** to the open contact (no Choose Recipient).
+3. Amount UI: **full-screen keypad** `15h`/`15i` (primary; sheet `15b` not primary). Destination is **locked** to the open contact (no Choose Recipient).
 4. Optional memo / note.
-5. Tap **Send** / **Continue** → confirm sheet `15d` (slide).
-6. Auth: biometrics / App PIN / hardware when required (same as classic Send).
-7. Wallet executes (Arkade `send` to `ark…`, or LN intent / node pay per destination kind).
+5. Tap **Send** / **Continue** → **classic Confirm send** sheet (reuse SendScreen confirm pattern; **not** Penpot `15d` slide).
+6. Auth: **biometrics after** Confirm send (App PIN / hardware when required; same as classic Send).
+7. Wallet executes (Arkade `send` to contact’s stored `ark…` if present; otherwise after request reply with fresh ark address, or LN intent / node pay per destination kind).
 8. On success: insert payment card `You sent` in thread; optional local text echo of memo; navigate stays on thread (no forced FundsSent full screen, or show as sheet then dismiss).
 
 ### 4.3 Request from chat
@@ -110,19 +118,21 @@ C) Deep link / notification (post-MVP opt-in push)
 2. Sheet `15c`: amount + memo → **Send request**.
 3. App builds a **gift-wrap pay-request** (see §5) to contact’s npub (resolve NIP-05 if needed).
 4. Outgoing request card appears (`Request · pending`).
-5. Peer accepts → may return a **fresh receive address** (gift-wrap reply); requester’s card updates; payer path uses that address on slide.
+5. Peer accepts → may return a **fresh receive address** (gift-wrap reply) when the payer needs one; requester’s card updates; payer path uses that address on Confirm send.
 6. Decline / expire → card status updates; no fake “delivered”.
 
 ### 4.4 Incoming request (pay)
 
 1. Watcher unwraps gift-wrap → thread shows `15e` card.
-2. **Pay** → amount prefilled → `15d` slide → send.
-3. **Decline** → publish decline signal (or local-only decline if peer offline; see open questions) → card `declined`.
+2. **Pay** → amount prefilled → classic Confirm send → biometrics after → send.
+   - Destination: **contact’s ark address** if present; else **round-trip** for a fresh ark address via `pay_request_reply`, then pay.
+3. **Decline** → publish **`pay_decline`** gift-wrap on Nostr → card `declined`.
 
 ### 4.5 Text chat
 
-1. Composer sends encrypted text event (gift-wrap or sealed DM — §5).
+1. Composer sends encrypted text event (gift-wrap or sealed DM — §5), **if** text chat is in MVP (still open).
 2. Appears as bubble; no payment semantics.
+3. If MVP is payment-cards-only: composer disabled / hidden until a later phase.
 
 ### 4.6 Fail / offline
 
@@ -132,16 +142,18 @@ C) Deep link / notification (post-MVP opt-in push)
 | Contact has no npub / NIP-05 | Allow **Send** if ark/LN id exists; disable **Request** + text until a Nostr id is added |
 | Relay unreachable | Queue outgoing locally (`pending_out`); show “Waiting for network”; flush on resume |
 | ASP / wallet send fails | Keep confirm sheet error; request card stays pending if money not moved |
-| Soft seed → `bc1…` only | Block per §7; inline error; no slide |
+| Soft seed → `bc1…` only | Block per §7; inline error; no Confirm send proceed |
 | Amount > balance | Send disabled; caption |
 | Request expired | Card `expired`; Pay disabled |
 | Peer never online | No fake checkmarks; optional “Sent · not confirmed by peer” for requests |
+| Contact has no ark address | Round-trip: request reply with fresh ark before paying |
 
 ### 4.7 Offline / app killed
 
-- **v1:** sync on foreground / unlock only (`ux-ui-spec` §12).
+- **Default:** sync on foreground / unlock only (`ux-ui-spec` §12). Whether first release stays resume-sync-only or also ships push/sidecar is still open (§12).
 - Catch-up query on gift-wrap `#p` (pattern already in `contactShareWatch.ts`).
 - One subscription per process; always `stop` on logout / network remount.
+- **History recovery:** chat history is recovered from **Nostr** (gift-wrap catch-up), **not** transferred via Bluetooth pair / Path C package.
 
 ---
 
@@ -151,7 +163,7 @@ C) Deep link / notification (post-MVP opt-in push)
 
 - **No Basic chat server** that can read plaintext.
 - Prefer **NIP-17 gift wrap** (kind **1059**) for async P2P payloads (already used for contact share).
-- Chat history is **local-first** in SQLCipher account DB; relays are transport, not source of truth for the timeline UI.
+- Chat history is **local-first** in SQLCipher account DB for UI; relays are transport. After wipe / new device, history is **recovered from Nostr**, not from Bluetooth pair transfer.
 - Payment **settlement** is always on Arkade / LN / allowed L1 — chat only carries **intent + receipts metadata**, never custody.
 
 ### 5.2 Message envelope (proposed v1)
@@ -216,6 +228,10 @@ type PaymentReceipt = ChatEnvelopeV1 & {
 
 **Contact share** remains `basic.wallet.contact.share` (existing). Inbox watcher should become a **multiplexed gift-wrap demux** (one WS, many parsers) instead of a second subscription.
 
+**Decline:** always publish `basic.wallet.chat.pay_decline` (locked).
+
+**Pay destination (locked):** prefer contact’s stored ark address; if missing, round-trip via `pay_request_reply` with a fresh ark address before Confirm send.
+
 ### 5.3 Thread identity
 
 - Local thread key = `contact_id` (stable local UUID from Contacts).
@@ -224,7 +240,7 @@ type PaymentReceipt = ChatEnvelopeV1 & {
 
 ### 5.4 Local schema (account DB)
 
-Extend `basic-account-{network}.db` (SQLCipher). Chat is **not** disposable activity rematerialization; treat like Contacts (user data). Document backup implications (Path C / pair package should include chat or explicitly exclude — open question).
+Extend `basic-account-{network}.db` (SQLCipher). Chat is **not** disposable activity rematerialization; treat like Contacts (user data). **Bluetooth pair / Path C does not transfer chat history**; recovery is Nostr catch-up after identity restore.
 
 ```sql
 CREATE TABLE chat_thread (
@@ -273,11 +289,11 @@ Payment cards should also **link** to `activity_idx` when a tx materializes (`pa
 | ---- | ---------- |
 | Impersonation | Only chat with Contacts the user saved; show npub/NIP-05 in header; never trust display name alone |
 | Relay metadata | Gift-wrap still leaks timing / that two pubkeys talk; document honestly |
-| Amount spoof in UI | Always re-validate request payload before slide; never trust card UI state alone |
+| Amount spoof in UI | Always re-validate request payload before Confirm send; never trust card UI state alone |
 | Replay | `requestId` + expiry + ignore duplicate `nostr_event_id` |
 | Phishing push | Opaque push only; never sats/memo in notification body |
 | Watcher leaks | Single demux; `stop` in `finally`; ban `Promise.race` on subscribe |
-| Seed exposure | Chat never touches mnemonic; payments go through existing `requireUserPresence` |
+| Seed exposure | Chat never touches mnemonic; payments go through existing `requireUserPresence` (biometrics after Confirm) |
 | Duress | Duress mode must not reveal real threads (align with existing duress rules) |
 
 URI alternative (rejected for MVP as primary): putting `bitcoin:` / `arkade:` URIs in plain kind-1 notes. Keep URIs as **optional paste fallback** inside classic Send, not the chat transport.
@@ -288,34 +304,35 @@ URI alternative (rejected for MVP as primary): putting `bitcoin:` / `arkade:` UR
 
 | Penpot | Existing | Gap |
 | ------ | -------- | --- |
-| 15g Choose contact | `ContactsListScreen` + `ContactPickList` | New **Pay hub** variant (last activity, unread); or reuse list with “Chat” action |
+| 15g Choose contact | `ContactsListScreen` + `ContactPickList` | New **Pay hub** from Home (icon/position TBD); last activity, unread |
 | 15 / 15f Thread | — | **New** `ChatThreadScreen` |
 | Bubbles / cards | Theme `colors` / `ui` | New components `ChatTextBubble`, `ChatPaymentCard`, `ChatRequestCard` |
 | Request · Send bar | — | New `ChatActionBar` |
-| Composer | TextInput patterns | New `ChatComposer` |
-| 15b / 15c sheets | `InteractiveBottomSheet` | New sheet contents |
-| 15h / 15i Amount | `SendScreen` amount + keypad (partial) | Extract shared `AmountKeypad` / balance pill |
-| 15d Slide | Penpot elastic slider; Send today uses **Confirm send** button | Shared `SlideToSend` (also upgrade classic Send) |
-| 15e Incoming | Contact share offer UI pattern | Request card actions |
-| 15j Asset | Fiat / swap corridors partially exist | **Gate** non-BTC |
+| Composer | TextInput patterns | New `ChatComposer` (MVP text vs cards-only still open) |
+| 15b / 15c sheets | `InteractiveBottomSheet` | Request sheet `15c` yes; amount sheet `15b` not primary |
+| 15h / 15i Amount | `SendScreen` amount + keypad (partial) | Extract shared `AmountKeypad` / balance pill (**MVP primary**) |
+| 15d Slide | Penpot elastic slider; Send today uses **Confirm send** button | Chat MVP: **reuse classic Confirm send** + biometrics after; do **not** ship Penpot slide for chat. Shared `SlideToSend` is a later classic-Send polish, not chat MVP |
+| 15e Incoming | Contact share offer UI pattern | Request card actions; Decline → `pay_decline` |
+| 15j Asset | Fiat / swap corridors partially exist | **Gate** non-BTC (EUR* naming still open) |
 | Header avatar | `contactInitials` | Reuse |
-| Nostr gift-wrap | `contactShare.ts` (`wrapEvent`), `contactShareWatch.ts` | Generalize demux + pay/chat parsers |
-| Send execution | `SendScreen.onSend`, `arkMultiSend`, LN resolve | Call shared `executePayToIdentifier(...)` |
+| Nostr gift-wrap | `contactShare.ts` (`wrapEvent`), `contactShareWatch.ts` | Generalize demux + pay/chat parsers; history recover from Nostr |
+| Send execution | `SendScreen.onSend`, `arkMultiSend`, LN resolve | Call shared `executePayToIdentifier(...)`; prefer contact ark, else round-trip |
 | Fiat caption | fiat modules | Reuse |
 | Identity | `nostr/identityStore.ts` | Prerequisite for Request/text |
 
 Navigation additions (`RootStackParamList`):
 
 ```ts
-PayHub: undefined;                 // 15g (optional if Contacts doubles)
+PayHub: undefined;                 // 15g from Home
 ChatThread: { contactId: string; focusRequestId?: string };
-// sheets can be in-screen state rather than stack routes
+// confirm + request sheets can be in-screen state rather than stack routes
 ```
 
 Entry wiring:
 
-- `ContactsListScreen`: long-press or trailing **Chat** → `ChatThread`.
-- Optional Home / Send row: “Pay” → `PayHub`.
+- **Home → Pay hub** (`15g`) — primary (icon/position TBD).
+- `ContactsListScreen`: optional long-press or trailing **Chat** → `ChatThread` (secondary).
+- Classic **Send** stays on classic Send (no divert into chat).
 - Do **not** add a fifth primary tab in MVP (`ux-ui-spec` recommendation #7).
 
 ---
@@ -330,16 +347,16 @@ app/src/
     chatNostr.ts             # wrap/unwrap publish helpers
     chatWatch.ts             # demux gift-wrap → chatStore (+ handoff contact share)
     payRequest.ts            # create/accept/decline/expire state machine
-    executeChatPay.ts        # bridge to wallet send / LN
+    executeChatPay.ts        # bridge to wallet send / LN (contact ark or round-trip)
   components/chat/
     ChatActionBar.tsx
     ChatComposer.tsx
     ChatTextBubble.tsx
     ChatPaymentCard.tsx
     ChatRequestCard.tsx
-    ChatAmountSheet.tsx
+    ChatAmountKeypad.tsx     # full-screen 15h/15i (primary)
     ChatRequestSheet.tsx
-    SlideToSend.tsx          # shared with Send later
+    ChatConfirmSend.tsx      # classic Confirm send (not slide)
   screens/
     PayHubScreen.tsx         # 15g
     ChatThreadScreen.tsx     # 15 / 15e / 15f
@@ -357,8 +374,9 @@ app/src/
 
 ### Navigation / sheets
 
-- Prefer **in-thread sheets** (15b/15c/15d) over stack pushes so the thread remains under the scrim (matches Penpot).
-- Amount full-screen (15h/15i) can be a stack push if keypad needs space; return to thread after slide success.
+- Prefer **in-thread sheets** for Request (`15c`) and Confirm send over stack pushes so the thread remains under the scrim.
+- Amount **full-screen keypad** (`15h`/`15i`) is a stack push (primary MVP); return to thread after Confirm send + biometrics success.
+- Do **not** use Penpot `15d` slide as the chat confirm control.
 
 ---
 
@@ -371,7 +389,8 @@ app/src/
 | ASP connectivity | Network prefs + About probe | Fail honestly if offline |
 | LN intents (`@arkade-os/swap`) | Spec’d; corridor availability varies | Pay LN-address / BOLT11 contacts when Personal LN path live |
 | Linked LN node | LNDHub / BTCPay connect | Alternate rail when switcher on Lightning |
-| Fresh receive address | HD rotation | Request accept → return ark address |
+| Fresh receive address | HD rotation | Round-trip when contact has no ark; request accept → return ark address |
+| Contact stored ark id | Contacts model | Prefer for pay when present |
 | Fiat rates | Present | Card captions |
 | Unilateral exit | Unrelated | Out of scope |
 | Boltz | Forbidden | Never use |
@@ -385,42 +404,43 @@ app/src/
 ### Phase 0 — Prep (docs / spikes)
 
 - [x] Branch `david/payinchat` + this plan.
-- [ ] Confirm open questions with David (§12).
+- [x] Lock amount UI, confirm UX, entry, pay destination, decline, history recovery, classic Send (2026-10-01).
+- [ ] Confirm remaining open questions with David (§12).
 - [ ] Spike: multiplex gift-wrap demux without breaking contact share.
-- [ ] Spike: extract amount keypad + confirm control from SendScreen.
+- [ ] Spike: extract amount keypad + Confirm send (+ biometrics) from SendScreen for chat reuse.
 
 ### Phase 1 — MVP (shippable BTC chat)
 
 1. **Schema** `chat_thread` / `chat_message` / `chat_outbox` + migrations.
 2. **Gift-wrap demux** + parsers for text + pay_request + reply + decline + receipt.
-3. **ChatThreadScreen** empty + text send/receive (npub contacts only).
-4. **Pay hub or Contacts entry** (15g or Chat action).
-5. **Send from chat** → amount sheet/keypad → confirm → Arkade send → payment card.
-6. **Request** → outgoing pending card; incoming Pay/Decline.
-7. Foreground catch-up; outbox flush; watcher stop on teardown.
-8. Gate: no OS contacts, no multi-asset, no push.
+3. **ChatThreadScreen** empty + (text send/receive **if** text is in MVP — still open).
+4. **Pay hub from Home** (15g); icon/position TBD.
+5. **Send from chat** → full-screen keypad → classic Confirm send → biometrics after → Arkade send (contact ark or round-trip) → payment card.
+6. **Request** → outgoing pending card; incoming Pay/Decline (`pay_decline` on Nostr).
+7. Foreground catch-up from Nostr; outbox flush; watcher stop on teardown. No Bluetooth pair chat transfer.
+8. Gate: no OS contacts, no multi-asset, no divert from classic Send. Push/sidecar: pending David (§12).
 
-**Exit criteria:** Alice↔Bob on mutinynet can request, pay, and see cards; kill app; reopen; history intact; no leaked WS subscriptions after logout.
+**Exit criteria:** Alice↔Bob on mutinynet can request, pay, and see cards; kill app; reopen; history intact (Nostr catch-up); no leaked WS subscriptions after logout.
 
 ### Phase 2 — Polish
 
-- Elastic **SlideToSend** shared with classic Send (replace Confirm button).
-- Compact sheet path `15b` vs full keypad — match Penpot dual entry.
 - Unread badges, date dividers, fiat captions, memo display.
 - Link payment cards ↔ Activity detail.
 - Decline/expire timers; better offline copy.
-- Pair / Path C backup policy for chat history.
+- Optional compact amount sheet `15b` as alternate (keypad remains primary).
+- Shared `SlideToSend` for **classic Send** only if product wants it later; **not** required for chat (chat stays Confirm send).
+- Composer / text chat if deferred from MVP.
 
 ### Phase 3 — Notifications (opt-in)
 
-- Opaque FCM/APNs/UnifiedPush via **notifier sidecar** watching kind 1059.
+- Opaque FCM/APNs/UnifiedPush via **notifier sidecar** watching kind 1059 (only if first-release decision includes push).
 - Never put sats/memo in push body.
-- Default remains resume-sync.
+- Default remains resume-sync unless David chooses otherwise for v1.
 
 ### Phase 4 — Multi-asset (`15j`)
 
 - Enable USDT / EUR* only when intent corridors are product-ready.
-- Until then: UI may exist behind feature flag or disabled rows.
+- Until then: UI may exist behind feature flag or disabled rows (EUR* display name still open).
 
 ---
 
@@ -430,17 +450,18 @@ app/src/
 | ---- | ------ |
 | `docs/pay-in-chat-integration-plan.md` | This plan |
 | `prototype/docs/ux-ui-spec.md` | Already §12; tweak only if decisions change |
-| `prototype/docs/activity-storage.md` | Document chat tables + backup stance |
+| `prototype/docs/activity-storage.md` | Document chat tables; Nostr recovery; exclude from Bluetooth pair |
 | `app/src/chat/**` | New module |
 | `app/src/components/chat/**` | New UI |
 | `app/src/screens/ChatThreadScreen.tsx` | New |
-| `app/src/screens/PayHubScreen.tsx` | New (optional) |
+| `app/src/screens/PayHubScreen.tsx` | New |
+| `app/src/screens/HomeScreen.tsx` (or equiv.) | Pay hub entry (icon/position TBD) |
 | `app/src/navigation/types.ts` | Routes |
 | `app/src/navigation/RootNavigator.tsx` | Register screens |
-| `app/src/screens/ContactsListScreen.tsx` | Entry to chat |
+| `app/src/screens/ContactsListScreen.tsx` | Optional secondary entry to chat |
 | `app/src/contacts/contactShareWatch.ts` | Demux refactor |
 | `app/src/account/accountDb.ts` | Migrations |
-| `app/src/screens/SendScreen.tsx` | Extract shared amount/confirm (later) |
+| `app/src/screens/SendScreen.tsx` | Extract shared amount keypad + Confirm send for chat reuse; Send stays classic |
 | `app/src/theme/**` | Only if new tokens needed |
 
 No Penpot Python changes required unless boards drift.
@@ -453,27 +474,35 @@ No Penpot Python changes required unless boards drift.
 | ---- | -------- | ----- |
 | Gift-wrap UX latency / relay flakiness | High | Outbox + honest pending states |
 | Second Nostr subscription leaks bandwidth | High | Must demux; follow SDK watcher rule |
-| Chat history vs disposable account DB story | Med | Contacts already broke “fully disposable”; chat same class |
-| Confirm UX mismatch (button vs slide) | Med | Spec wants slide; code has button |
+| Chat history vs disposable account DB story | Med | Contacts already broke “fully disposable”; chat same class; recover from Nostr, not pair |
+| Confirm UX vs Penpot `15d` | Low | **Decided:** classic Confirm send + biometrics for chat; Penpot slide is reference only |
 | LN corridor not always available | Med | Feature-detect; Ark-first |
 | Contact without Nostr id | Med | Partial features only |
-| Backup size / privacy if chat in Path C | Med | Decide before enable |
-| Scope creep (15j, push, groups) | High | Hard gate in MVP |
+| Contact without ark address | Low | Round-trip locked |
+| Scope creep (15j, push, groups) | High | Hard gate in MVP; push still open |
 
 ---
 
-## 12. Open questions for David
+## 12. Decisions + open questions
 
-1. **Primary amount UI for MVP:** full keypad (`15h`/`15i`) or sheet (`15b`)? (Recommend keypad for parity with Send; sheet as alternate.)
-2. **Confirm control:** implement elastic slide now for chat only, or extract shared SlideToSend and also replace Send’s “Confirm send”?
-3. **Entry:** Chat action on Contacts rows only, or also a top-level Pay hub (`15g`) from Home/Send?
-4. **Text chat in MVP:** ship real encrypted text, or payment-cards-only with composer disabled until Phase 2?
-5. **Request accept:** always return a **fresh ark address** via reply, or allow paying a pre-known contact ark id without round-trip?
-6. **Decline signaling:** publish `pay_decline` gift-wrap, or local-only decline if we want less relay traffic?
-7. **Backup:** include chat history in Path C / Bluetooth pair package, or exclude until encrypted export is designed?
-8. **Push:** any desire to schedule notifier sidecar soon, or strictly resume-sync for first release?
-9. **Classic Send takeover:** when picking a contact from Send, open chat thread or stay on classic Send?
-10. **EUR\* label:** freeze display name (EURx vs other) before any UI flag lands.
+### Locked (2026-10-01)
+
+| # | Topic | Decision |
+| - | ----- | -------- |
+| 1 | **Primary amount UI** | Full-screen keypad (`15h`/`15i`), like classic Send. Sheet `15b` is **not** primary. |
+| 2 | **Confirm control** | Classic **Confirm send** + **biometrics after**. **Not** Penpot slide-to-send for chat. |
+| 3 | **Entry** | **Pay hub in Home** (`15g`). Icon / position still TBD (below). |
+| 5 | **Request / pay destination** | Pay using **contact’s ark address** if present; if missing, **round-trip** with a fresh ark address. |
+| 6 | **Decline** | Publish **`pay_decline`** on Nostr. |
+| 7 | **History / backup** | Chat history recovered from **Nostr**, **not** transferred via Bluetooth pair. |
+| 9 | **Classic Send** | From classic Send, **stay on classic Send** (do not divert into chat). |
+
+### Still open (awaiting David)
+
+1. **Text chat in MVP vs payment-cards-only** — ship real encrypted text now, or cards-only with composer later?
+2. **Resume-sync only vs push/sidecar** for first release — stay foreground catch-up only, or schedule opaque notifier sidecar soon?
+3. **EUR\* display name** — freeze (EURx vs other) now, or **hide multi-asset** UI until corridors are ready?
+4. **Pay hub icon / position on Home** — TBD (entry via Pay hub is locked; placement is not).
 
 ---
 
@@ -487,19 +516,23 @@ No Penpot Python changes required unless boards drift.
 - Direct soft-wallet on-chain `bc1→bc1` from chat (same §7 gates).
 - Multisig cosign threads (separate product surface §13).
 - iOS-first work (Android APK remains first ship).
-- Replacing Multisend or classic QR Send.
+- Replacing Multisend or classic QR Send; diverting classic Send into chat.
 - Shipping USDT / EUR* pay-in-chat before corridors are live.
 - Background-only WorkManager poll as the closed-app notification strategy.
+- Penpot slide-to-send as chat confirm (classic Confirm send + biometrics instead).
+- Transferring chat history via Bluetooth pair / Path C.
 
 ---
 
 ## 14. Acceptance checklist (when implementing)
 
-- [ ] Penpot boards 15–15i covered by Expo (15j gated).
-- [ ] Request · Send persistent; slide/confirm required; no instant send.
+- [ ] Penpot boards 15–15i covered by Expo (15j gated); amount = full keypad; confirm = Confirm send + biometrics (not slide).
+- [ ] Request · Send persistent; Confirm send + biometrics required; no instant send.
+- [ ] Pay hub reachable from Home; classic Send does not divert into chat.
+- [ ] Pay uses contact ark when present; else round-trip fresh ark; Decline publishes `pay_decline`.
 - [ ] BTC-only; balance pill visible before Send enables.
 - [ ] No OS contacts; no plaintext server.
-- [ ] Gift-wrap demux; one subscription; stopped on teardown.
+- [ ] Gift-wrap demux; one subscription; stopped on teardown; history recoverable from Nostr (not Bluetooth pair).
 - [ ] Offline/fail states honest; expired requests not payable.
 - [ ] Payments settle via existing Arkade/LN paths; cards reflect real results.
 - [ ] Duress / seed rules unchanged.
