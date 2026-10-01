@@ -1,7 +1,8 @@
 /**
  * Watch Nostr relays for NIP-17 gift wraps (kind 1059) addressed to us.
- * Live WS subscription + light catch-up on boot / AppState foreground.
- * One cancellable SimplePool subscription — never Promise.race a waitFor*.
+ * Demux: contact share + Pay in Chat envelopes on one subscription.
+ * Live WS + catch-up on boot / AppState foreground.
+ * Never Promise.race a waitFor* — always stop() on teardown.
  */
 
 import { AppState, type AppStateStatus } from "react-native";
@@ -15,12 +16,15 @@ import {
   parseContactShareMessage,
 } from "./contactShare";
 import { enqueueContactShareOffer } from "./contactShareInbox";
+import { parseChatEnvelope } from "../chat/chatEnvelope";
+import { ingestChatEnvelope } from "../chat/chatIngest";
+import { flushChatOutbox } from "../chat/chatActions";
 
 /** Debounce catch-up so resume / boot / rapid focus do not hammer relays. */
 const CATCH_UP_MIN_MS = 30_000;
 /** Lookback for catch-up queries (live sub still gets new events). */
 const CATCH_UP_LOOKBACK_SEC = 60 * 60 * 48;
-const CATCH_UP_LIMIT = 32;
+const CATCH_UP_LIMIT = 48;
 const CATCH_UP_MAX_WAIT_MS = 4_000;
 
 async function resolveRelays(): Promise<string[]> {
@@ -51,6 +55,21 @@ async function handleWrap(ev: Event, sk: Uint8Array): Promise<void> {
   if (!rumor?.content || typeof rumor.content !== "string") return;
   // Skip obvious non-JSON chat DMs quickly
   if (!rumor.content.trimStart().startsWith("{")) return;
+
+  const chat = parseChatEnvelope(rumor.content);
+  if (chat) {
+    const peer =
+      typeof rumor.pubkey === "string" ? rumor.pubkey.toLowerCase() : "";
+    if (peer) {
+      await ingestChatEnvelope({
+        envelope: chat,
+        peerPubkey: peer,
+        wrapEventId: ev.id,
+      });
+    }
+    return;
+  }
+
   const msg = parseContactShareMessage(rumor.content);
   if (!msg) return;
   await enqueueContactShareOffer(ev.id, msg);
@@ -86,7 +105,7 @@ export function startContactShareWatch(): void {
       );
       state = { pool, closer, urls };
     } catch (e) {
-      console.warn("[basic] contact share watch failed to start", e);
+      console.warn("[basic] gift-wrap watch failed to start", e);
     } finally {
       startInFlight = null;
     }
@@ -113,9 +132,9 @@ export function stopContactShareWatch(): void {
  * One-shot relay query for recent gift wraps (missed while backgrounded / WS down).
  * Separate short-lived pool; always closed in finally. Debounced + capped.
  */
-export async function catchUpContactShares(): Promise<void> {
+export async function catchUpContactShares(opts?: { force?: boolean }): Promise<void> {
   const now = Date.now();
-  if (now - lastCatchUpAt < CATCH_UP_MIN_MS) return;
+  if (!opts?.force && now - lastCatchUpAt < CATCH_UP_MIN_MS) return;
   if (catchUpInFlight) return catchUpInFlight;
 
   lastCatchUpAt = now;
@@ -145,14 +164,15 @@ export async function catchUpContactShares(): Promise<void> {
               await handleWrap(ev, pair.sk);
             }
           } catch (e) {
-            console.warn("[basic] contact share catch-up relay failed", url, e);
+            console.warn("[basic] gift-wrap catch-up relay failed", url, e);
           }
         }
       } finally {
         pool.close(urls);
       }
+      void flushChatOutbox();
     } catch (e) {
-      console.warn("[basic] contact share catch-up failed", e);
+      console.warn("[basic] gift-wrap catch-up failed", e);
     } finally {
       catchUpInFlight = null;
     }
@@ -166,6 +186,7 @@ export function resumeContactShareWatch(): void {
   stopContactShareWatch();
   startContactShareWatch();
   void catchUpContactShares();
+  void flushChatOutbox();
 }
 
 function bindAppStateResume(): void {
@@ -185,4 +206,9 @@ export function queueContactShareWatchBoot(): void {
   bindAppStateResume();
   startContactShareWatch();
   void catchUpContactShares();
+  void flushChatOutbox();
 }
+
+/** Alias for Pay in Chat call sites. */
+export const resumeGiftWrapWatch = resumeContactShareWatch;
+export const catchUpGiftWraps = catchUpContactShares;

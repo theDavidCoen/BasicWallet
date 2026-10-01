@@ -84,6 +84,14 @@ export type RootStackParamList = {
   PayHub: undefined;
   /** 1:1 Pay in Chat thread (Penpot 15 / 15f) */
   ChatThread: { contactId: string; focusRequestId?: string };
+  /** Full-screen amount keypad for chat Send / Request / Pay (15h/15i) */
+  ChatAmount: {
+    contactId: string;
+    mode: "send" | "request" | "pay";
+    requestId?: string;
+    amountSats?: number;
+    memo?: string;
+  };
   ContactEdit: { contactId?: string } | undefined;
   /** Incoming Nostr contact share offer */
   ContactShareOffer: { offerId: string };

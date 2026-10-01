@@ -43,6 +43,7 @@ import { ContactEditScreen } from "../screens/ContactEditScreen";
 import { ContactShareOfferScreen } from "../screens/ContactShareOfferScreen";
 import { PayHubScreen } from "../screens/PayHubScreen";
 import { ChatThreadScreen } from "../screens/ChatThreadScreen";
+import { ChatAmountScreen } from "../screens/ChatAmountScreen";
 import { ExportNsecWarningScreen } from "../screens/ExportNsecWarningScreen";
 import { ExportNsecRevealScreen } from "../screens/ExportNsecRevealScreen";
 import { GenerateIdentityWarningScreen } from "../screens/GenerateIdentityWarningScreen";
@@ -153,6 +154,7 @@ export function RootNavigator() {
             <Stack.Screen name="ContactShareOffer" component={ContactShareOfferScreen} />
             <Stack.Screen name="PayHub" component={PayHubScreen} />
             <Stack.Screen name="ChatThread" component={ChatThreadScreen} />
+            <Stack.Screen name="ChatAmount" component={ChatAmountScreen} />
             <Stack.Screen name="ExportNsecWarning" component={ExportNsecWarningScreen} />
             <Stack.Screen name="ExportNsecReveal" component={ExportNsecRevealScreen} />
             <Stack.Screen name="GenerateIdentityWarning" component={GenerateIdentityWarningScreen} />
