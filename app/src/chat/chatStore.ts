@@ -330,6 +330,64 @@ export function clearThreadUnread(contactId: string): void {
   notify();
 }
 
+/** Threads with unread_count > 0 (active + archived). */
+export function listUnreadChatThreads(): ChatThread[] {
+  const rows = db().getAllSync<ThreadRow>(
+    `SELECT * FROM chat_thread
+     WHERE unread_count > 0
+     ORDER BY COALESCE(last_message_at, updated_at) DESC`,
+  );
+  return rows.map(rowToThread);
+}
+
+export type UnreadChatSummary = {
+  threadCount: number;
+  totalUnread: number;
+  /** When exactly one thread has unread — banner can deep-link to it. */
+  singleContactId: string | null;
+  hasText: boolean;
+  hasPaymentRequest: boolean;
+};
+
+/**
+ * Home banner input: unread text and/or payment requests across threads.
+ * Uses last N inbound messages per thread (N = unread_count) to classify kinds.
+ */
+export function summarizeUnreadChatActivity(): UnreadChatSummary {
+  const threads = listUnreadChatThreads();
+  let hasText = false;
+  let hasPaymentRequest = false;
+  let totalUnread = 0;
+
+  for (const t of threads) {
+    totalUnread += t.unreadCount;
+    const limit = Math.max(1, Math.min(t.unreadCount, 50));
+    const rows = db().getAllSync<{ kind: string }>(
+      `SELECT kind FROM chat_message
+       WHERE contact_id = ? AND direction = 'in'
+       ORDER BY created_at DESC LIMIT ?`,
+      [t.contactId, limit],
+    );
+    for (const r of rows) {
+      if (r.kind === "text") hasText = true;
+      if (r.kind === "request") hasPaymentRequest = true;
+    }
+  }
+
+  // Unread without text/request (e.g. payment receipt) still surfaces as message.
+  if (totalUnread > 0 && !hasText && !hasPaymentRequest) {
+    hasText = true;
+  }
+
+  return {
+    threadCount: threads.length,
+    totalUnread,
+    singleContactId: threads.length === 1 ? threads[0]!.contactId : null,
+    hasText,
+    hasPaymentRequest,
+  };
+}
+
 export type ChatOutboxItem = {
   id: string;
   payloadJson: string;

@@ -63,6 +63,7 @@ import { ExitRecoveryAddressScreen } from "../screens/ExitRecoveryAddressScreen"
 import { AboutScreen } from "../screens/AboutScreen";
 import { WalletWarmupScreen } from "../screens/WalletWarmupScreen";
 import { BackupReminderBanner } from "./BackupReminderBanner";
+import { ChatUnreadBanner } from "./ChatUnreadBanner";
 import { ContactShareReminder } from "./ContactShareReminder";
 import { RecoveryAddressReminder } from "./RecoveryAddressReminder";
 import { SheetHost } from "./SheetHost";
@@ -108,6 +109,7 @@ export function RootNavigator() {
         <NavigationContainer ref={navigationRef} theme={navTheme}>
           <SheetHost>
             <BackupReminderBanner navigationRef={navigationRef} />
+            <ChatUnreadBanner navigationRef={navigationRef} />
             <RecoveryAddressReminder navigationRef={navigationRef} />
             <ContactShareReminder navigationRef={navigationRef} />
             <Stack.Navigator
