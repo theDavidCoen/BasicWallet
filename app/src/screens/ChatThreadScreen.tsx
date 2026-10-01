@@ -47,10 +47,16 @@ import {
 } from "../chat/chatStore";
 import type { ChatMessage } from "../chat/types";
 import { contactArkAddress, contactHasNostrId } from "../chat/contactPeer";
+import {
+  executeChatPay,
+  resolveChatPayDestination,
+} from "../chat/executeChatPay";
 import { getContact } from "../contacts/contactStore";
 import { contactDisplayName, contactInitials } from "../contacts/types";
 import { catchUpGiftWraps } from "../contacts/contactShareWatch";
+import { getNetworkConfig } from "../config/network";
 import { hasNostrIdentity } from "../nostr/identityStore";
+import { useWallet } from "../wallet/WalletProvider";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -70,6 +76,18 @@ export function ChatThreadScreen() {
   const route = useRoute<RouteProp<RootStackParamList, "ChatThread">>();
   const contactId = route.params.contactId;
   const contact = useMemo(() => getContact(contactId), [contactId]);
+  const {
+    wallet,
+    selectedWallet,
+    balanceSats,
+    balance,
+    beginOutboundSend,
+    endOutboundSend,
+    applyLocalSpend,
+    rotateReceiveAddress,
+    bumpActivity,
+  } = useWallet();
+  const network = getNetworkConfig();
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
@@ -207,15 +225,52 @@ export function ChatThreadScreen() {
     }
   }
 
-  function onPayRequest(msg: ChatMessage) {
-    if (!msg.requestId || !msg.amountSats) return;
-    navigation.navigate("ChatAmount", {
-      contactId,
-      mode: "pay",
-      requestId: msg.requestId,
-      amountSats: msg.amountSats,
-      memo: msg.memo ?? undefined,
-    });
+  async function onPayRequest(msg: ChatMessage) {
+    if (!msg.requestId || !msg.amountSats || actionBusy) return;
+    if (!wallet || selectedWallet?.kind !== "arkade") {
+      Alert.alert("Wallet", "Select an Arkade wallet to send.");
+      return;
+    }
+    try {
+      resolveChatPayDestination({
+        contactId,
+        requestId: msg.requestId,
+      });
+    } catch (e) {
+      Alert.alert(
+        "No ark address",
+        e instanceof Error
+          ? e.message
+          : "Add an ark address for this contact, or wait for them to include one on the request.",
+      );
+      return;
+    }
+
+    const spendable = balance?.available ?? balanceSats;
+    setActionBusy(msg.requestId);
+    try {
+      await executeChatPay({
+        contactId,
+        amountSats: msg.amountSats,
+        memo: msg.memo ?? undefined,
+        requestId: msg.requestId,
+        hooks: {
+          wallet,
+          walletId: selectedWallet.id,
+          networkId: network.id,
+          spendable: spendable ?? null,
+          beginOutboundSend,
+          endOutboundSend,
+          applyLocalSpend,
+          getFreshArkAddress: async () => rotateReceiveAddress(),
+          bumpActivity,
+        },
+      });
+    } catch (e) {
+      Alert.alert("Send failed", e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setActionBusy(null);
+    }
   }
 
   function onArchiveToggle() {

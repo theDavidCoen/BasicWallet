@@ -125,13 +125,14 @@ export function ReceivePosPanel({
   /** When true, primary unit is the network stable (BRL / USD), not EUR. */
   fiatMode?: boolean;
   /**
-   * `receive` = classic POS (QR). `chat-request` = amount entry then publish
-   * encrypted Nostr pay-request (no QR phase).
+   * `receive` = classic POS (QR).
+   * `chat-request` = amount entry then publish encrypted Nostr pay-request.
+   * `chat-send` = amount entry then Continue → Confirm + biometrics.
    */
-  variant?: "receive" | "chat-request";
-  /** Shown under title when variant is chat-request. */
+  variant?: "receive" | "chat-request" | "chat-send";
+  /** Shown under title when variant is chat-request / chat-send. */
   contactLabel?: string;
-  /** Chat request confirm — amount in sats. */
+  /** Chat request/send confirm — amount in sats. */
   onChatRequestConfirm?: (amountSats: number) => void | Promise<void>;
   chatRequestBusy?: boolean;
 }) {
@@ -286,6 +287,8 @@ export function ReceivePosPanel({
   }, [fiatCode, rate, unit]);
 
   const isChatRequest = variant === "chat-request";
+  const isChatSend = variant === "chat-send";
+  const isChatAmount = isChatRequest || isChatSend;
 
   const onRequest = useCallback(() => {
     if (chatRequestBusy) return;
@@ -298,7 +301,7 @@ export function ReceivePosPanel({
             ? (raw / 100_000_000) * rate
             : 0;
       if (!(d > 0)) return;
-      if (isChatRequest) {
+      if (isChatAmount) {
         const sats =
           amountSats > 0
             ? amountSats
@@ -327,7 +330,7 @@ export function ReceivePosPanel({
       return;
     }
     if (amountSats <= 0 || amountSats > MAX_POS_SATS) return;
-    if (isChatRequest) {
+    if (isChatAmount) {
       void onChatRequestConfirm?.(amountSats);
       return;
     }
@@ -341,7 +344,7 @@ export function ReceivePosPanel({
     fiatCode,
     fiatMode,
     fiatRequestKind,
-    isChatRequest,
+    isChatAmount,
     onChatRequestConfirm,
     onRequestBrlUri,
     onRequestUri,
@@ -366,7 +369,7 @@ export function ReceivePosPanel({
   const padTop = Math.max(insets.top, 12) + 8;
   const padBottom = insets.bottom + 16;
 
-  const canRequest = isChatRequest
+  const canRequest = isChatAmount
     ? amountSats > 0 && amountSats <= MAX_POS_SATS && !chatRequestBusy
     : fiatMode
       ? ((fiatDisplay ?? 0) > 0 || (unit === "fiat" && raw > 0)) &&
@@ -375,7 +378,7 @@ export function ReceivePosPanel({
           : Boolean(bip21Uri) && (amountSats > 0 || rate != null))
       : amountSats > 0 && amountSats <= MAX_POS_SATS && Boolean(bip21Uri);
 
-  if (!isChatRequest && phase === "receive" && requestUri) {
+  if (!isChatAmount && phase === "receive" && requestUri) {
     return (
       <View style={[styles.root, { paddingTop: padTop, paddingBottom: padBottom }]}>
         <View style={styles.header}>
@@ -415,11 +418,16 @@ export function ReceivePosPanel({
         <View style={styles.headerSide} />
       </View>
 
-      <Text style={styles.title}>{isChatRequest ? "REQUEST" : "RECEIVE"}</Text>
+      <Text style={styles.title}>
+        {isChatRequest ? "REQUEST" : isChatSend ? "SEND" : "RECEIVE"}
+      </Text>
       {isChatRequest && contactLabel ? (
         <Text style={styles.chatSub}>Ask {contactLabel} via encrypted Nostr</Text>
       ) : null}
-      {fiatMode && !isChatRequest ? (
+      {isChatSend && contactLabel ? (
+        <Text style={styles.chatSub}>To {contactLabel} · destination locked</Text>
+      ) : null}
+      {fiatMode && !isChatAmount ? (
         <View style={styles.modeRow}>
           <Pressable
             style={[
@@ -518,6 +526,8 @@ export function ReceivePosPanel({
           <ActivityIndicator color="#000" />
         ) : isChatRequest ? (
           <Text style={styles.ctaText}>Send request</Text>
+        ) : isChatSend ? (
+          <Text style={styles.ctaText}>Continue</Text>
         ) : !fiatMode && !bip21Uri ? (
           <View style={styles.ctaBusy}>
             <ActivityIndicator color="#000" />

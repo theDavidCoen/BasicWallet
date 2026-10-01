@@ -2,9 +2,14 @@
  * Resolve a contact's Nostr pubkey (npub / NIP-05) for gift-wrap addressing.
  */
 
+import { isValidArkAddress } from "@arkade-os/sdk";
 import { decode, npubEncode } from "nostr-tools/nip19";
+import { getContact, upsertContact } from "../contacts/contactStore";
 import { resolveNip05 } from "../contacts/resolveNip05";
-import type { Contact } from "../contacts/types";
+import { newContactId, type Contact } from "../contacts/types";
+
+/** Identifier label for ark addresses learned from Chat & Pay (silent upsert). */
+export const CHAT_ARK_LABEL = "From Chat & Pay";
 
 export type PeerPubkeyResult =
   | { ok: true; pubkeyHex: string; npub: string }
@@ -22,6 +27,50 @@ export function contactArkAddress(contact: Contact): string | null {
     (i) => i.kind === "ark" && i.value.trim().toLowerCase().startsWith("ark"),
   );
   return hit?.value.trim() ?? null;
+}
+
+/**
+ * Silently upsert an ark address onto a contact when learned from a chat
+ * pay-request / reply. No toast, dialog, or UI feedback.
+ */
+export function silentlyUpsertContactArkFromChat(
+  contactId: string,
+  arkAddress: string,
+): void {
+  const trimmed = arkAddress.trim();
+  if (!trimmed || !isValidArkAddress(trimmed)) return;
+  const contact = getContact(contactId);
+  if (!contact) return;
+
+  const exact = contact.identifiers.find(
+    (i) => i.kind === "ark" && i.value.trim() === trimmed,
+  );
+  if (exact) return;
+
+  const chatSourced = contact.identifiers.find(
+    (i) => i.kind === "ark" && i.label === CHAT_ARK_LABEL,
+  );
+  const nextIdentifiers = chatSourced
+    ? contact.identifiers.map((i) =>
+        i.id === chatSourced.id
+          ? { ...i, value: trimmed, label: CHAT_ARK_LABEL }
+          : i,
+      )
+    : [
+        ...contact.identifiers,
+        {
+          id: newContactId("id"),
+          kind: "ark" as const,
+          value: trimmed,
+          label: CHAT_ARK_LABEL,
+        },
+      ];
+
+  try {
+    upsertContact({ ...contact, identifiers: nextIdentifiers });
+  } catch {
+    /* silent — never surface chat-learned address save failures */
+  }
 }
 
 export async function resolveContactPeerPubkey(

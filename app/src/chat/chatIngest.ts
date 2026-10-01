@@ -3,7 +3,10 @@
  */
 
 import { listContacts } from "../contacts/contactStore";
-import { findContactIdByPeerPubkey } from "./contactPeer";
+import {
+  findContactIdByPeerPubkey,
+  silentlyUpsertContactArkFromChat,
+} from "./contactPeer";
 import {
   ensureChatThread,
   findMessageByNostrEventId,
@@ -68,6 +71,9 @@ export async function ingestChatEnvelope(opts: {
           : pref?.kind === "bolt11" && pref.value
             ? JSON.stringify({ kind: "bolt11", value: pref.value })
             : null;
+      if (pref?.kind === "ark" && pref.value) {
+        silentlyUpsertContactArkFromChat(contactId, pref.value);
+      }
       insertChatMessage({
         contactId,
         kind: "request",
@@ -84,6 +90,9 @@ export async function ingestChatEnvelope(opts: {
       return true;
     }
     case "basic.wallet.chat.pay_request_reply": {
+      if (envelope.payTo?.kind === "ark" && envelope.payTo.value) {
+        silentlyUpsertContactArkFromChat(contactId, envelope.payTo.value);
+      }
       const existing = findMessageByRequestId(contactId, envelope.requestId);
       if (existing) {
         updateChatMessage(existing.id, {

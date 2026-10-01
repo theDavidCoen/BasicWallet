@@ -84,7 +84,7 @@ export type RootStackParamList = {
   PayHub: undefined;
   /** 1:1 Pay in Chat thread (Penpot 15 / 15f) */
   ChatThread: { contactId: string; focusRequestId?: string };
-  /** Full-screen amount keypad for chat Send / Request / Pay (15h/15i) */
+  /** Full-screen amount: Request / Send use POS; Pay is biometrics-only from the card. */
   ChatAmount: {
     contactId: string;
     mode: "send" | "request" | "pay";

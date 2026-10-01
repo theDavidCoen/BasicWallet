@@ -20,7 +20,7 @@ import {
   notePendingSendFromThisDevice,
   recordSentFromThisDevice,
 } from "../account/txMeta";
-import { contactArkAddress } from "./contactPeer";
+import { contactArkAddress, silentlyUpsertContactArkFromChat } from "./contactPeer";
 import {
   insertChatMessage,
   findMessageByRequestId,
@@ -69,7 +69,11 @@ export function resolveChatPayDestination(opts: {
   if (opts.requestId) {
     const msg = findMessageByRequestId(opts.contactId, opts.requestId);
     const fromReq = parsePayTo(msg?.payToJson);
-    if (fromReq) return { address: fromReq, source: "request" };
+    if (fromReq) {
+      // Also learn locally if ingest missed it (catch-up / older payloads).
+      silentlyUpsertContactArkFromChat(opts.contactId, fromReq);
+      return { address: fromReq, source: "request" };
+    }
   }
 
   throw new Error(
