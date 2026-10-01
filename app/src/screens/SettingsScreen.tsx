@@ -19,6 +19,7 @@ type NavTarget =
   | "NostrIdentity"
   | "ArchivedWallets"
   | "Contacts"
+  | "PayHub"
   | "ResetApp"
   | "Logs"
   | "Privacy"
@@ -48,6 +49,7 @@ const BLOCKS: Block[] = [
   { kind: "row", row: { label: "Nostr identity", on: "NostrIdentity" } },
   { kind: "row", row: { label: "Archived wallets", on: "ArchivedWallets" } },
   { kind: "row", row: { label: "Contacts", on: "Contacts" } },
+  { kind: "row", row: { label: "Chat & Pay", on: "PayHub" } },
   { kind: "row", row: { label: "Duress PIN", stub: true } },
 
   { kind: "section", title: "Provider Settings" },

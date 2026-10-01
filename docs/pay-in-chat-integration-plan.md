@@ -1,13 +1,13 @@
 # Pay in Chat — integration plan
 
 **Branch:** `david/payinchat`  
-**Status:** plan only (no Expo feature implementation in this commit)  
+**Status:** plan + entry points (Home CTA, Settings row, stub Pay hub)  
 **Product:** Basic Wallet (`app.basic.wallet`)  
 **Penpot:** file `0d808482-264d-8195-8008-a46d9fbf8810`, page **Pay in Chat** (`97cefe33-8926-46c5-adc6-31a445d3ce35`) on `http://192.168.1.104:9001`  
 **Design source:** `prototype/penpot_pay_in_chat.py` + yellow notes on the live page  
 **Product UX (canonical prose):** `prototype/docs/ux-ui-spec.md` §11–§12  
 **Date:** 2026-10-01  
-**Decisions locked:** 2026-10-01 (David)
+**Decisions locked:** 2026-10-01 (David); hub placement locked 2026-10-01
 
 ---
 
@@ -19,7 +19,7 @@ Pay in Chat is a Revolut-inspired **1:1 P2P thread** where text, payment cards, 
 
 **Assets (choose UI `15j`):** **BTC** plus the **two stables already in code** — mainnet **BRL / DePix**, Mutinynet **USDT** (labels from `depixAssets.ts` / Fiat Mode). Not a speculative EUR* chip; multi-asset chat reflects what Basic already supports today.
 
-**Entry:** **Pay hub** from Home (`15g`); icon/position still TBD. Amount UI: **full-screen keypad** (`15h`/`15i`) like classic Send; sheet `15b` is not primary.
+**Entry:** **Chat & Pay** Pay hub (`15g`) from Home CTA card + Settings row (placement locked below). Amount UI: **full-screen keypad** (`15h`/`15i`) like classic Send; sheet `15b` is not primary.
 
 **Pay destination:** use the **contact’s stored ark address** when present; if missing, **round-trip** (request reply with a fresh ark address). **Decline** publishes `pay_decline` on Nostr. Chat history is recovered from **Nostr**, not transferred via Bluetooth pair.
 
@@ -91,16 +91,19 @@ RPC PNG export (`export-binfile` / `export-shape`) returned 400/404 from this Pe
 ### 4.1 Entry
 
 ```
-A) Home → Pay hub (15g) → tap contact → thread (15 / 15f)
-   Pay hub icon / position on Home: TBD (open)
+A) Home → Chat & Pay CTA card → Pay hub (15g) → tap contact → thread (15 / 15f)
+   Placement (locked): card titled "Chat & Pay", same horizontal span as
+   Receive+Send, just above the Activity bottom-sheet handle.
 
-B) Settings → Contacts → (optional) open chat affordance
+B) Settings → Chat & Pay row → same Pay hub (15g)
+
+C) Settings → Contacts → (optional) open chat affordance
    → thread (secondary to Pay hub)
 
-C) Classic Send stays classic Send
+D) Classic Send stays classic Send
    Picking a contact from Send does NOT open the chat thread
 
-D) Deep link / notification (post–first-release; push not in v1)
+E) Deep link / notification (post–first-release; push not in v1)
    → thread focused on request / payment card
 ```
 
@@ -409,7 +412,8 @@ app/src/
 - [x] Branch `david/payinchat` + this plan.
 - [x] Lock amount UI, confirm UX, entry, pay destination, decline, history recovery, classic Send (2026-10-01).
 - [x] Lock text-in-MVP, resume-sync-only v1, assets = BTC + existing stables (2026-10-01).
-- [ ] Pay hub icon / position on Home (only remaining open item in §12).
+- [x] Lock Pay hub label **Chat & Pay** + Home/Settings placement (2026-10-01).
+- [x] Stub Expo entry: Home CTA + Settings row + `PayHubScreen` empty state.
 - [ ] Spike: multiplex gift-wrap demux without breaking contact share.
 - [ ] Spike: extract amount keypad + Confirm send (+ biometrics) from SendScreen for chat reuse.
 
@@ -418,7 +422,7 @@ app/src/
 1. **Schema** `chat_thread` / `chat_message` / `chat_outbox` + migrations.
 2. **Gift-wrap demux** + parsers for text + pay_request + reply + decline + receipt.
 3. **ChatThreadScreen** empty + **encrypted text** send/receive (composer live).
-4. **Pay hub from Home** (15g); icon/position TBD.
+4. **Pay hub from Home + Settings** (15g): label **Chat & Pay**; Home card above Activity handle; Settings Account row. (Stub shipped; thread list next.)
 5. **Send from chat** → full-screen keypad → optional `15j` (BTC + network stable already in app) → classic Confirm send → biometrics after → Arkade / corridor send (contact ark or round-trip) → payment card.
 6. **Request** → outgoing pending card; incoming Pay/Decline (`pay_decline` on Nostr).
 7. **Resume-sync only:** foreground catch-up from Nostr; outbox flush; watcher stop on teardown. No Bluetooth pair chat transfer. No push/sidecar.
@@ -456,9 +460,10 @@ app/src/
 | `app/src/chat/**` | New module |
 | `app/src/components/chat/**` | New UI |
 | `app/src/screens/ChatThreadScreen.tsx` | New |
-| `app/src/screens/PayHubScreen.tsx` | New |
-| `app/src/screens/HomeScreen.tsx` (or equiv.) | Pay hub entry (icon/position TBD) |
-| `app/src/navigation/types.ts` | Routes |
+| `app/src/screens/PayHubScreen.tsx` | New — Chat & Pay hub (15g) |
+| `app/src/screens/HomeScreen.tsx` | Chat & Pay CTA card (span Receive+Send, above Activity handle) |
+| `app/src/screens/SettingsScreen.tsx` | Chat & Pay row → PayHub |
+| `app/src/navigation/types.ts` | Routes (`PayHub`, later thread/amount) |
 | `app/src/navigation/RootNavigator.tsx` | Register screens |
 | `app/src/screens/ContactsListScreen.tsx` | Optional secondary entry to chat |
 | `app/src/contacts/contactShareWatch.ts` | Demux refactor |
@@ -493,7 +498,7 @@ No Penpot Python changes required unless boards drift.
 | - | ----- | -------- |
 | 1 | **Primary amount UI** | Full-screen keypad (`15h`/`15i`), like classic Send. Sheet `15b` is **not** primary. |
 | 2 | **Confirm control** | Classic **Confirm send** + **biometrics after**. **Not** Penpot slide-to-send for chat. |
-| 3 | **Entry** | **Pay hub in Home** (`15g`). Icon / position still TBD (below). |
+| 3 | **Entry** | Label **Chat & Pay**. **Home:** CTA **card** spanning left edge of Receive → right edge of Send, just above the Activity bottom-sheet handle → Pay hub (`15g`). **Settings:** Account row **Chat & Pay** → same hub. |
 | 4 | **Text chat in MVP** | **Real encrypted text messages** (gift-wrap). Not payment-cards-only. |
 | 5 | **Request / pay destination** | Pay using **contact’s ark address** if present; if missing, **round-trip** with a fresh ark address. |
 | 6 | **Decline** | Publish **`pay_decline`** on Nostr. |
@@ -504,13 +509,13 @@ No Penpot Python changes required unless boards drift.
 
 ### Still open
 
-1. **Pay hub icon / position on Home** — TBD (entry via Pay hub is locked; placement is not).
+None for entry/placement. Remaining work is protocol + thread UI (Phase 1 items 1–3, 5–8).
 
 ---
 
 ## 13. Out of scope
 
-- Implementing Expo screens in this plan commit (except optional stubs if needed later).
+- Full chat protocol / thread UI in the entry-point stub (schema, gift-wrap demux, composer — Phase 1).
 - Group / multi-party chat; reactions; GIFs; stickers; voice.
 - OS contacts / READ_CONTACTS.
 - Basic-operated plaintext chat backend.
@@ -532,7 +537,7 @@ No Penpot Python changes required unless boards drift.
 - [ ] Penpot boards 15–15i covered by Expo; `15j` shows BTC + existing network stable only; amount = full keypad; confirm = Confirm send + biometrics (not slide).
 - [ ] Request · Send persistent; Confirm send + biometrics required; no instant send.
 - [ ] Encrypted text composer works in MVP (bubbles + outbox).
-- [ ] Pay hub reachable from Home; classic Send does not divert into chat.
+- [x] Pay hub reachable from Home (Chat & Pay card) and Settings; classic Send does not divert into chat.
 - [ ] Pay uses contact ark when present; else round-trip fresh ark; Decline publishes `pay_decline`.
 - [ ] Balance / asset pill visible before Send enables; assets match `depixAssets` / Fiat Mode corridors.
 - [ ] No OS contacts; no plaintext server; no push in v1 (resume-sync only).

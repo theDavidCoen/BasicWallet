@@ -80,6 +80,8 @@ export type RootStackParamList = {
   ArchivedWallets: undefined;
   /** Private contacts directory */
   Contacts: undefined;
+  /** Chat & Pay hub (Penpot 15g) — recent threads / choose contact */
+  PayHub: undefined;
   ContactEdit: { contactId?: string } | undefined;
   /** Incoming Nostr contact share offer */
   ContactShareOffer: { offerId: string };

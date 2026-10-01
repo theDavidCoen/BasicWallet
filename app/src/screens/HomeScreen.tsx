@@ -772,6 +772,16 @@ export function HomeScreen() {
               </View>
             </View>
 
+            <Pressable
+              style={styles.chatPayCard}
+              onPress={() => navigation.navigate("PayHub")}
+              accessibilityRole="button"
+              accessibilityLabel="Chat and Pay"
+            >
+              <Text style={styles.chatPayTitle}>Chat & Pay</Text>
+              <Text style={styles.chatPayHint}>Private chats · pay contacts</Text>
+            </Pressable>
+
             <GestureDetector gesture={pan}>
               <View
                 ref={handleRef}
@@ -971,6 +981,32 @@ const styles = StyleSheet.create({
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 16,
     color: colors.fg,
+  },
+  /** Same horizontal span as Receive+Send (maxWidth 160 each + gap 16). */
+  chatPayCard: {
+    alignSelf: "center",
+    width: "100%",
+    maxWidth: 336,
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 4,
+  },
+  chatPayTitle: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 15,
+    color: colors.fg,
+    textAlign: "center",
+  },
+  chatPayHint: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 11,
+    color: colors.hint,
+    textAlign: "center",
+    marginTop: 4,
   },
   histHit: {
     alignItems: "center",
