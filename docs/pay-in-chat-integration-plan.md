@@ -9,6 +9,8 @@
 **Date:** 2026-10-01  
 **Decisions locked:** 2026-10-01 (David); hub placement locked 2026-10-01
 
+**Related (asset-aware / Fiat Mode):** [`pay-in-chat-fiat-asset-plan.md`](./pay-in-chat-fiat-asset-plan.md) — per-viewer card denominations (Fiat↔Maxi) + DePix/USDT→sats convert before chat Send/Pay. Plan only until implemented.
+
 ---
 
 ## 1. Executive summary
@@ -550,6 +552,7 @@ None for entry/placement. Remaining work is protocol + thread UI (Phase 1 items 
 
 ## 15. References
 
+- **Asset-aware cards + Fiat DePix chat pay (follow-up plan):** [`pay-in-chat-fiat-asset-plan.md`](./pay-in-chat-fiat-asset-plan.md)
 - Penpot generator: `prototype/penpot_pay_in_chat.py`
 - UX: `prototype/docs/ux-ui-spec.md` §11 Contacts & Nostr, §12 Pay in Chat
 - Arkade engine: `prototype/docs/arkade-wallet-tech-spec.md`
