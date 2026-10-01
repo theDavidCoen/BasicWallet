@@ -38,6 +38,7 @@ import {
 import { queueContactsDirectoryBootSync, syncContactsDirectoryAfterPasskey } from "../contacts/contactsNostrSync";
 import { mnemonicFromEntropy } from "../onboarding/mnemonicFromEntropy";
 import { combineCsprngWithMotion } from "../onboarding/motionEntropy";
+import { isChatThreadFocused } from "../chat/chatThreadFocus";
 import { isPresencePromptInFlight } from "../security/presencePrompt";
 import { friendlyNetworkError } from "../util/friendlyNetworkError";
 import {
@@ -726,6 +727,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     if (isPresencePromptInFlight()) {
       console.warn("[basic] fundsNotice suppressed (presence)", kind, amount);
       return "blocked";
+    }
+    // ChatThread already shows “You received…” payment cards — skip classic overlay.
+    if (isChatThreadFocused()) {
+      console.warn("[basic] fundsNotice suppressed (chat thread)", kind, amount);
+      return "busy";
     }
     // Post-send suppress blocks poll catch-up false positives — not SDK push receives.
     if (

@@ -45,6 +45,7 @@ import {
   setChatThreadArchived,
   subscribeChatStore,
 } from "../chat/chatStore";
+import { setChatThreadFocused } from "../chat/chatThreadFocus";
 import type { ChatMessage } from "../chat/types";
 import { contactArkAddress, contactHasNostrId } from "../chat/contactPeer";
 import {
@@ -138,6 +139,7 @@ export function ChatThreadScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      setChatThreadFocused(true);
       // Defer network catch-up so navigation / first paint stay snappy.
       const task = InteractionManager.runAfterInteractions(() => {
         startTransition(() => {
@@ -148,7 +150,10 @@ export function ChatThreadScreen() {
         void catchUpGiftWraps({ force: true });
         void flushChatOutbox();
       });
-      return () => task.cancel();
+      return () => {
+        setChatThreadFocused(false);
+        task.cancel();
+      };
     }, [contactId]),
   );
 
