@@ -47,6 +47,10 @@ import { formatSatsAmount, formatSatsLabel } from "../wallet/formatSats";
 import { colors } from "../theme/colors";
 import { useFiatMode } from "../fiat/FiatModeProvider";
 import { formatBrlDisplay, stripFiatModeLabelSuffix } from "../fiat/depixAssets";
+import {
+  listUnreadChatThreads,
+  subscribeChatStore,
+} from "../chat/chatStore";
 
 const MUTINYNET_OK = "#7DCEA0";
 const MUTINYNET_DOWN = "#E07070";
@@ -123,6 +127,7 @@ export function HomeScreen() {
   >({});
   /** Home primary unit: sats or one of the enabled display fiats. */
   const [balanceUnit, setBalanceUnit] = useState<"sats" | DisplayCurrencyCode>("sats");
+  const [chatUnreadTotal, setChatUnreadTotal] = useState(0);
   const handleRef = useRef<View>(null);
   /** 0 undecided · 1 POS (LTR) · -1 scan (RTL) */
   const sideDir = useSharedValue(0);
@@ -133,6 +138,29 @@ export function HomeScreen() {
     sidesLocked.value =
       activityOpen || homeDragging || posOpen || scanOpen ? 1 : 0;
   }, [activityOpen, homeDragging, posOpen, scanOpen, sidesLocked]);
+
+  const refreshChatUnread = useCallback(() => {
+    try {
+      const total = listUnreadChatThreads().reduce(
+        (sum, t) => sum + t.unreadCount,
+        0,
+      );
+      setChatUnreadTotal(total);
+    } catch {
+      setChatUnreadTotal(0);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshChatUnread();
+    return subscribeChatStore(refreshChatUnread);
+  }, [refreshChatUnread]);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshChatUnread();
+    }, [refreshChatUnread]),
+  );
 
   const openSettings = useCallback(() => {
     navigation.navigate("Settings");
@@ -776,8 +804,19 @@ export function HomeScreen() {
               style={styles.chatPayCard}
               onPress={() => navigation.navigate("PayHub")}
               accessibilityRole="button"
-              accessibilityLabel="Chat and Pay"
+              accessibilityLabel={
+                chatUnreadTotal > 0
+                  ? `Chat and Pay, ${chatUnreadTotal} unread`
+                  : "Chat and Pay"
+              }
             >
+              {chatUnreadTotal > 0 ? (
+                <View style={styles.chatPayBadge} pointerEvents="none">
+                  <Text style={styles.chatPayBadgeText}>
+                    {chatUnreadTotal > 99 ? "99+" : String(chatUnreadTotal)}
+                  </Text>
+                </View>
+              ) : null}
               <Text style={styles.chatPayTitle}>Chat & Pay</Text>
               <Text style={styles.chatPayHint}>Private chats · pay contacts</Text>
             </Pressable>
@@ -994,6 +1033,26 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 16,
     marginBottom: 4,
+    position: "relative",
+  },
+  chatPayBadge: {
+    position: "absolute",
+    top: 8,
+    right: 10,
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    paddingHorizontal: 6,
+    backgroundColor: colors.fg,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1,
+  },
+  chatPayBadgeText: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 11,
+    color: colors.bg,
+    lineHeight: 14,
   },
   chatPayTitle: {
     fontFamily: "JetBrainsMono_700Bold",

@@ -106,12 +106,13 @@ export function ChatThreadScreen() {
     : false;
 
   const reloadLight = useCallback(() => {
+    // Clear unread immediately so Home banner/badge update before paint work.
+    clearThreadUnread(contactId);
     // Keep first paint cheap: only read messages after the transition starts.
     startTransition(() => {
       ensureChatThread(contactId);
       setMessages(listChatMessages(contactId));
       setArchived(getChatThread(contactId)?.archived === true);
-      clearThreadUnread(contactId);
     });
   }, [contactId]);
 
@@ -129,6 +130,8 @@ export function ChatThreadScreen() {
       startTransition(() => {
         setMessages(listChatMessages(contactId));
         setArchived(getChatThread(contactId)?.archived === true);
+        // Keep unread at 0 while this thread is open (live inbound).
+        clearThreadUnread(contactId);
       });
     });
   }, [contactId]);
@@ -139,7 +142,9 @@ export function ChatThreadScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      setChatThreadFocused(true);
+      setChatThreadFocused(true, contactId);
+      // Clear unread on focus before deferred catch-up (accurate banner/badge).
+      clearThreadUnread(contactId);
       // Defer network catch-up so navigation / first paint stay snappy.
       const task = InteractionManager.runAfterInteractions(() => {
         startTransition(() => {

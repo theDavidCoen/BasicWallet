@@ -4,6 +4,7 @@
 
 import { getAccountDb } from "../account/accountDb";
 import type { ArkadeNetworkId } from "../config/network";
+import { getFocusedChatContactId } from "./chatThreadFocus";
 import {
   type ChatDirection,
   type ChatMessage,
@@ -256,7 +257,14 @@ export function insertChatMessage(input: InsertChatMessageInput): ChatMessage {
       input.payToJson ?? null,
     ],
   );
-  const unreadBump = input.bumpUnread && input.direction === "in" ? 1 : 0;
+  // Do not bump unread for the thread the user is currently reading.
+  const focusedId = getFocusedChatContactId();
+  const unreadBump =
+    input.bumpUnread &&
+    input.direction === "in" &&
+    focusedId !== input.contactId
+      ? 1
+      : 0;
   db().runSync(
     `UPDATE chat_thread SET
       last_message_at = ?,
@@ -323,6 +331,11 @@ export function updateChatMessage(
 }
 
 export function clearThreadUnread(contactId: string): void {
+  const row = db().getFirstSync<{ unread_count: number }>(
+    `SELECT unread_count FROM chat_thread WHERE contact_id = ?`,
+    [contactId],
+  );
+  if (!row || row.unread_count === 0) return;
   db().runSync(
     `UPDATE chat_thread SET unread_count = 0, updated_at = ? WHERE contact_id = ?`,
     [Date.now(), contactId],

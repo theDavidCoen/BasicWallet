@@ -1,6 +1,7 @@
 /**
  * Home dialog: unread Pay in Chat activity (text and/or payment request).
  * Persists via SQLCipher unread_count; clears when the thread is opened.
+ * X dismisses the current banner wave (watermark); CTA badge still shows count.
  * Same visual family as BackupReminderBanner / ContactShareReminder.
  */
 
@@ -9,6 +10,11 @@ import { AppState, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { NavigationContainerRefWithCurrent } from "@react-navigation/native";
 import type { RootStackParamList } from "./types";
+import {
+  dismissChatUnreadBannerWave,
+  readChatBannerDismissWatermark,
+  shouldShowChatUnreadBanner,
+} from "../chat/chatBannerDismiss";
 import {
   subscribeChatStore,
   summarizeUnreadChatActivity,
@@ -74,6 +80,7 @@ export function ChatUnreadBanner({
     fiatModeSheetOpen,
   } = useSheets();
   const [summary, setSummary] = useState<UnreadChatSummary>(emptySummary);
+  const [dismissWatermarkMs, setDismissWatermarkMs] = useState(0);
   const [routeName, setRouteName] = useState<string | undefined>();
 
   const sheetOpen =
@@ -97,6 +104,10 @@ export function ChatUnreadBanner({
       setSummary(emptySummary());
     }
   }, [hasWallet]);
+
+  useEffect(() => {
+    void readChatBannerDismissWatermark().then(setDismissWatermarkMs);
+  }, []);
 
   useEffect(() => {
     if (!hasWallet) {
@@ -126,9 +137,19 @@ export function ChatUnreadBanner({
     return unsub;
   }, [navigationRef, refresh]);
 
-  const visible = summary.totalUnread > 0;
+  const onDismiss = useCallback(() => {
+    void (async () => {
+      const watermark = await dismissChatUnreadBannerWave();
+      setDismissWatermarkMs(watermark);
+    })();
+  }, []);
+
+  const bannerEligible = shouldShowChatUnreadBanner(
+    summary.totalUnread,
+    dismissWatermarkMs,
+  );
   const hidden =
-    sheetOpen || !visible || !hasWallet || routeName !== "Home";
+    sheetOpen || !bannerEligible || !hasWallet || routeName !== "Home";
 
   if (hidden) return null;
 
@@ -139,24 +160,34 @@ export function ChatUnreadBanner({
       pointerEvents="box-none"
       style={[styles.overlay, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}
     >
-      <Pressable
-        style={styles.dialog}
-        onPress={() => {
-          if (!navigationRef.isReady()) return;
-          if (summary.singleContactId) {
-            navigationRef.navigate("ChatThread", {
-              contactId: summary.singleContactId,
-            });
-          } else {
-            navigationRef.navigate("PayHub");
-          }
-        }}
-        accessibilityRole="button"
-        accessibilityLabel={title}
-      >
-        <Text style={styles.title}>{title}</Text>
-        <Text style={styles.body}>{body}</Text>
-      </Pressable>
+      <View style={styles.dialog}>
+        <Pressable
+          style={styles.closeHit}
+          onPress={onDismiss}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss chat unread banner"
+        >
+          <Text style={styles.closeX}>×</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => {
+            if (!navigationRef.isReady()) return;
+            if (summary.singleContactId) {
+              navigationRef.navigate("ChatThread", {
+                contactId: summary.singleContactId,
+              });
+            } else {
+              navigationRef.navigate("PayHub");
+            }
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={title}
+        >
+          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.body}>{body}</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -175,8 +206,25 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.fg,
-    paddingVertical: 14,
+    paddingTop: 14,
+    paddingBottom: 14,
     paddingHorizontal: 16,
+  },
+  closeHit: {
+    position: "absolute",
+    top: 6,
+    right: 8,
+    zIndex: 2,
+    width: 32,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  closeX: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 22,
+    color: colors.hint,
+    lineHeight: 24,
   },
   title: {
     fontFamily: "JetBrainsMono_700Bold",
@@ -184,6 +232,7 @@ const styles = StyleSheet.create({
     color: colors.fg,
     textAlign: "center",
     marginBottom: 6,
+    paddingRight: 24,
   },
   body: {
     fontFamily: "JetBrainsMono_400Regular",

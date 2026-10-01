@@ -1,15 +1,23 @@
 /**
  * Tracks whether ChatThread is focused so WalletProvider can suppress the classic
  * FundsReceived overlay. Chat already shows “You received…” payment cards.
- * Balance refresh / chat ingest stay unchanged — UI notice only.
+ * Also used so inbound ingest does not bump unread for the open thread.
  */
 
-let focused = false;
+let focusedContactId: string | null = null;
 
-export function setChatThreadFocused(on: boolean): void {
-  focused = Boolean(on);
+export function setChatThreadFocused(on: boolean, contactId?: string | null): void {
+  if (on && contactId) {
+    focusedContactId = contactId;
+    return;
+  }
+  focusedContactId = null;
 }
 
 export function isChatThreadFocused(): boolean {
-  return focused;
+  return focusedContactId != null;
+}
+
+export function getFocusedChatContactId(): string | null {
+  return focusedContactId;
 }
