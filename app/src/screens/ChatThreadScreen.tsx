@@ -205,26 +205,24 @@ export function ChatThreadScreen() {
           setMessages(listChatMessages(contactId));
           clearThreadUnread(contactId);
         });
-        void (async () => {
-          // Activity first so α69 reconcile can see settled sends, then Nostr.
-          if (selectedWallet?.id) {
-            try {
-              await refreshActivity();
-            } catch (e) {
-              console.warn("[basic] chat focus refreshActivity failed", e);
-            }
-            try {
-              reconcileOutboundChatPayments({
-                networkId: network.id,
-                walletId: selectedWallet.id,
-              });
-            } catch (e) {
-              console.warn("[basic] chat focus reconcile failed", e);
-            }
+        // α70: Nostr FIRST — never await ASP rematerialize (α69 blocked gift-wraps
+        // for 12s+ and froze taps). Reconcile from local DB only; activity later.
+        void catchUpGiftWraps({ force: true });
+        void flushChatOutbox();
+        if (selectedWallet?.id) {
+          try {
+            reconcileOutboundChatPayments({
+              networkId: network.id,
+              walletId: selectedWallet.id,
+            });
+          } catch (e) {
+            console.warn("[basic] chat focus reconcile failed", e);
           }
-          await catchUpGiftWraps({ force: true });
-          await flushChatOutbox();
-        })();
+          // Background only — do not block chat UX / Nostr.
+          void refreshActivity().catch((e) => {
+            console.warn("[basic] chat focus refreshActivity failed", e);
+          });
+        }
       });
       return () => {
         setChatThreadFocused(false);

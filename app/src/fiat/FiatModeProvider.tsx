@@ -1878,18 +1878,9 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       // Ignore only ≤ dust carrier. Show while excess remains (α67 hid ≥minBase
       // so a stuck 1299 convert left Home with no caption).
       if (!(sats > dust)) return null;
-      const caption =
-        sats < minBase
-          ? `+ ${sats.toLocaleString("en-US")} sats to be converted after minimum is reached`
-          : `+ ${sats.toLocaleString("en-US")} sats to be converted`;
-      console.warn("[basic] pendingConvertHint", {
-        sats,
-        dust,
-        minBase,
-        balanceTotal: balanceSats,
-        caption,
-      });
-      return caption;
+      return sats < minBase
+        ? `+ ${sats.toLocaleString("en-US")} sats to be converted after minimum is reached`
+        : `+ ${sats.toLocaleString("en-US")} sats to be converted`;
     }
 
     if (bitcoinMaxiMode && maxiPendingDisplay != null && maxiPendingDisplay >= 0.01) {

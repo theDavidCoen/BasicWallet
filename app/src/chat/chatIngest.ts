@@ -12,6 +12,10 @@ import {
   isAutoInboundBusy,
 } from "./chatInboundFiat";
 import {
+  dismissClassicFundsNoticeIfChat,
+  noteChatInboundReceiptHint,
+} from "./chatInboundPrefer";
+import {
   findContactIdByPeerPubkey,
   silentlyUpsertContactArkFromChat,
 } from "./contactPeer";
@@ -216,6 +220,11 @@ export async function ingestChatEnvelope(opts: {
       if (envelope.relatedRequestId) {
         const req = findMessageByRequestId(contactId, envelope.relatedRequestId);
         if (req) updateChatMessage(req.id, { status: "paid" });
+      }
+      // Hard rule: chat pay → chat bubble only; clear mistaken classic toast (α70).
+      if (direction === "in" && envelope.amountSats > 0) {
+        noteChatInboundReceiptHint(contactId, envelope.amountSats);
+        dismissClassicFundsNoticeIfChat(envelope.amountSats);
       }
       return true;
     }

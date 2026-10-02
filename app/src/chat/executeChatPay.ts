@@ -120,6 +120,8 @@ function finalizeChatPayPaid(opts: {
   walletId: string;
   /** Skip optimistic spend when reconciling an already-broadcast send. */
   skipLocalSpend?: boolean;
+  /** Skip Nostr receipt when caller already published immediately after ASP settle. */
+  skipReceipt?: boolean;
 }): void {
   if (!opts.skipLocalSpend) {
     opts.applyLocalSpend?.(opts.amountSats);
@@ -155,15 +157,17 @@ function finalizeChatPayPaid(opts: {
     if (req) updateChatMessage(req.id, { status: "paid" });
   }
 
-  void publishPaymentReceipt({
-    contactId: opts.contactId,
-    paymentId: opts.paymentId,
-    amountSats: opts.amountSats,
-    memo: opts.memo,
-    txid: opts.txid,
-    rail: "arkade",
-    relatedRequestId: opts.requestId ?? undefined,
-  });
+  if (!opts.skipReceipt) {
+    void publishPaymentReceipt({
+      contactId: opts.contactId,
+      paymentId: opts.paymentId,
+      amountSats: opts.amountSats,
+      memo: opts.memo,
+      txid: opts.txid,
+      rail: "arkade",
+      relatedRequestId: opts.requestId ?? undefined,
+    });
+  }
 
   opts.bumpActivity?.();
 }
@@ -314,6 +318,17 @@ export async function executeChatPay(opts: {
       },
     });
 
+    // Publish NIP-17 receipt immediately so peer chat bubble races Ark notify (α70).
+    void publishPaymentReceipt({
+      contactId: opts.contactId,
+      paymentId,
+      amountSats: payAmount,
+      memo: opts.memo,
+      txid,
+      rail: "arkade",
+      relatedRequestId: opts.requestId ?? undefined,
+    });
+
     finalizeChatPayPaid({
       contactId: opts.contactId,
       amountSats: payAmount,
@@ -327,6 +342,7 @@ export async function executeChatPay(opts: {
       bumpActivity: opts.hooks.bumpActivity,
       networkId,
       walletId,
+      skipReceipt: true,
     });
     return { txid, paymentId, address: dest.address };
   } catch (e) {
