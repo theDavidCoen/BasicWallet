@@ -41,12 +41,15 @@ import {
   clearThreadUnread,
   ensureChatThread,
   getChatThread,
+  insertChatMessage,
   listChatMessages,
   setChatThreadArchived,
   subscribeChatStore,
+  updateChatMessage,
 } from "../chat/chatStore";
 import { setChatThreadFocused } from "../chat/chatThreadFocus";
 import type { ChatMessage } from "../chat/types";
+import { newChatId } from "../chat/types";
 import { contactArkAddress, contactHasNostrId } from "../chat/contactPeer";
 import {
   executeChatPay,
@@ -61,7 +64,7 @@ import { getContact } from "../contacts/contactStore";
 import { contactDisplayName, contactInitials } from "../contacts/types";
 import { catchUpGiftWraps } from "../contacts/contactShareWatch";
 import { getNetworkConfig } from "../config/network";
-import { fetchFiatSpot, formatBrlDisplay, satsToFiatEstimate } from "../fiat/depixAssets";
+import { fetchFiatSpot } from "../fiat/depixAssets";
 import { useFiatMode } from "../fiat/FiatModeProvider";
 import { hasNostrIdentity } from "../nostr/identityStore";
 import { requireUserPresence } from "../security/userPresence";
@@ -294,32 +297,10 @@ export function ChatThreadScreen() {
     const needConvert =
       fiatMode && have < dustTarget && (depixDisplay ?? 0) > 0;
 
-    if (needConvert) {
-      if (!(depixDisplay != null && depixDisplay > 0)) {
-        Alert.alert(
-          "Insufficient balance",
-          "Not enough sats or stable balance to pay this request.",
-        );
-        return;
-      }
-      const est =
-        spot != null && spot > 0
-          ? satsToFiatEstimate(need, spot, network.id)
-          : null;
-      const approx =
-        est != null
-          ? formatBrlDisplay(est, { networkId: network.id })
-          : "stable balance";
+    if (needConvert && !(depixDisplay != null && depixDisplay > 0)) {
       Alert.alert(
-        "Convert to sats",
-        `Convert ~${approx} to sats, then pay ${need.toLocaleString("en-US")} sats? Fee applies.`,
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Convert & pay",
-            onPress: () => void runPayRequest(msg, true),
-          },
-        ],
+        "Insufficient balance",
+        "Not enough sats or stable balance to pay this request.",
       );
       return;
     }
@@ -332,7 +313,8 @@ export function ChatThreadScreen() {
       return;
     }
 
-    await runPayRequest(msg, false);
+    // One-shot like chat Send: biometrics → bubble progress → quiet convert/send.
+    await runPayRequest(msg, needConvert);
   }
 
   async function runPayRequest(msg: ChatMessage, willConvert: boolean) {
@@ -341,7 +323,8 @@ export function ChatThreadScreen() {
 
     const spendable = balance?.available ?? balanceSats;
     setActionBusy(msg.requestId);
-    setPayBusyLabel(null);
+    setPayBusyLabel(willConvert ? "Converting…" : "Sending…");
+    let localPaymentId: string | null = null;
     try {
       // Biometrics before any convert (no global CONVERTING dialog for chat).
       const auth = await requireUserPresence("Confirm send");
@@ -353,9 +336,26 @@ export function ChatThreadScreen() {
         return;
       }
 
-      if (willConvert) {
-        setPayBusyLabel("Converting…");
+      let fiatCaption: string | null = null;
+      if (fiatMode) {
+        const s = spot ?? (await fetchFiatSpot(network.id));
+        fiatCaption = freezeFiatCaptionFromSats(msg.amountSats, s, network.id);
       }
+
+      const paymentId = newChatId("pay");
+      const local = insertChatMessage({
+        contactId,
+        kind: "payment",
+        direction: "out",
+        amountSats: msg.amountSats,
+        memo: msg.memo ?? null,
+        fiatCaption,
+        status: willConvert ? "converting" : "sending",
+        paymentId,
+        requestId: msg.requestId,
+      });
+      localPaymentId = local.id;
+
       const ensured = await ensureSatsForPay({
         satsNeeded: msg.amountSats,
         spendable: spendable ?? null,
@@ -365,13 +365,8 @@ export function ChatThreadScreen() {
         convertDepixToSatsForPay,
         quiet: true,
       });
-      setPayBusyLabel(willConvert ? "Sending…" : null);
-
-      let fiatCaption: string | null = null;
-      if (fiatMode) {
-        const s = spot ?? (await fetchFiatSpot(network.id));
-        fiatCaption = freezeFiatCaptionFromSats(msg.amountSats, s, network.id);
-      }
+      setPayBusyLabel("Sending…");
+      updateChatMessage(local.id, { status: "sending" });
 
       await executeChatPay({
         contactId,
@@ -380,6 +375,8 @@ export function ChatThreadScreen() {
         requestId: msg.requestId,
         fiatCaption,
         skipPresence: true,
+        localMessageId: local.id,
+        paymentId,
         hooks: {
           wallet,
           walletId: selectedWallet.id,
@@ -393,6 +390,9 @@ export function ChatThreadScreen() {
         },
       });
     } catch (e) {
+      if (localPaymentId) {
+        updateChatMessage(localPaymentId, { status: "failed" });
+      }
       Alert.alert("Send failed", e instanceof Error ? e.message : "Unknown error");
     } finally {
       setActionBusy(null);

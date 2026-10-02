@@ -522,7 +522,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       kind: FiatModeJobKind,
       direction: "btc-to-depix" | "depix-to-btc",
       amount: bigint,
-      opts?: { quiet?: boolean },
+      opts?: { quiet?: boolean; throwOnError?: boolean },
     ): Promise<boolean> => {
       if (!wallet || !walletId || !kind) return false;
       // Never re-run enter once Fiat Mode is already on.
@@ -533,6 +533,9 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       // Mutex is jobBusyRef only — `converting` is UI and can lag a frame after
       // confirmExit's spendable-balance check clears the overlay.
       if (jobBusyRef.current) {
+        if (opts?.throwOnError) {
+          throw new Error("A conversion is already in progress.");
+        }
         if (!opts?.quiet) {
           Alert.alert("Busy", "A conversion is already in progress.");
         } else {
@@ -708,6 +711,9 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
           return true;
         }
         await patchState({ pendingJob: null });
+        if (opts?.throwOnError) {
+          throw new Error("Conversion incomplete");
+        }
         if (!quiet) {
           Alert.alert("Conversion incomplete", "Your previous mode was kept.");
         }
@@ -716,6 +722,9 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         const msg = e instanceof Error ? e.message : String(e);
         console.warn("[basic] fiat swap failed", e);
         await patchState({ pendingJob: null });
+        if (opts?.throwOnError) {
+          throw e instanceof Error ? e : new Error(msg);
+        }
         if (!quiet) {
           const fundingEmpty =
             /funding needs .+wallet holds 0/i.test(msg) ||
@@ -1011,12 +1020,24 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       const preSats = balanceSats ?? 0;
       if (preSats >= need) return preSats;
 
-      const display = depixDisplay ?? lastGoodDepixRef.current ?? 0;
-      if (!(display > 0)) {
+      const code = fiatStableForNetwork(networkId).displayCode;
+      const uiDisplay = depixDisplay ?? lastGoodDepixRef.current ?? 0;
+      if (!(uiDisplay > 0)) {
+        throw new Error(`No ${code} balance to convert`);
+      }
+
+      // Same as Exit: never fund from lastGood alone — ASP can show empty
+      // assets while UI still shows R$ / USDT (→ Insufficient funds).
+      const liveAtomic = await readLiveSpendableAtomic();
+      if (!(liveAtomic > 0n)) {
         throw new Error(
-          `No ${fiatStableForNetwork(networkId).displayCode} balance to convert`,
+          `${code} is not spendable yet (network still settling). Wait a few seconds and try again.`,
         );
       }
+      const liveDisplay = depixAtomicToDisplay(liveAtomic, networkId);
+      clearOptimisticDepix();
+      lastGoodDepixRef.current = liveDisplay;
+      setDepixDisplay(liveDisplay);
 
       let spot = btcBrl;
       if (spot == null || !(spot > 0)) {
@@ -1024,65 +1045,70 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         if (spot != null && spot > 0) setBtcBrl(spot);
       }
 
-      // Targeted convert: only enough stable for satsNeeded + fee pad (+ small drift).
+      // Partial DePix→BTC leaves stable remnant that needs a ≥dust sats carrier
+      // on change. With only ~dust sats (typical Fiat wallet), partial convert
+      // fails with "Insufficient funds". Convert full live balance then.
+      const dust = DEFAULT_MIN_VTXO_SATS;
+      const canPartial = preSats >= dust * 2;
+
       let atomic: bigint;
-      if (spot != null && spot > 0) {
+      let mode: "full-low-sats" | "full-no-spot" | "targeted" | "full-capped";
+      if (!canPartial) {
+        atomic = liveAtomic;
+        mode = "full-low-sats";
+      } else if (spot != null && spot > 0) {
         const paddedSats = padSatsForDepixSwap(need, networkId);
         const targetSats = Math.ceil(paddedSats * 1.03);
         const displayNeeded =
           Math.round(((targetSats / 100_000_000) * spot) * 100) / 100;
         const giveDisplay =
-          displayNeeded > 0 && displayNeeded < display
+          displayNeeded > 0 && displayNeeded < liveDisplay
             ? displayNeeded
-            : display;
-        atomic = depixDisplayToAtomic(giveDisplay, networkId);
-        console.warn("[basic] pay-convert targeted", {
-          need,
-          paddedSats,
-          displayNeeded,
-          giveDisplay,
-          haveDisplay: display,
-          atomic: String(atomic),
-          quiet: Boolean(opts?.quiet),
-        });
+            : liveDisplay;
+        const targeted = depixDisplayToAtomic(giveDisplay, networkId);
+        if (targeted > 0n && targeted < liveAtomic) {
+          atomic = targeted;
+          mode = "targeted";
+        } else {
+          atomic = liveAtomic;
+          mode = "full-capped";
+        }
       } else {
-        // No spot — convert full balance (cannot target safely).
-        atomic = depixDisplayToAtomic(display, networkId);
-        console.warn("[basic] pay-convert full (no spot)", {
-          need,
-          display,
-          atomic: String(atomic),
-          quiet: Boolean(opts?.quiet),
-        });
+        atomic = liveAtomic;
+        mode = "full-no-spot";
       }
 
       if (!(atomic > 0n)) {
-        throw new Error(
-          `No ${fiatStableForNetwork(networkId).displayCode} balance to convert`,
-        );
+        throw new Error(`No ${code} balance to convert`);
       }
+
+      console.warn("[basic] pay-convert plan", {
+        need,
+        preSats,
+        canPartial,
+        mode,
+        liveDisplay,
+        atomic: String(atomic),
+        quiet: Boolean(opts?.quiet),
+      });
 
       // Optimistic home floor so UI can proceed while ASP settles.
       ensureBalanceAtLeast(preSats + need);
       suppressAutoInboundUntilRef.current = Date.now() + 120_000;
 
       // Chat pay uses quiet so the bubble owns progress (no global CONVERTING).
-      const ok = await runJob("pay-convert", "depix-to-btc", atomic, {
+      await runJob("pay-convert", "depix-to-btc", atomic, {
         quiet: opts?.quiet,
+        throwOnError: true,
       });
-      if (!ok) {
-        throw new Error("Conversion incomplete");
-      }
 
       // Optimistic spend of converted stable (partial or full).
-      if (spot != null && spot > 0) {
-        const spentEst =
-          Math.round(((padSatsForDepixSwap(need, networkId) / 100_000_000) * spot) * 100) /
-          100;
-        if (spentEst > 0 && spentEst < display) {
-          applyLocalDepixSpend(spentEst);
+      const spentDisplay = depixAtomicToDisplay(atomic, networkId);
+      if (spentDisplay > 0) {
+        if (spentDisplay < liveDisplay) {
+          applyLocalDepixSpend(spentDisplay);
         } else {
-          applyLocalDepixSpend(display);
+          applyLocalDepixSpend(liveDisplay);
         }
       }
 
@@ -1135,6 +1161,8 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       wallet,
       ensureBalanceAtLeast,
       applyLocalDepixSpend,
+      readLiveSpendableAtomic,
+      clearOptimisticDepix,
     ],
   );
 
