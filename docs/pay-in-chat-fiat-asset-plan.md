@@ -1,7 +1,7 @@
 # Pay in Chat — asset-aware cards + Fiat Mode DePix spend
 
 **Branch:** `david/payinchat`  
-**Status:** plan only (no feature code in this doc)  
+**Status:** Phase A+B implementation on `david/payinchat`  
 **Date:** 2026-10-01  
 **Parent plan:** [`pay-in-chat-integration-plan.md`](./pay-in-chat-integration-plan.md)  
 **Exploration:** store `internal/chat-fiat-maxi-interaction.md` (current behavior audit)
@@ -286,14 +286,22 @@ Phase B/C acceptance (cards): Fiat↔Maxi matrix in §3.2 matches primary denomi
 
 ---
 
-## 12. Open questions
+## 12. Decisions + open questions
 
-1. **Exact vs full-balance convert:** Keep classic Send’s “convert entire stable balance” for chat, or implement amount-targeted swap (`satsNeeded` + fee pad)?
-2. **One-shot convert+send vs two-step:** Product preference for chat Confirm (classic Send today is two-step).
-3. **Freeze vs live captions:** Freeze `fiatCaption` at send/receive time for history stability, or recompute when spot changes?
-4. **Request `asset` semantics:** Confirm treating `depix`/`usdt` as **display intent** (this plan) vs delaying until real asset VTXO chat sends exist.
-5. **Secondary ≈ line** for Maxi users (show ≈ USD/EUR from Home rates) — in or out of Phase B?
-6. Should Fiat **requester** pad `amountSats` for expected inbound swap fees (as Universal BIP21 receive does), or ask exact sats and let payer’s Fiat auto-swap leave dust?
+### Locked (2026-10-02)
+
+| # | Decision |
+| - | -------- |
+| 1 | **Targeted convert (B):** when Fiat Mode lacks sats, convert only `satsNeeded` + fee pad; leave remaining stable balance in fiat (not classic Send’s full-balance convert). |
+| 2 | **One-shot** chat Confirm: Confirm → convert if needed → biometrics → send (not classic Send’s two-step). |
+| 3 | **Freeze** fiat captions at send/receive time (historical; do not recompute when spot moves). |
+| 5 | Maxi users see **sats only** on cards — no ≈ USD/EUR secondary in Phase B. |
+| 6 | Fiat **requester pads** `amountSats` for expected inbound sats→stable swap fees (same idea as Universal BIP21 receive). |
+| 4 | **Wire may carry display metadata**, but cards follow the **viewer’s mode**, not the counterparty’s asset choice. Maxi always sees sats only (never “requested in BRL”). Fiat viewers see their stable (from sats + rate / post-swap). Metadata is for the Fiat party’s own history / formatting, not to educate Maxi about the other side’s denomination. Settlement stays sats; no DePix VTXO chat transfer in v1. |
+
+### Open questions
+
+None — ready to implement when David says go.
 
 ---
 

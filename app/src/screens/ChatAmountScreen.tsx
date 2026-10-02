@@ -1,7 +1,7 @@
 /**
  * Chat amount entry:
  * - Request → POS keypad (ReceivePosPanel chat-request) → publish pay-request
- * - Send → POS keypad (chat-send, Continue) → classic Confirm send → biometrics
+ * - Send → POS keypad (chat-send, Continue) → Confirm → convert if needed → biometrics → send
  * Pay-from-request never lands here (biometrics-only from the request card).
  */
 
@@ -25,9 +25,21 @@ import {
   executeChatPay,
   resolveChatPayDestination,
 } from "../chat/executeChatPay";
+import { ensureSatsForPay } from "../chat/ensureSatsForPay";
+import {
+  freezeFiatCaptionFromSats,
+  formatSatsLine,
+} from "../chat/formatChatAmount";
+import type { ChatAsset } from "../chat/types";
 import { getContact } from "../contacts/contactStore";
 import { contactDisplayName, midEllipsis } from "../contacts/types";
 import { getNetworkConfig } from "../config/network";
+import {
+  fetchFiatSpot,
+  formatBrlDisplay,
+  padSatsForDepixSwap,
+  satsToFiatEstimate,
+} from "../fiat/depixAssets";
 import { useFiatMode } from "../fiat/FiatModeProvider";
 import { useWallet } from "../wallet/WalletProvider";
 import { colors } from "../theme/colors";
@@ -38,7 +50,11 @@ export function ChatAmountScreen() {
   const route = useRoute<RouteProp<RootStackParamList, "ChatAmount">>();
   const { contactId, mode } = route.params;
   const contact = useMemo(() => getContact(contactId), [contactId]);
-  const { fiatMode } = useFiatMode();
+  const {
+    fiatMode,
+    convertDepixToSatsForPay,
+    depixDisplay,
+  } = useFiatMode();
   const {
     wallet,
     selectedWallet,
@@ -54,12 +70,29 @@ export function ChatAmountScreen() {
   const network = getNetworkConfig();
 
   const [amountSats, setAmountSats] = useState<number | null>(null);
+  const [fiatDisplayTyped, setFiatDisplayTyped] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [spot, setSpot] = useState<number | null>(null);
 
   const name = contact ? contactDisplayName(contact) : "Contact";
   const spendable = balance?.available ?? balanceSats;
   const destArk = contact ? contactArkAddress(contact) : null;
+
+  useEffect(() => {
+    if (!fiatMode) {
+      setSpot(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const s = await fetchFiatSpot(network.id);
+      if (!cancelled) setSpot(s);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [fiatMode, network.id]);
 
   async function ensurePreferredReceive(): Promise<
     { kind: "ark"; value: string } | undefined
@@ -79,7 +112,7 @@ export function ChatAmountScreen() {
   }
 
   const onChatRequestConfirm = useCallback(
-    async (sats: number) => {
+    async (sats: number, meta?: { fiatDisplay?: number }) => {
       if (!contact || busy) return;
       setBusy(true);
       try {
@@ -91,11 +124,32 @@ export function ChatAmountScreen() {
           );
           return;
         }
+        // Fiat requester: pad amountSats for inbound sats→stable swap fees.
+        const wireSats = fiatMode
+          ? padSatsForDepixSwap(sats, network.id)
+          : sats;
+        const asset: ChatAsset = fiatMode
+          ? network.id === "mutinynet"
+            ? "usdt"
+            : "depix"
+          : "btc";
+        let fiatCaption: string | null = null;
+        if (fiatMode) {
+          if (meta?.fiatDisplay != null && meta.fiatDisplay > 0) {
+            fiatCaption = formatBrlDisplay(meta.fiatDisplay, {
+              networkId: network.id,
+            });
+          } else {
+            const s = spot ?? (await fetchFiatSpot(network.id));
+            fiatCaption = freezeFiatCaptionFromSats(sats, s, network.id);
+          }
+        }
         await sendPayRequest({
           contactId,
-          amountSats: sats,
-          asset: "btc",
+          amountSats: wireSats,
+          asset,
           preferredReceive,
+          fiatCaption,
         });
         if (navigation.canGoBack()) {
           navigation.goBack();
@@ -112,11 +166,21 @@ export function ChatAmountScreen() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- wallet helpers stable enough for one-shot confirm
-    [busy, contact, contactId, navigation, arkAddress, rotateReceiveAddress],
+    [
+      busy,
+      contact,
+      contactId,
+      navigation,
+      arkAddress,
+      rotateReceiveAddress,
+      fiatMode,
+      network.id,
+      spot,
+    ],
   );
 
   const onChatSendContinue = useCallback(
-    (sats: number) => {
+    (sats: number, meta?: { fiatDisplay?: number }) => {
       if (!contact || busy) return;
       try {
         resolveChatPayDestination({ contactId });
@@ -129,15 +193,68 @@ export function ChatAmountScreen() {
         );
         return;
       }
-      if (spendable != null && sats > spendable) {
-        Alert.alert("Insufficient balance", "Enter an amount within your balance.");
-        return;
+      const have = spendable ?? 0;
+      if (sats > have) {
+        if (!(fiatMode && (depixDisplay ?? 0) > 0)) {
+          Alert.alert(
+            "Insufficient balance",
+            "Enter an amount within your balance.",
+          );
+          return;
+        }
+        // Fiat Mode with stable balance — convert on Confirm (one-shot).
       }
       setAmountSats(sats);
+      setFiatDisplayTyped(
+        meta?.fiatDisplay != null && meta.fiatDisplay > 0
+          ? meta.fiatDisplay
+          : null,
+      );
       setConfirmOpen(true);
     },
-    [busy, contact, contactId, spendable],
+    [busy, contact, contactId, spendable, fiatMode, depixDisplay],
   );
+
+  const needConvert = useMemo(() => {
+    if (!fiatMode || amountSats == null) return false;
+    const have = spendable ?? 0;
+    return amountSats > have;
+  }, [fiatMode, amountSats, spendable]);
+
+  const confirmBody = useMemo(() => {
+    const sats = amountSats ?? 0;
+    const satsLine = formatSatsLine(sats);
+    if (!fiatMode) {
+      return `${satsLine} → ${name}`;
+    }
+    let stablePrimary: string | null = null;
+    if (fiatDisplayTyped != null && fiatDisplayTyped > 0) {
+      stablePrimary = formatBrlDisplay(fiatDisplayTyped, {
+        networkId: network.id,
+      });
+    } else if (spot != null && spot > 0) {
+      const est = satsToFiatEstimate(sats, spot, network.id);
+      if (est != null) {
+        stablePrimary = formatBrlDisplay(est, { networkId: network.id });
+      }
+    }
+    if (needConvert) {
+      const approx = stablePrimary ?? "stable balance";
+      return `Convert ~${approx} to sats, then send ${satsLine}? Fee applies.`;
+    }
+    if (stablePrimary) {
+      return `${stablePrimary} (≈ ${satsLine}) → ${name}`;
+    }
+    return `${satsLine} → ${name}`;
+  }, [
+    amountSats,
+    fiatMode,
+    fiatDisplayTyped,
+    spot,
+    needConvert,
+    name,
+    network.id,
+  ]);
 
   async function onConfirmSend() {
     if (!amountSats || !contact) return;
@@ -149,15 +266,38 @@ export function ChatAmountScreen() {
 
     setBusy(true);
     try {
+      // One-shot: convert if needed → biometrics → send.
+      const ensured = await ensureSatsForPay({
+        satsNeeded: amountSats,
+        spendable: spendable ?? null,
+        fiatMode,
+        depixDisplay,
+        networkId: network.id,
+        convertDepixToSatsForPay,
+      });
+
+      let fiatCaption: string | null = null;
+      if (fiatMode) {
+        if (fiatDisplayTyped != null && fiatDisplayTyped > 0) {
+          fiatCaption = formatBrlDisplay(fiatDisplayTyped, {
+            networkId: network.id,
+          });
+        } else {
+          const s = spot ?? (await fetchFiatSpot(network.id));
+          fiatCaption = freezeFiatCaptionFromSats(amountSats, s, network.id);
+        }
+      }
+
       await executeChatPay({
         contactId,
         amountSats,
         requestId: null,
+        fiatCaption,
         hooks: {
           wallet,
           walletId: selectedWallet.id,
           networkId: network.id,
-          spendable: spendable ?? null,
+          spendable: ensured.spendable ?? spendable ?? null,
           beginOutboundSend,
           endOutboundSend,
           applyLocalSpend,
@@ -220,7 +360,7 @@ export function ChatAmountScreen() {
     );
   }
 
-  // Send — POS amount → Continue → Confirm send → biometrics
+  // Send — POS amount → Continue → Confirm → convert if needed → biometrics
   if (!confirmOpen) {
     return (
       <View style={styles.posFill}>
@@ -248,10 +388,12 @@ export function ChatAmountScreen() {
 
       <View style={styles.confirmBox}>
         <Text style={styles.confirmTitle}>Confirm send</Text>
-        <Text style={styles.confirmBody}>
-          {(amountSats ?? 0).toLocaleString("en-US")} sats → {name}
+        <Text style={styles.confirmBody}>{confirmBody}</Text>
+        <Text style={styles.confirmHint}>
+          {needConvert
+            ? "Converts first, then biometrics / App PIN for the send."
+            : "Biometrics / App PIN required next."}
         </Text>
-        <Text style={styles.confirmHint}>Biometrics / App PIN required next.</Text>
       </View>
 
       <Pressable
@@ -264,7 +406,9 @@ export function ChatAmountScreen() {
         {busy ? (
           <ActivityIndicator color="#000" />
         ) : (
-          <Text style={styles.primaryText}>Confirm send</Text>
+          <Text style={styles.primaryText}>
+            {needConvert ? "Convert & send" : "Confirm send"}
+          </Text>
         )}
       </Pressable>
 
@@ -274,6 +418,7 @@ export function ChatAmountScreen() {
         onPress={() => {
           setConfirmOpen(false);
           setAmountSats(null);
+          setFiatDisplayTyped(null);
         }}
       >
         <Text style={styles.secondaryText}>Back</Text>

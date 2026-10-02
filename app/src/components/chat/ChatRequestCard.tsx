@@ -8,8 +8,11 @@ export function ChatRequestCard({
   status,
   timeLabel,
   busy,
+  busyLabel,
   onPay,
   onDecline,
+  primaryAmount,
+  secondaryAmount,
 }: {
   outgoing: boolean;
   amountSats: number;
@@ -17,8 +20,12 @@ export function ChatRequestCard({
   status: string | null;
   timeLabel?: string;
   busy?: boolean;
+  /** When busy, optional status under Pay (e.g. Converting…). */
+  busyLabel?: string | null;
   onPay?: () => void;
   onDecline?: () => void;
+  primaryAmount?: string | null;
+  secondaryAmount?: string | null;
 }) {
   const pending =
     status === "pending" || status === "pending_out" || status === "sent";
@@ -32,15 +39,21 @@ export function ChatRequestCard({
           : status === "pending_out"
             ? "Waiting for network"
             : "pending";
+  const primary =
+    primaryAmount?.trim() || `${amountSats.toLocaleString("en-US")} sats`;
+  const secondary = secondaryAmount?.trim() || null;
 
   return (
     <View style={[styles.card, outgoing ? styles.out : styles.in]}>
       <Text style={[styles.kicker, outgoing && styles.kickerOut]}>
         Request · {statusLabel}
       </Text>
-      <Text style={[styles.amount, outgoing && styles.amountOut]}>
-        {amountSats.toLocaleString("en-US")} sats
-      </Text>
+      <Text style={[styles.amount, outgoing && styles.amountOut]}>{primary}</Text>
+      {secondary ? (
+        <Text style={[styles.secondary, outgoing && styles.secondaryOut]}>
+          {secondary}
+        </Text>
+      ) : null}
       {memo ? (
         <Text style={[styles.memo, outgoing && styles.memoOut]} numberOfLines={3}>
           {memo}
@@ -65,7 +78,12 @@ export function ChatRequestCard({
             accessibilityLabel="Pay"
           >
             {busy ? (
-              <ActivityIndicator color="#000" />
+              <View style={styles.busyCol}>
+                <ActivityIndicator color="#000" />
+                {busyLabel ? (
+                  <Text style={styles.busyText}>{busyLabel}</Text>
+                ) : null}
+              </View>
             ) : (
               <Text style={styles.payText}>Pay</Text>
             )}
@@ -105,6 +123,13 @@ const styles = StyleSheet.create({
     color: colors.fg,
   },
   amountOut: {},
+  secondary: {
+    marginTop: 4,
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.caption,
+  },
+  secondaryOut: {},
   memo: {
     marginTop: 8,
     fontFamily: "JetBrainsMono_400Regular",
@@ -136,11 +161,19 @@ const styles = StyleSheet.create({
     backgroundColor: colors.fg,
     paddingVertical: 12,
     alignItems: "center",
+    justifyContent: "center",
+    minHeight: 44,
   },
   payText: {
     fontFamily: "JetBrainsMono_700Bold",
     fontSize: 14,
     color: "#000",
+  },
+  busyCol: { alignItems: "center", gap: 4 },
+  busyText: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 10,
+    color: "#333",
   },
   time: {
     marginTop: 10,

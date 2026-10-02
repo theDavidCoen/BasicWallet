@@ -986,39 +986,43 @@ export function SendScreen() {
     if (fiatMode && !wantsAsset) {
       try {
         const need = recipients.reduce((s, r) => s + r.amount, 0);
-        const brl = depixDisplay ?? 0;
-        if (!(brl > 0)) {
+        const have = spendable ?? 0;
+        // Only convert when sats are short (targeted). Enough sats → fall through.
+        if (need > have) {
+          const brl = depixDisplay ?? 0;
+          if (!(brl > 0)) {
+            Alert.alert(
+              `Insufficient ${fiatUnit}`,
+              "Convert or receive the stable asset before sending sats.",
+            );
+            return;
+          }
           Alert.alert(
-            `Insufficient ${fiatUnit}`,
-            "Convert or receive the stable asset before sending sats.",
+            "Convert to sats",
+            `This payment needs ${need.toLocaleString("en-US")} sats. Convert enough ${fiatUnit} (have ~${brl.toFixed(2)}) first? Fee applies.`,
+            [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Convert & send",
+                onPress: () => {
+                  void (async () => {
+                    try {
+                      await convertDepixToSatsForPay(need);
+                      // Classic Send stays two-step: tap Send again after conversion.
+                      Alert.alert("Converted", "Tap Send again to pay the sats invoice.");
+                    } catch (e) {
+                      Alert.alert(
+                        "Conversion failed",
+                        e instanceof Error ? e.message : "Unknown error",
+                      );
+                    }
+                  })();
+                },
+              },
+            ],
           );
           return;
         }
-        Alert.alert(
-          "Convert to sats",
-          `This payment needs sats. Convert your ${fiatUnit} balance (~${brl.toFixed(2)}) to sats first? Fee applies.`,
-          [
-            { text: "Cancel", style: "cancel" },
-            {
-              text: "Convert & send",
-              onPress: () => {
-                void (async () => {
-                  try {
-                    await convertDepixToSatsForPay(need);
-                    // User can tap Send again after conversion settles.
-                    Alert.alert("Converted", "Tap Send again to pay the sats invoice.");
-                  } catch (e) {
-                    Alert.alert(
-                      "Conversion failed",
-                      e instanceof Error ? e.message : "Unknown error",
-                    );
-                  }
-                })();
-              },
-            },
-          ],
-        );
-        return;
       } catch (e) {
         Alert.alert("Conversion failed", e instanceof Error ? e.message : "Unknown error");
         return;

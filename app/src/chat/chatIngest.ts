@@ -3,6 +3,10 @@
  */
 
 import { listContacts } from "../contacts/contactStore";
+import { getNetworkConfig } from "../config/network";
+import { getSelectedWalletId } from "../account/walletRegistry";
+import { fetchFiatSpot } from "../fiat/depixAssets";
+import { readFiatModeState } from "../fiat/fiatModeStore";
 import {
   findContactIdByPeerPubkey,
   silentlyUpsertContactArkFromChat,
@@ -14,6 +18,7 @@ import {
   insertChatMessage,
   updateChatMessage,
 } from "./chatStore";
+import { freezeFiatCaptionFromSats } from "./formatChatAmount";
 import type { ChatEnvelope } from "./types";
 
 function resolveContactId(
@@ -28,6 +33,25 @@ function resolveContactId(
     if (hit) return hit.id;
   }
   return null;
+}
+
+/** Freeze Fiat caption at ingest (receive) time when viewer is in Fiat Mode. */
+async function freezeCaptionIfFiat(
+  amountSats: number | null | undefined,
+): Promise<string | null> {
+  if (amountSats == null || !(amountSats > 0)) return null;
+  try {
+    const networkId = getNetworkConfig().id;
+    const walletId = getSelectedWalletId(networkId);
+    if (!walletId) return null;
+    const state = await readFiatModeState(networkId, walletId);
+    if (!state.fiatMode) return null;
+    const spot = await fetchFiatSpot(networkId);
+    return freezeFiatCaptionFromSats(amountSats, spot, networkId);
+  } catch (e) {
+    console.warn("[basic] chat ingest fiat caption freeze failed", e);
+    return null;
+  }
 }
 
 export async function ingestChatEnvelope(opts: {
@@ -74,6 +98,7 @@ export async function ingestChatEnvelope(opts: {
       if (pref?.kind === "ark" && pref.value) {
         silentlyUpsertContactArkFromChat(contactId, pref.value);
       }
+      const fiatCaption = await freezeCaptionIfFiat(envelope.amountSats);
       insertChatMessage({
         contactId,
         kind: "request",
@@ -85,6 +110,7 @@ export async function ingestChatEnvelope(opts: {
         nostrEventId: wrapEventId,
         createdAt: sentAt,
         payToJson,
+        fiatCaption,
         bumpUnread: true,
       });
       return true;
@@ -136,6 +162,7 @@ export async function ingestChatEnvelope(opts: {
     case "basic.wallet.chat.payment_receipt": {
       // Peer's "out" is our "in" and vice versa.
       const direction = envelope.direction === "out" ? "in" : "out";
+      const fiatCaption = await freezeCaptionIfFiat(envelope.amountSats);
       insertChatMessage({
         contactId,
         kind: "payment",
@@ -147,6 +174,7 @@ export async function ingestChatEnvelope(opts: {
         requestId: envelope.relatedRequestId ?? null,
         nostrEventId: wrapEventId,
         createdAt: sentAt,
+        fiatCaption,
         bumpUnread: true,
       });
       if (envelope.relatedRequestId) {

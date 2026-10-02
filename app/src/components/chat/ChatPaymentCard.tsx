@@ -6,20 +6,33 @@ export function ChatPaymentCard({
   amountSats,
   memo,
   timeLabel,
+  primaryAmount,
+  secondaryAmount,
 }: {
   outgoing: boolean;
   amountSats: number;
   memo?: string | null;
   timeLabel?: string;
+  /** Viewer-mode primary (defaults to sats). */
+  primaryAmount?: string | null;
+  /** Optional secondary line (e.g. ≈ N sats for Fiat). */
+  secondaryAmount?: string | null;
 }) {
+  const primary =
+    primaryAmount?.trim() || `${amountSats.toLocaleString("en-US")} sats`;
+  const secondary = secondaryAmount?.trim() || null;
+
   return (
     <View style={[styles.card, outgoing ? styles.out : styles.in]}>
       <Text style={[styles.title, outgoing && styles.titleOut]}>
         {outgoing ? "You sent" : "You received"}
       </Text>
-      <Text style={[styles.amount, outgoing && styles.amountOut]}>
-        {amountSats.toLocaleString("en-US")} sats
-      </Text>
+      <Text style={[styles.amount, outgoing && styles.amountOut]}>{primary}</Text>
+      {secondary ? (
+        <Text style={[styles.secondary, outgoing && styles.secondaryOut]}>
+          {secondary}
+        </Text>
+      ) : null}
       {memo ? (
         <Text style={[styles.memo, outgoing && styles.memoOut]} numberOfLines={3}>
           {memo}
@@ -62,6 +75,13 @@ const styles = StyleSheet.create({
     color: colors.fg,
   },
   amountOut: { color: "#000" },
+  secondary: {
+    marginTop: 4,
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.caption,
+  },
+  secondaryOut: { color: "#555" },
   memo: {
     marginTop: 8,
     fontFamily: "JetBrainsMono_400Regular",

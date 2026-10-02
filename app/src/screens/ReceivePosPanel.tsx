@@ -132,8 +132,14 @@ export function ReceivePosPanel({
   variant?: "receive" | "chat-request" | "chat-send";
   /** Shown under title when variant is chat-request / chat-send. */
   contactLabel?: string;
-  /** Chat request/send confirm — amount in sats. */
-  onChatRequestConfirm?: (amountSats: number) => void | Promise<void>;
+  /**
+   * Chat request/send confirm — amount in sats.
+   * When Fiat Mode keypad, `meta.fiatDisplay` is the typed stable amount.
+   */
+  onChatRequestConfirm?: (
+    amountSats: number,
+    meta?: { fiatDisplay?: number },
+  ) => void | Promise<void>;
   chatRequestBusy?: boolean;
 }) {
   const insets = useSafeAreaInsets();
@@ -307,7 +313,7 @@ export function ReceivePosPanel({
             ? amountSats
             : satsFromFiatMinor(Math.round(d * 100), fiatCode, rate) ?? 0;
         if (!(sats > 0) || sats > MAX_POS_SATS) return;
-        void onChatRequestConfirm?.(sats);
+        void onChatRequestConfirm?.(sats, { fiatDisplay: d });
         return;
       }
       if (fiatRequestKind === "fiat" && onRequestBrlUri) {

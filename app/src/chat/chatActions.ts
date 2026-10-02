@@ -128,6 +128,8 @@ export async function sendPayRequest(opts: {
   memo?: string;
   asset: ChatAsset;
   preferredReceive?: { kind: "ark" | "bolt11" | "lnurl"; value?: string };
+  /** Frozen Fiat caption for requester history (local). */
+  fiatCaption?: string | null;
 }): Promise<{ messageId: string; requestId: string; status: "sent" | "pending_out" }> {
   if (!(opts.amountSats > 0)) throw new Error("Enter a positive amount.");
   if (!(await hasNostrIdentity())) {
@@ -163,6 +165,7 @@ export async function sendPayRequest(opts: {
     memo: envelope.memo ?? null,
     status: "pending",
     requestId,
+    fiatCaption: opts.fiatCaption ?? null,
     payToJson: opts.preferredReceive?.value
       ? JSON.stringify({
           kind: opts.preferredReceive.kind,

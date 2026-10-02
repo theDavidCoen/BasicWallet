@@ -111,6 +111,8 @@ export async function executeChatPay(opts: {
   hooks: ChatPayWalletHooks;
   /** Skip presence when caller already gated (should stay false for MVP honesty). */
   skipPresence?: boolean;
+  /** Frozen Fiat caption at send time (viewer history). */
+  fiatCaption?: string | null;
 }): Promise<{ txid: string; paymentId: string; address: string }> {
   const amount = Math.floor(opts.amountSats);
   if (!(amount > 0)) throw new Error("Enter a positive amount.");
@@ -177,6 +179,7 @@ export async function executeChatPay(opts: {
       status: "paid",
       paymentId,
       requestId: opts.requestId ?? null,
+      fiatCaption: opts.fiatCaption ?? null,
     });
 
     if (opts.requestId) {

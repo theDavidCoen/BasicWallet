@@ -37,6 +37,7 @@ import {
   fiatMinBaseSats,
   fiatStableForNetwork,
   isFiatModeSwapAvailable,
+  padSatsForDepixSwap,
   satsToFiatEstimate,
   stripFiatModeLabelSuffix,
 } from "./depixAssets";
@@ -103,8 +104,12 @@ type FiatModeContextValue = {
   applyLocalDepixReceive: (displayAmount: number) => void;
   /** After inbound sats while in fiat mode — swap to DePix (non-blocking job). */
   maybeAutoSwapInboundSats: (sats: number) => void;
-  /** Convert DePix → BTC then return; used by Send for sats destinations. */
-  convertDepixToSatsForPay: (satsNeeded: number) => Promise<void>;
+  /**
+   * Convert DePix/USDT → BTC for a sats pay.
+   * Targeted: only `satsNeeded` + fee pad (not full stable balance).
+   * Resolves with observed spendable sats after fill (or throws).
+   */
+  convertDepixToSatsForPay: (satsNeeded: number) => Promise<number>;
 };
 
 const FiatModeContext = createContext<FiatModeContextValue | null>(null);
@@ -172,6 +177,11 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const maxiBaselineReadyRef = useRef(false);
   /** True while any enter/exit/auto/pay job runs (incl. quiet auto-inbound). */
   const jobBusyRef = useRef(false);
+  /**
+   * After pay-convert, suppress auto-inbound so freshly converted sats are not
+   * immediately swapped back to stable before the user can send.
+   */
+  const suppressAutoInboundUntilRef = useRef(0);
 
   const networkId = getNetworkConfig().id;
   const walletId = selectedWallet?.kind === "arkade" ? selectedWallet.id : null;
@@ -668,6 +678,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
             await patchState({ pendingJob: null, lastSwapId: result.swapId });
             // Baseline will re-read after refresh (asset should be ~0).
             maxiBaselineReadyRef.current = false;
+          } else if (kind === "pay-convert") {
+            // Hold auto-inbound so pay sats are not immediately re-swapped.
+            suppressAutoInboundUntilRef.current = Date.now() + 120_000;
+            await patchState({ pendingJob: null, lastSwapId: result.swapId });
           } else {
             await patchState({ pendingJob: null, lastSwapId: result.swapId });
           }
@@ -841,6 +855,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const maybeAutoSwapInboundSats = useCallback(
     (sats: number) => {
       if (!state?.fiatMode || converting || jobBusyRef.current) return;
+      if (Date.now() < suppressAutoInboundUntilRef.current) {
+        console.warn("[basic] auto-inbound suppress (pay-convert hold)", { sats });
+        return;
+      }
       const minBase = fiatMinBaseSats(networkId);
       const reserve = DEFAULT_MIN_VTXO_SATS;
       // USDT/DePix receives land with a ~330 sat carrier. On Mutinynet
@@ -871,6 +889,11 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   // Ignore dust-sized deltas (asset carriers) — those are not BTC to convert.
   useEffect(() => {
     if (!state?.fiatMode || converting || jobBusyRef.current) {
+      lastSatsRef.current = balanceSats;
+      return;
+    }
+    if (Date.now() < suppressAutoInboundUntilRef.current) {
+      // Re-baseline during pay-convert hold so the convert delta is not queued.
       lastSatsRef.current = balanceSats;
       return;
     }
@@ -973,20 +996,133 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   ]);
 
   const convertDepixToSatsForPay = useCallback(
-    async (satsNeeded: number) => {
-      if (!(satsNeeded > 0)) return;
-      const display = depixDisplay ?? 0;
+    async (satsNeeded: number): Promise<number> => {
+      const need = Math.floor(satsNeeded);
+      if (!(need > 0)) return balanceSats ?? 0;
+
+      const preSats = balanceSats ?? 0;
+      if (preSats >= need) return preSats;
+
+      const display = depixDisplay ?? lastGoodDepixRef.current ?? 0;
       if (!(display > 0)) {
         throw new Error(
           `No ${fiatStableForNetwork(networkId).displayCode} balance to convert`,
         );
       }
-      const { depixDisplayToAtomic: toAtomic } = await import("./depixAssets");
-      const atomic = toAtomic(display, networkId);
-      await runJob("pay-convert", "depix-to-btc", atomic);
-      void satsNeeded;
+
+      let spot = btcBrl;
+      if (spot == null || !(spot > 0)) {
+        spot = await fetchFiatSpot(networkId);
+        if (spot != null && spot > 0) setBtcBrl(spot);
+      }
+
+      // Targeted convert: only enough stable for satsNeeded + fee pad (+ small drift).
+      let atomic: bigint;
+      if (spot != null && spot > 0) {
+        const paddedSats = padSatsForDepixSwap(need, networkId);
+        const targetSats = Math.ceil(paddedSats * 1.03);
+        const displayNeeded =
+          Math.round(((targetSats / 100_000_000) * spot) * 100) / 100;
+        const giveDisplay =
+          displayNeeded > 0 && displayNeeded < display
+            ? displayNeeded
+            : display;
+        atomic = depixDisplayToAtomic(giveDisplay, networkId);
+        console.warn("[basic] pay-convert targeted", {
+          need,
+          paddedSats,
+          displayNeeded,
+          giveDisplay,
+          haveDisplay: display,
+          atomic: String(atomic),
+        });
+      } else {
+        // No spot — convert full balance (cannot target safely).
+        atomic = depixDisplayToAtomic(display, networkId);
+        console.warn("[basic] pay-convert full (no spot)", {
+          need,
+          display,
+          atomic: String(atomic),
+        });
+      }
+
+      if (!(atomic > 0n)) {
+        throw new Error(
+          `No ${fiatStableForNetwork(networkId).displayCode} balance to convert`,
+        );
+      }
+
+      // Optimistic home floor so UI can proceed while ASP settles.
+      ensureBalanceAtLeast(preSats + need);
+      suppressAutoInboundUntilRef.current = Date.now() + 120_000;
+
+      const ok = await runJob("pay-convert", "depix-to-btc", atomic);
+      if (!ok) {
+        throw new Error("Conversion incomplete");
+      }
+
+      // Optimistic spend of converted stable (partial or full).
+      if (spot != null && spot > 0) {
+        const spentEst =
+          Math.round(((padSatsForDepixSwap(need, networkId) / 100_000_000) * spot) * 100) /
+          100;
+        if (spentEst > 0 && spentEst < display) {
+          applyLocalDepixSpend(spentEst);
+        } else {
+          applyLocalDepixSpend(display);
+        }
+      }
+
+      // Poll spendable with cancellable sleep (no Promise.race on watchers).
+      if (!wallet) {
+        lastSatsRef.current = preSats + need;
+        return preSats + need;
+      }
+      const deadline = Date.now() + 75_000;
+      let best = preSats;
+      while (Date.now() < deadline) {
+        try {
+          const raw = await wallet.getBalance();
+          const avail =
+            raw && typeof raw === "object" && typeof (raw as { available?: unknown }).available === "number"
+              ? Math.floor((raw as { available: number }).available)
+              : 0;
+          if (avail > best) best = avail;
+          if (avail >= need) {
+            ensureBalanceAtLeast(avail);
+            lastSatsRef.current = avail;
+            return avail;
+          }
+        } catch (e) {
+          console.warn("[basic] pay-convert balance poll failed", e);
+        }
+        await new Promise<void>((r) => setTimeout(r, 750));
+      }
+
+      // ASP slow: trust optimistic floor if convert filled.
+      if (best >= need) {
+        lastSatsRef.current = best;
+        return best;
+      }
+      ensureBalanceAtLeast(preSats + need);
+      lastSatsRef.current = preSats + need;
+      console.warn("[basic] pay-convert settle timeout; using optimistic floor", {
+        need,
+        best,
+        preSats,
+      });
+      return Math.max(best, preSats + need);
     },
-    [depixDisplay, runJob, networkId],
+    [
+      balanceSats,
+      depixDisplay,
+      btcBrl,
+      runJob,
+      networkId,
+      wallet,
+      ensureBalanceAtLeast,
+      applyLocalDepixSpend,
+    ],
   );
 
   // Clear "+ x sats pending" once live balance catches the exit target.

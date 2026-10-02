@@ -52,10 +52,17 @@ import {
   executeChatPay,
   resolveChatPayDestination,
 } from "../chat/executeChatPay";
+import { ensureSatsForPay } from "../chat/ensureSatsForPay";
+import {
+  formatChatAmountView,
+  freezeFiatCaptionFromSats,
+} from "../chat/formatChatAmount";
 import { getContact } from "../contacts/contactStore";
 import { contactDisplayName, contactInitials } from "../contacts/types";
 import { catchUpGiftWraps } from "../contacts/contactShareWatch";
 import { getNetworkConfig } from "../config/network";
+import { fetchFiatSpot, formatBrlDisplay, satsToFiatEstimate } from "../fiat/depixAssets";
+import { useFiatMode } from "../fiat/FiatModeProvider";
 import { hasNostrIdentity } from "../nostr/identityStore";
 import { useWallet } from "../wallet/WalletProvider";
 import { colors } from "../theme/colors";
@@ -88,13 +95,20 @@ export function ChatThreadScreen() {
     rotateReceiveAddress,
     bumpActivity,
   } = useWallet();
+  const {
+    fiatMode,
+    convertDepixToSatsForPay,
+    depixDisplay,
+  } = useFiatMode();
   const network = getNetworkConfig();
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [payBusyLabel, setPayBusyLabel] = useState<string | null>(null);
   const [hasIdentity, setHasIdentity] = useState(true);
   const [archived, setArchived] = useState(false);
+  const [spot, setSpot] = useState<number | null>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
 
   const name = contact ? contactDisplayName(contact) : "Unknown";
@@ -139,6 +153,21 @@ export function ChatThreadScreen() {
   useEffect(() => {
     void hasNostrIdentity().then(setHasIdentity);
   }, []);
+
+  useEffect(() => {
+    if (!fiatMode) {
+      setSpot(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const s = await fetchFiatSpot(network.id);
+      if (!cancelled) setSpot(s);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [fiatMode, network.id]);
 
   useFocusEffect(
     useCallback(() => {
@@ -257,18 +286,78 @@ export function ChatThreadScreen() {
     }
 
     const spendable = balance?.available ?? balanceSats;
+    const need = msg.amountSats;
+    const needConvert =
+      fiatMode && (spendable == null || spendable < need);
+
+    if (needConvert) {
+      if (!(depixDisplay != null && depixDisplay > 0)) {
+        Alert.alert(
+          "Insufficient balance",
+          "Not enough sats or stable balance to pay this request.",
+        );
+        return;
+      }
+      const est =
+        spot != null && spot > 0
+          ? satsToFiatEstimate(need, spot, network.id)
+          : null;
+      const approx =
+        est != null
+          ? formatBrlDisplay(est, { networkId: network.id })
+          : "stable balance";
+      Alert.alert(
+        "Convert to sats",
+        `Convert ~${approx} to sats, then pay ${need.toLocaleString("en-US")} sats? Fee applies.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Convert & pay",
+            onPress: () => void runPayRequest(msg, true),
+          },
+        ],
+      );
+      return;
+    }
+
+    await runPayRequest(msg, false);
+  }
+
+  async function runPayRequest(msg: ChatMessage, willConvert: boolean) {
+    if (!msg.requestId || !msg.amountSats) return;
+    if (!wallet || selectedWallet?.kind !== "arkade") return;
+
+    const spendable = balance?.available ?? balanceSats;
     setActionBusy(msg.requestId);
+    setPayBusyLabel(willConvert ? "Converting…" : null);
     try {
+      const ensured = await ensureSatsForPay({
+        satsNeeded: msg.amountSats,
+        spendable: spendable ?? null,
+        fiatMode,
+        depixDisplay,
+        networkId: network.id,
+        convertDepixToSatsForPay,
+      });
+      setPayBusyLabel(null);
+
+      let fiatCaption: string | null = null;
+      if (fiatMode) {
+        const s = spot ?? (await fetchFiatSpot(network.id));
+        fiatCaption = freezeFiatCaptionFromSats(msg.amountSats, s, network.id);
+      }
+
       await executeChatPay({
         contactId,
         amountSats: msg.amountSats,
         memo: msg.memo ?? undefined,
         requestId: msg.requestId,
+        fiatCaption,
         hooks: {
           wallet,
           walletId: selectedWallet.id,
           networkId: network.id,
-          spendable: spendable ?? null,
+          spendable: ensured.spendable ?? spendable ?? null,
           beginOutboundSend,
           endOutboundSend,
           applyLocalSpend,
@@ -280,6 +369,7 @@ export function ChatThreadScreen() {
       Alert.alert("Send failed", e instanceof Error ? e.message : "Unknown error");
     } finally {
       setActionBusy(null);
+      setPayBusyLabel(null);
     }
   }
 
@@ -397,16 +487,32 @@ export function ChatThreadScreen() {
               );
             }
             if (item.kind === "payment" && item.amountSats != null) {
+              const view = formatChatAmountView({
+                amountSats: item.amountSats,
+                viewerFiatMode: fiatMode,
+                networkId: network.id,
+                fiatCaption: item.fiatCaption,
+                spot,
+              });
               return (
                 <ChatPaymentCard
                   outgoing={outgoing}
                   amountSats={item.amountSats}
                   memo={item.memo}
                   timeLabel={time}
+                  primaryAmount={view.primary}
+                  secondaryAmount={view.secondary}
                 />
               );
             }
             if (item.kind === "request" && item.amountSats != null) {
+              const view = formatChatAmountView({
+                amountSats: item.amountSats,
+                viewerFiatMode: fiatMode,
+                networkId: network.id,
+                fiatCaption: item.fiatCaption,
+                spot,
+              });
               return (
                 <ChatRequestCard
                   outgoing={outgoing}
@@ -415,10 +521,15 @@ export function ChatThreadScreen() {
                   status={item.status}
                   timeLabel={time}
                   busy={actionBusy === item.requestId}
+                  busyLabel={
+                    actionBusy === item.requestId ? payBusyLabel : null
+                  }
+                  primaryAmount={view.primary}
+                  secondaryAmount={view.secondary}
                   onDecline={() =>
                     item.requestId ? void onDecline(item.requestId) : undefined
                   }
-                  onPay={() => onPayRequest(item)}
+                  onPay={() => void onPayRequest(item)}
                 />
               );
             }
