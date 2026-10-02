@@ -205,8 +205,7 @@ export async function ingestChatEnvelope(opts: {
         fiatCaption = await freezeCaptionIfFiat(envelope.amountSats);
         status = "paid";
       }
-      // α74: one bubble per payment — merge by paymentId, then amount (Ark notify /
-      // optimistic pending receipt + real receipt must not duplicate).
+      // One bubble per payment — merge by paymentId, else same amount in window (α77).
       if (direction === "in" && envelope.amountSats > 0) {
         const abs = Math.floor(envelope.amountSats);
         const byPid = envelope.paymentId
@@ -217,10 +216,8 @@ export async function ingestChatEnvelope(opts: {
           abs,
           90_000,
         );
-        // Merge: same paymentId, or Ark-notify placeholder still awaiting receipt.
-        const recent =
-          byPid ??
-          (recentAmt && !recentAmt.nostrEventId ? recentAmt : null);
+        // Always merge recent same-amount inbound (notify placeholder OR prior receipt).
+        const recent = byPid ?? recentAmt;
         if (recent) {
           updateChatMessage(recent.id, {
             status,

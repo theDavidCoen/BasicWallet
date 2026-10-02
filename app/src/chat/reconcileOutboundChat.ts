@@ -75,17 +75,18 @@ export function reconcileOutboundChatPayments(opts: {
     // Avoid claiming a still-in-flight convert as paid without activity evidence.
     if (m.status === "converting" && !hit) continue;
 
-    const wasFailed = m.status === "failed";
+    const was = m.status;
     updateChatMessage(m.id, { status: "paid" });
     n += 1;
     console.warn("[basic] reconcile outbound chat → paid", {
       id: m.id.slice(0, 12),
       amount: m.amountSats,
-      was: m.status,
+      was,
       via: hit ? "activity" : "pending-stamp",
     });
 
-    if (wasFailed && opts.republishReceipt !== false && m.paymentId) {
+    // Stuck Sending never published a receipt — peer may only have Ark notify (α77).
+    if (opts.republishReceipt !== false && m.paymentId) {
       void publishPaymentReceipt({
         contactId: m.contactId,
         paymentId: m.paymentId,

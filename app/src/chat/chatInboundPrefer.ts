@@ -1,6 +1,6 @@
 /**
  * Chat & Pay inbound must never use the classic Funds Received overlay.
- * Suppress-first when chat context exists; only allow classic after race fails (α71).
+ * Suppress only with positive chat evidence — never forever on mere chat history (α77).
  */
 
 import { catchUpGiftWraps } from "../contacts/contactShareWatch";
@@ -23,7 +23,7 @@ type ReceiptHint = { amountSats: number; contactId: string; at: number };
 
 const recentReceiptHints: ReceiptHint[] = [];
 const RECEIPT_HINT_TTL_MS = 5 * 60_000;
-/** Brief wait for gift-wrap when no hot-thread bubble yet (α72). */
+/** Brief wait for gift-wrap when racing classic vs chat (α71). */
 const CHAT_RACE_MS = 3_500;
 
 /** amountSats → defer-until ms (persistBalance must not toast mid-race). */
@@ -45,8 +45,8 @@ function allThreads() {
 }
 
 /**
- * True when Pay in Chat is in use — classic arkade toast must defer to chat race.
- * (Active threads, unread, or recent messages.)
+ * True when Pay in Chat is in use — classic arkade toast may briefly race chat.
+ * Must NOT alone suppress classic Receive forever (α77).
  */
 export function hasChatPayContext(): boolean {
   try {
@@ -171,10 +171,10 @@ function hasRecentInboundPaymentBubble(
   );
 }
 
-/** Sync claim so Ark notify + gift-wrap cannot both insert the same amount (α74). */
+/** Sync claim so Ark notify + gift-wrap cannot both insert the same amount. */
 const inboundBubbleClaims = new Map<string, number>();
-/** Short race window only — two real 500-sat pays minutes apart must both show. */
-const INBOUND_CLAIM_TTL_MS = 20_000;
+/** Longer than α74 — same chat pay can race notify/receipt across ~1 min. */
+const INBOUND_CLAIM_TTL_MS = 90_000;
 
 function inboundClaimKey(contactId: string, amountSats: number): string {
   return `${contactId}:${Math.floor(amountSats)}`;
@@ -186,9 +186,9 @@ function tryClaimInboundBubble(contactId: string, amountSats: number): boolean {
   for (const [k, at] of inboundBubbleClaims) {
     if (now - at > INBOUND_CLAIM_TTL_MS) inboundBubbleClaims.delete(k);
   }
-  // Placeholder from Ark notify (no receipt yet) — merge, don't duplicate.
+  // Any recent inbound of this amount — merge, never a second bubble (α77).
   const existing = findRecentInboundPaymentByAmount(contactId, amountSats, 90_000);
-  if (existing && !existing.nostrEventId) {
+  if (existing) {
     inboundBubbleClaims.set(key, now);
     return false;
   }
@@ -210,6 +210,27 @@ export function ensureChatInboundBubble(opts: {
 }): boolean {
   const abs = Math.floor(opts.amountSats);
   if (!opts.contactId || !(abs > 0)) return false;
+  const existing = findRecentInboundPaymentByAmount(opts.contactId, abs, 90_000);
+  if (existing) {
+    // Upgrade placeholder / fill paymentId — do not insert a duplicate.
+    if (
+      opts.paymentId?.trim() &&
+      opts.paymentId.trim() !== existing.paymentId
+    ) {
+      updateChatMessage(existing.id, {
+        paymentId: opts.paymentId.trim(),
+        status: opts.status ?? existing.status ?? "paid",
+      });
+    } else if (opts.status && opts.status !== existing.status) {
+      updateChatMessage(existing.id, { status: opts.status });
+    }
+    if (opts.requestId) {
+      const req = findMessageByRequestId(opts.contactId, opts.requestId);
+      if (req) updateChatMessage(req.id, { status: "paid" });
+    }
+    noteChatInboundReceiptHint(opts.contactId, abs);
+    return true;
+  }
   if (!tryClaimInboundBubble(opts.contactId, abs)) {
     noteChatInboundReceiptHint(opts.contactId, abs);
     return true;
@@ -239,10 +260,10 @@ export function ensureChatInboundBubble(opts: {
 
 /**
  * Hard rule: chat-originated inbound → chat UX only, never classic overlay.
- * Suppress-first race so Ark-before-giftwrap never flashes classic (α71).
+ * Race briefly for gift-wrap; if no chat evidence, allow classic (α77).
  *
- * @param opts.forceClassicOk — POS/Receive awaiting payment may fall through to
- *   classic after the race if there is no chat match (do not hold forever).
+ * @param opts.forceClassicOk — Receive/POS awaiting payment: skip inventing
+ *   focused-thread bubbles; fall through to classic when unmatched.
  */
 export async function preferChatInboundOverClassic(
   amountSats: number,
@@ -252,27 +273,6 @@ export async function preferChatInboundOverClassic(
   if (!(abs > 0)) return false;
 
   beginClassicChatDefer(abs);
-
-  // ChatThread open: show You received immediately on this contact (α72).
-  if (isChatThreadFocused()) {
-    const focused = getFocusedChatContactId();
-    const open = findOpenPayRequestForAmount(abs);
-    if (open) {
-      ensureChatInboundBubble({
-        contactId: open.contactId,
-        amountSats: abs,
-        requestId: open.requestId,
-        status: "paid",
-      });
-    } else if (focused) {
-      ensureChatInboundBubble({
-        contactId: focused,
-        amountSats: abs,
-        status: "paid",
-      });
-    }
-    return true;
-  }
 
   const open = findOpenPayRequestForAmount(abs);
   if (open) {
@@ -284,14 +284,24 @@ export async function preferChatInboundOverClassic(
     });
   }
 
+  // Chat thread open: bubble on this contact — unless Receive/POS is waiting
+  // (classic inbound must not be swallowed into the open chat — α77).
+  if (isChatThreadFocused() && !opts?.forceClassicOk) {
+    const focused = getFocusedChatContactId();
+    if (focused) {
+      ensureChatInboundBubble({
+        contactId: focused,
+        amountSats: abs,
+        status: "paid",
+      });
+    }
+    return true;
+  }
+
   if (peekChatInboundReceiptHint(abs, 120_000)) {
     console.warn("[basic] fundsNotice suppressed (chat receipt hint)", abs);
     return true;
   }
-
-  // α75: do NOT invent a bubble on the "hottest" contact. That created ghost
-  // You received rows (and made chat history disagree with Home). Hold classic
-  // while chat context is live; catch-up / receipt owns the real bubble.
 
   const started = Date.now();
   try {
@@ -325,13 +335,11 @@ export async function preferChatInboundOverClassic(
     }
   }
 
-  // Pay in Chat in use: hold classic — receipt/live wrap will own the bubble.
-  // POS/Receive (forceClassicOk) may still show classic after a failed match.
-  if (hasChatPayContext() && !opts?.forceClassicOk) {
-    console.warn("[basic] fundsNotice suppressed (chat context hold)", abs);
-    return true;
+  // α77: no forever hold on hasChatPayContext. Unmatched → classic OK
+  // (Receive scene, POS, or Home toast).
+  if (opts?.forceClassicOk) {
+    console.warn("[basic] fundsNotice classic OK (receive/POS awaiting)", abs);
   }
-
   return false;
 }
 

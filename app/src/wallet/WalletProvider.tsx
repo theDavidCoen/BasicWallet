@@ -753,15 +753,20 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       console.warn("[basic] fundsNotice suppressed (chat thread)", kind, amount);
       return "busy";
     }
-    // α71: persistBalance / notify both hit emitFundsNotice. Suppress-first when
-    // chat context or an in-flight chat race — never flash classic mid-race.
+    // α71/α77: brief chat race when chat context or defer pending. Receive/POS
+    // (bypassSendSuppress) forces classic if no positive chat evidence.
     if (
       kind === "arkade" &&
       !opts?.afterChatPrefer &&
-      (isClassicChatDeferPending(amount) || hasChatPayContext())
+      (isClassicChatDeferPending(amount) ||
+        hasChatPayContext() ||
+        !!opts?.bypassSendSuppress)
     ) {
       beginClassicChatDefer(amount);
-      const forceClassicOk = !!opts?.bypassSendSuppress;
+      const forceClassicOk =
+        !!opts?.bypassSendSuppress ||
+        posUiHoldRef.current > 0 ||
+        incomingWatchBoostRef.current > 0;
       void (async () => {
         let chatOnly = false;
         try {
@@ -778,7 +783,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           return;
         }
         emitFundsNotice(amount, kind, {
-          bypassSendSuppress: opts?.bypassSendSuppress,
+          bypassSendSuppress: opts?.bypassSendSuppress || forceClassicOk,
           afterChatPrefer: true,
         });
       })();

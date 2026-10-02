@@ -178,9 +178,13 @@ async function proveSpendDropped(
   payAmount: number,
 ): Promise<boolean> {
   if (prevAvailable == null || !(prevAvailable > 0)) return false;
-  const avail = await readSpendableAvailable(wallet, { timeoutMs: 5_000 });
-  if (avail == null) return false;
-  return avail <= prevAvailable - payAmount + 1;
+  // Xiaomi often times out short vtxo reads during ASP pause — retry (α77).
+  for (const ms of [5_000, 10_000]) {
+    const avail = await readSpendableAvailable(wallet, { timeoutMs: ms });
+    if (avail == null) continue;
+    if (avail <= prevAvailable - payAmount + 1) return true;
+  }
+  return false;
 }
 
 export async function executeChatPay(opts: {
@@ -258,6 +262,7 @@ export async function executeChatPay(opts: {
   let payAmount = amount;
   let prevAvailable: number | null = opts.hooks.spendable;
   let sendStarted = false;
+  let settledTxid: string | null = null;
   try {
     const dust = await readMinVtxoSats(wallet);
     if (amount < dust) {
@@ -298,16 +303,44 @@ export async function executeChatPay(opts: {
     );
 
     sendStarted = true;
+    const markPaid = (txid: string, skipReceipt?: boolean) => {
+      if (settledTxid) {
+        if (txid && !txid.startsWith("pending:") && opts.localMessageId) {
+          // Upgrade pending → real txid without a second receipt.
+          if (txid !== settledTxid) {
+            recordSentFromThisDevice(networkId, walletId, txid);
+          }
+        }
+        return;
+      }
+      settledTxid = txid;
+      finalizeChatPayPaid({
+        contactId: opts.contactId,
+        amountSats: payAmount,
+        memo: opts.memo,
+        requestId: opts.requestId,
+        fiatCaption: opts.fiatCaption,
+        localMessageId: opts.localMessageId,
+        paymentId,
+        txid,
+        applyLocalSpend: opts.hooks.applyLocalSpend,
+        bumpActivity: opts.hooks.bumpActivity,
+        networkId,
+        walletId,
+        skipReceipt,
+      });
+    };
+
     const { txid } = await waitForSendOrSpendDrop(wallet, {
       recipients,
       selectedVtxos: plan.selectedVtxos,
       prevAvailable,
-      timeoutMs: 120_000,
+      timeoutMs: 90_000,
       spendDropStartMs: 0,
-      spendPollMs: 800,
+      spendPollMs: 600,
       spendHitsRequired: 1,
       txidGraceMs: 400,
-      spendReadTimeoutMs: 4_000,
+      spendReadTimeoutMs: 5_000,
       onRealTxid: (real) => {
         if (real && !real.startsWith("pending:")) {
           recordSentFromThisDevice(networkId, walletId, real);
@@ -318,39 +351,24 @@ export async function executeChatPay(opts: {
           ? getChatMessage(opts.localMessageId)
           : null;
         if (msg?.status === "paid") return;
-        finalizeChatPayPaid({
-          contactId: opts.contactId,
-          amountSats: payAmount,
-          memo: opts.memo,
-          requestId: opts.requestId,
-          fiatCaption: opts.fiatCaption,
-          localMessageId: opts.localMessageId,
-          paymentId,
-          txid: r.txid,
-          applyLocalSpend: opts.hooks.applyLocalSpend,
-          bumpActivity: opts.hooks.bumpActivity,
-          networkId,
-          walletId,
-        });
+        markPaid(r.txid);
       },
     });
 
-    finalizeChatPayPaid({
-      contactId: opts.contactId,
-      amountSats: payAmount,
-      memo: opts.memo,
-      requestId: opts.requestId,
-      fiatCaption: opts.fiatCaption,
-      localMessageId: opts.localMessageId,
-      paymentId,
-      txid,
-      applyLocalSpend: opts.hooks.applyLocalSpend,
-      bumpActivity: opts.hooks.bumpActivity,
-      networkId,
-      walletId,
-    });
-    return { txid, paymentId, address: dest.address };
+    markPaid(txid);
+    return { txid: settledTxid ?? txid, paymentId, address: dest.address };
   } catch (e) {
+    if (opts.localMessageId) {
+      const already = getChatMessage(opts.localMessageId);
+      if (already?.status === "paid") {
+        return {
+          txid: settledTxid ?? `pending:${Date.now()}`,
+          paymentId,
+          address: dest.address,
+        };
+      }
+    }
+
     const recovered = findAlreadySettledOutbound({
       networkId,
       walletId,

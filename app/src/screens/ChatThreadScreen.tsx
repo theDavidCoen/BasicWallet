@@ -162,6 +162,36 @@ export function ChatThreadScreen() {
     };
   }, [reloadLight, selectedWallet?.id, network.id]);
 
+  // α77: while Sending/Converting, poll reconcile so ASP settle flips You sent
+  // even when wallet.send hangs (Xiaomi).
+  useEffect(() => {
+    if (!selectedWallet?.id) return;
+    const pending = messages.some(
+      (m) =>
+        m.kind === "payment" &&
+        m.direction === "out" &&
+        (m.status === "sending" || m.status === "converting"),
+    );
+    if (!pending) return;
+    const tick = () => {
+      try {
+        const n = reconcileOutboundChatPayments({
+          networkId: network.id,
+          walletId: selectedWallet.id,
+          republishReceipt: true,
+        });
+        if (n > 0) {
+          setMessages(listChatMessages(contactId));
+        }
+      } catch (e) {
+        console.warn("[basic] chat sending reconcile tick failed", e);
+      }
+    };
+    tick();
+    const t = setInterval(tick, 2_000);
+    return () => clearInterval(t);
+  }, [messages, selectedWallet?.id, network.id, contactId]);
+
   useEffect(() => {
     return subscribeChatStore(() => {
       startTransition(() => {

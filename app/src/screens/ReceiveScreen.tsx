@@ -69,6 +69,7 @@ export function ReceiveScreen() {
     refreshBalanceOnly,
     bumpActivity,
     setPosUiHold,
+    setIncomingWatchBoost,
   } = useWallet();
   const { fiatMode, depixDisplay } = useFiatMode();
   const network = getNetworkConfig();
@@ -85,6 +86,12 @@ export function ReceiveScreen() {
     setMode(fiatMode ? "brl" : "bip21");
     if (!fiatMode) setClassicOpen(false);
   }, [fiatMode]);
+
+  // Whole Receive scene awaits inbound — chat prefer must not swallow classic (α77).
+  useEffect(() => {
+    setIncomingWatchBoost(true);
+    return () => setIncomingWatchBoost(false);
+  }, [setIncomingWatchBoost]);
 
   useEffect(() => {
     const hold = fiatMode ? classicOpen : posOpen;
