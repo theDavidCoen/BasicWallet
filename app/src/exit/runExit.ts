@@ -7,7 +7,7 @@ import {
   Ramps,
   UnilateralExit,
   Unroll,
-  hasTerminalSpend,
+  isVtxoSpent,
   isBtcAddress,
   type ExitPackage,
   type ExitQuote,
@@ -216,7 +216,7 @@ type UnrolledVtxoRow = {
 type OutspendRow = { spent: boolean; txid?: string };
 
 /**
- * SDK `canSweepOnchain` only checks isUnrolled + !hasTerminalSpend — the local
+ * SDK `canSweepOnchain` only checks isUnrolled + !isVtxoSpent — the local
  * cache often still lists already-swept leaves. Confirm each outpoint is
  * unspent on Esplora before counting or sweeping.
  */
@@ -300,7 +300,7 @@ export async function listUnrolledSweepableVtxos(
     for (const v of list) {
       if (!v.isUnrolled) continue;
       try {
-        if (hasTerminalSpend(v as never)) continue;
+        if (isVtxoSpent(v as never)) continue;
       } catch {
         /* treat unknown shape as candidate; chain check decides */
       }

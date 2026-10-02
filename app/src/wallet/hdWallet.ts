@@ -18,7 +18,7 @@ import {
 } from "../arkade/delegateSettings";
 import { loadMnemonicForCrypto, storeMnemonic } from "../security/mnemonicStore";
 import { MUTINYNET_ARK_INFO_SNAPSHOT } from "./mutinynetArkInfoSeed";
-import { ensurePersistentStorageReady } from "./persistentStorage";
+import { getPersistentStorage } from "./persistentStorage";
 
 export type BasicWallet = Awaited<ReturnType<typeof Wallet.create>>;
 
@@ -178,7 +178,7 @@ async function createHdWalletEngine(
   }
 
   const network = getNetworkConfig();
-  const storage = await ensurePersistentStorageReady(network.id, walletId);
+  const storage = getPersistentStorage(network.id, walletId);
 
   await Promise.all([
     storage.walletRepository.getWalletState().catch(() => null),
