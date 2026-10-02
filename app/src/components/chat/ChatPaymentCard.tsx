@@ -5,8 +5,15 @@ import { colors } from "../../theme/colors";
 function paymentTitle(
   outgoing: boolean,
   status: ChatMessageStatus | null | undefined,
+  receivingLabel?: string | null,
 ): string {
-  if (!outgoing) return "You received";
+  if (!outgoing) {
+    if (status === "arriving") {
+      return receivingLabel?.trim() || "You are receiving…";
+    }
+    if (status === "converting") return "Converting…";
+    return "You received";
+  }
   if (status === "converting") return "Converting…";
   if (status === "sending" || status === "pending" || status === "pending_out") {
     return "Sending…";
@@ -23,6 +30,8 @@ export function ChatPaymentCard({
   status,
   primaryAmount,
   secondaryAmount,
+  receivingLabel,
+  hideAmount,
 }: {
   outgoing: boolean;
   amountSats: number;
@@ -33,18 +42,26 @@ export function ChatPaymentCard({
   primaryAmount?: string | null;
   /** Optional secondary line (e.g. ≈ N sats for Fiat). */
   secondaryAmount?: string | null;
+  /** Fiat inbound pending title, e.g. "You are receiving R$". */
+  receivingLabel?: string | null;
+  /** Hide amount while inbound Fiat is arriving/converting. */
+  hideAmount?: boolean;
 }) {
   const primary =
     primaryAmount?.trim() || `${amountSats.toLocaleString("en-US")} sats`;
   const secondary = secondaryAmount?.trim() || null;
-  const title = paymentTitle(outgoing, status);
+  const title = paymentTitle(outgoing, status, receivingLabel);
+  const inboundPending =
+    !outgoing && (status === "arriving" || status === "converting");
   const inFlight =
-    outgoing &&
-    (status === "converting" ||
-      status === "sending" ||
-      status === "pending" ||
-      status === "pending_out");
+    inboundPending ||
+    (outgoing &&
+      (status === "converting" ||
+        status === "sending" ||
+        status === "pending" ||
+        status === "pending_out"));
   const failed = outgoing && status === "failed";
+  const showAmount = !hideAmount && !inboundPending;
 
   return (
     <View style={[styles.card, outgoing ? styles.out : styles.in]}>
@@ -58,8 +75,10 @@ export function ChatPaymentCard({
       >
         {title}
       </Text>
-      <Text style={[styles.amount, outgoing && styles.amountOut]}>{primary}</Text>
-      {secondary ? (
+      {showAmount ? (
+        <Text style={[styles.amount, outgoing && styles.amountOut]}>{primary}</Text>
+      ) : null}
+      {showAmount && secondary ? (
         <Text style={[styles.secondary, outgoing && styles.secondaryOut]}>
           {secondary}
         </Text>

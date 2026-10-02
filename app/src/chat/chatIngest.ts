@@ -8,6 +8,10 @@ import { getSelectedWalletId } from "../account/walletRegistry";
 import { fetchFiatSpot } from "../fiat/depixAssets";
 import { readFiatModeState } from "../fiat/fiatModeStore";
 import {
+  consumeRecentInboundFiatSettle,
+  isAutoInboundBusy,
+} from "./chatInboundFiat";
+import {
   findContactIdByPeerPubkey,
   silentlyUpsertContactArkFromChat,
 } from "./contactPeer";
@@ -162,14 +166,46 @@ export async function ingestChatEnvelope(opts: {
     case "basic.wallet.chat.payment_receipt": {
       // Peer's "out" is our "in" and vice versa.
       const direction = envelope.direction === "out" ? "in" : "out";
-      const fiatCaption = await freezeCaptionIfFiat(envelope.amountSats);
+      let fiatCaption: string | null = null;
+      let status: "paid" | "arriving" | "converting" = "paid";
+      if (direction === "in") {
+        // Fiat Mode: never freeze theoretical pre-fee sats→fiat. Show
+        // arriving/converting without amount until auto-inbound settles.
+        try {
+          const networkId = getNetworkConfig().id;
+          const walletId = getSelectedWalletId(networkId);
+          const state = walletId
+            ? await readFiatModeState(networkId, walletId)
+            : null;
+          if (state?.fiatMode) {
+            const settled = consumeRecentInboundFiatSettle();
+            if (settled) {
+              fiatCaption = settled;
+              status = "paid";
+            } else {
+              fiatCaption = null;
+              status = isAutoInboundBusy() ? "converting" : "arriving";
+            }
+          } else {
+            fiatCaption = await freezeCaptionIfFiat(envelope.amountSats);
+            status = "paid";
+          }
+        } catch (e) {
+          console.warn("[basic] chat ingest inbound fiat status failed", e);
+          fiatCaption = null;
+          status = "paid";
+        }
+      } else {
+        fiatCaption = await freezeCaptionIfFiat(envelope.amountSats);
+        status = "paid";
+      }
       insertChatMessage({
         contactId,
         kind: "payment",
         direction,
         amountSats: envelope.amountSats,
         memo: envelope.memo ?? null,
-        status: "paid",
+        status,
         paymentId: envelope.paymentId,
         requestId: envelope.relatedRequestId ?? null,
         nostrEventId: wrapEventId,

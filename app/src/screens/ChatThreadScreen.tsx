@@ -56,6 +56,7 @@ import {
   resolveChatPayDestination,
 } from "../chat/executeChatPay";
 import { ensureSatsForPay } from "../chat/ensureSatsForPay";
+import { receivingFiatTitle } from "../chat/chatInboundFiat";
 import {
   formatChatAmountView,
   freezeFiatCaptionFromSats,
@@ -514,6 +515,9 @@ export function ChatThreadScreen() {
               );
             }
             if (item.kind === "payment" && item.amountSats != null) {
+              const inboundPending =
+                !outgoing &&
+                (item.status === "arriving" || item.status === "converting");
               const view = formatChatAmountView({
                 amountSats: item.amountSats,
                 viewerFiatMode: fiatMode,
@@ -528,8 +532,12 @@ export function ChatThreadScreen() {
                   memo={item.memo}
                   timeLabel={time}
                   status={item.status}
-                  primaryAmount={view.primary}
-                  secondaryAmount={view.secondary}
+                  primaryAmount={inboundPending ? null : view.primary}
+                  secondaryAmount={inboundPending ? null : view.secondary}
+                  receivingLabel={
+                    inboundPending ? receivingFiatTitle(network.id) : null
+                  }
+                  hideAmount={inboundPending}
                 />
               );
             }

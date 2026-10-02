@@ -207,6 +207,26 @@ export function findMessageByRequestId(
   return row ? rowToMessage(row) : null;
 }
 
+/** Recent inbound payment cards in the given statuses (oldest last). */
+export function listInboundPaymentsByStatus(
+  statuses: ChatMessageStatus[],
+  newerThanMs = 30 * 60_000,
+): ChatMessage[] {
+  if (statuses.length === 0) return [];
+  const since = Date.now() - Math.max(0, newerThanMs);
+  const placeholders = statuses.map(() => "?").join(", ");
+  const rows = db().getAllSync<MessageRow>(
+    `SELECT * FROM chat_message
+     WHERE kind = 'payment' AND direction = 'in'
+       AND status IN (${placeholders})
+       AND created_at >= ?
+     ORDER BY created_at ASC
+     LIMIT 20`,
+    [...statuses, since],
+  );
+  return rows.map(rowToMessage);
+}
+
 export type InsertChatMessageInput = {
   id?: string;
   contactId: string;

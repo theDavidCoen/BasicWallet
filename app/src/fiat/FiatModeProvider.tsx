@@ -23,6 +23,13 @@ import {
 } from "react";
 import { Alert } from "react-native";
 import type { IWallet } from "@arkade-os/sdk";
+import { recordOptimisticArkadeReceive } from "../account/activityStore";
+import {
+  markChatInboundFiatConverting,
+  revertChatInboundFiatConverting,
+  setAutoInboundBusy,
+  settleChatInboundFiatPaid,
+} from "../chat/chatInboundFiat";
 import { getNetworkConfig } from "../config/network";
 import { DEFAULT_MIN_VTXO_SATS } from "../wallet/arkMultiSend";
 import { getOpenWalletMode } from "../wallet/hdWallet";
@@ -36,6 +43,7 @@ import {
   fiatFeeBps,
   fiatMinBaseSats,
   fiatStableForNetwork,
+  formatBrlDisplay,
   isFiatModeSwapAvailable,
   padSatsForDepixSwap,
   satsToFiatEstimate,
@@ -150,6 +158,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     endOutboundSend,
     reopenWithWalletMode,
     ensureBalanceAtLeast,
+    bumpActivity,
   } = useWallet();
 
   const [state, setState] = useState<FiatModeState | null>(null);
@@ -187,6 +196,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
    * immediately swapped back to stable before the user can send.
    */
   const suppressAutoInboundUntilRef = useRef(0);
+  /** Sats delta that triggered the current auto-inbound job (for chat match). */
+  const autoInboundSatsRef = useRef(0);
+  /** Designated-asset atomic baseline before auto-inbound fill. */
+  const autoInboundBaselineRef = useRef<bigint | null>(null);
 
   const networkId = getNetworkConfig().id;
   const walletId = selectedWallet?.kind === "arkade" ? selectedWallet.id : null;
@@ -564,6 +577,31 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         console.warn("[basic] fiat quiet job start", kind, String(amount));
       }
 
+      // Auto-inbound: quiet BRL notices *before* fill notify, baseline asset for
+      // Activity/chat delta (never record full consolidated balance as receive).
+      if (kind === "auto-inbound") {
+        quietFiatEnterNotices(90_000);
+        setAutoInboundBusy(true);
+        markChatInboundFiatConverting();
+        autoInboundBaselineRef.current = null;
+        try {
+          const raw = await wallet.getBalance();
+          autoInboundBaselineRef.current = readDepixAtomicFromBalance(
+            raw,
+            depixAssetIdForNetwork(networkId),
+          );
+        } catch {
+          const d =
+            lastGoodDepixRef.current ?? lastDepixRef.current ?? depixDisplay ?? 0;
+          autoInboundBaselineRef.current =
+            d > 0 ? depixDisplayToAtomic(d, networkId) : 0n;
+        }
+        console.warn("[basic] auto-inbound baseline", {
+          atomic: String(autoInboundBaselineRef.current ?? 0n),
+          inboundSats: autoInboundSatsRef.current,
+        });
+      }
+
       // Seed Enter pending ASAP (before fill) so Home never lands on bare `…`.
       if (kind === "enter" && !quiet) {
         const giveSats = Number(amount);
@@ -678,8 +716,59 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
               pendingEnterDisplay: null,
             });
           } else if (kind === "auto-inbound") {
-            // Quiet fill — no Enter CONVERTING UI, no BRL toast for swap itself.
-            quietFiatEnterNotices(45_000);
+            // Keep quiet through settle notify; record *delta* not full balance.
+            quietFiatEnterNotices(60_000);
+            let takeAtomic =
+              result.takeAmount != null && result.takeAmount > 0n
+                ? result.takeAmount
+                : null;
+            if (takeAtomic == null) {
+              try {
+                const raw = await wallet.getBalance();
+                const live = readDepixAtomicFromBalance(
+                  raw,
+                  depixAssetIdForNetwork(networkId),
+                );
+                const base = autoInboundBaselineRef.current ?? 0n;
+                if (live > base) takeAtomic = live - base;
+              } catch (e) {
+                console.warn("[basic] auto-inbound take delta failed", e);
+              }
+            }
+            if (takeAtomic != null && takeAtomic > 0n) {
+              const display = depixAtomicToDisplay(takeAtomic, networkId);
+              if (display >= 0.01) {
+                applyLocalDepixReceive(display);
+                const caption = formatBrlDisplay(display, { networkId });
+                try {
+                  recordOptimisticArkadeReceive(networkId, walletId, {
+                    amountSats: 0,
+                    assets: [
+                      {
+                        assetId: depixAssetIdForNetwork(networkId),
+                        amount: takeAtomic,
+                      },
+                    ],
+                  });
+                  bumpActivity();
+                } catch (e) {
+                  console.warn("[basic] auto-inbound activity record failed", e);
+                }
+                settleChatInboundFiatPaid(caption, {
+                  inboundSats: autoInboundSatsRef.current,
+                });
+                console.warn("[basic] auto-inbound settled receive", {
+                  display,
+                  takeAtomic: String(takeAtomic),
+                  inboundSats: autoInboundSatsRef.current,
+                });
+              }
+            } else {
+              console.warn("[basic] auto-inbound fill without take delta", {
+                takeAmount: result.takeAmount != null ? String(result.takeAmount) : null,
+              });
+            }
+            autoInboundBaselineRef.current = null;
             await patchState({ pendingJob: null, lastSwapId: result.swapId });
           } else if (kind === "maxi-inbound") {
             // Asset → sats: allow sats Funds Received after settle; no asset toast.
@@ -740,6 +829,12 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       } finally {
         endOutboundSend();
         jobBusyRef.current = false;
+        if (kind === "auto-inbound") {
+          setAutoInboundBusy(false);
+          autoInboundBaselineRef.current = null;
+          // Success path settles to paid; on failure leave cards as arriving.
+          revertChatInboundFiatConverting();
+        }
         if (!quiet) {
           setConverting(false);
           setConvertingMessage("");
@@ -764,6 +859,8 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       state?.fiatMode,
       ensureBalanceAtLeast,
       setEnterPending,
+      applyLocalDepixReceive,
+      bumpActivity,
     ],
   );
 
@@ -891,6 +988,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         return;
       }
       const swap = sats - reserve;
+      autoInboundSatsRef.current = Math.floor(sats);
       // Quiet background — never Enter CONVERTING modal.
       void runJob("auto-inbound", "btc-to-depix", BigInt(Math.floor(swap)), {
         quiet: true,
