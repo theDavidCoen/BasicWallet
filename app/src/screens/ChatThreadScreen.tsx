@@ -103,7 +103,6 @@ export function ChatThreadScreen() {
     applyLocalSpend,
     rotateReceiveAddress,
     bumpActivity,
-    refreshActivity,
   } = useWallet();
   const {
     fiatMode,
@@ -205,8 +204,7 @@ export function ChatThreadScreen() {
           setMessages(listChatMessages(contactId));
           clearThreadUnread(contactId);
         });
-        // α70: Nostr FIRST — never await ASP rematerialize (α69 blocked gift-wraps
-        // for 12s+ and froze taps). Reconcile from local DB only; activity later.
+        // α71: Nostr/outbox only — never rematerialize from chat focus (Xiaomi lag).
         void catchUpGiftWraps({ force: true });
         void flushChatOutbox();
         if (selectedWallet?.id) {
@@ -218,17 +216,13 @@ export function ChatThreadScreen() {
           } catch (e) {
             console.warn("[basic] chat focus reconcile failed", e);
           }
-          // Background only — do not block chat UX / Nostr.
-          void refreshActivity().catch((e) => {
-            console.warn("[basic] chat focus refreshActivity failed", e);
-          });
         }
       });
       return () => {
         setChatThreadFocused(false);
         task.cancel();
       };
-    }, [contactId, selectedWallet?.id, network.id, refreshActivity]),
+    }, [contactId, selectedWallet?.id, network.id]),
   );
 
   useEffect(() => {

@@ -24,8 +24,9 @@ import { flushChatOutbox } from "../chat/chatActions";
 const CATCH_UP_MIN_MS = 30_000;
 /** Lookback for catch-up queries (live sub still gets new events). */
 const CATCH_UP_LOOKBACK_SEC = 60 * 60 * 48;
-const CATCH_UP_LIMIT = 48;
-const CATCH_UP_MAX_WAIT_MS = 4_000;
+const CATCH_UP_LIMIT = 32;
+/** Per-relay wait — sequential 4s×N relays froze Xiaomi (α71). */
+const CATCH_UP_MAX_WAIT_MS = 1_500;
 
 async function resolveRelays(): Promise<string[]> {
   const meta = await readBackupMeta();
@@ -155,16 +156,25 @@ export async function catchUpContactShares(opts?: { force?: boolean }): Promise<
       };
 
       try {
-        for (const url of urls) {
-          try {
-            const events = await pool.querySync([url], filter, {
-              maxWait: CATCH_UP_MAX_WAIT_MS,
-            });
-            for (const ev of events) {
-              await handleWrap(ev, pair.sk);
+        // Parallel per-relay — sequential maxWait×N stalled Xiaomi JS (α71).
+        const batches = await Promise.all(
+          urls.map(async (url) => {
+            try {
+              return await pool.querySync([url], filter, {
+                maxWait: CATCH_UP_MAX_WAIT_MS,
+              });
+            } catch (e) {
+              console.warn("[basic] gift-wrap catch-up relay failed", url, e);
+              return [] as Event[];
             }
-          } catch (e) {
-            console.warn("[basic] gift-wrap catch-up relay failed", url, e);
+          }),
+        );
+        const seen = new Set<string>();
+        for (const events of batches) {
+          for (const ev of events) {
+            if (!ev?.id || seen.has(ev.id)) continue;
+            seen.add(ev.id);
+            await handleWrap(ev, pair.sk);
           }
         }
       } finally {

@@ -1,6 +1,6 @@
 /**
  * Chat & Pay inbound must never use the classic Funds Received overlay.
- * Prefer chat bubble (+ banner/badge) whether or not ChatThread is focused (α70).
+ * Suppress-first when chat context exists; only allow classic after race fails (α71).
  */
 
 import { catchUpGiftWraps } from "../contacts/contactShareWatch";
@@ -22,8 +22,11 @@ type ReceiptHint = { amountSats: number; contactId: string; at: number };
 
 const recentReceiptHints: ReceiptHint[] = [];
 const RECEIPT_HINT_TTL_MS = 5 * 60_000;
-/** How long to race Nostr catch-up before allowing classic overlay (non-chat). */
-const CHAT_RACE_MS = 2_200;
+/** Suppress classic until this window ends when chat context may claim the pay. */
+const CHAT_RACE_MS = 8_000;
+
+/** amountSats → defer-until ms (persistBalance must not toast mid-race). */
+const classicDeferUntil = new Map<number, number>();
 
 function pruneHints(now = Date.now()): void {
   for (let i = recentReceiptHints.length - 1; i >= 0; i--) {
@@ -33,7 +36,60 @@ function pruneHints(now = Date.now()): void {
   }
 }
 
-/** Call from payment_receipt ingest (any direction that creates our inbound). */
+function allThreads() {
+  return [
+    ...listChatThreads({ archived: false }),
+    ...listChatThreads({ archived: true }),
+  ];
+}
+
+/**
+ * True when Pay in Chat is in use — classic arkade toast must defer to chat race.
+ * (Active threads, unread, or recent messages.)
+ */
+export function hasChatPayContext(): boolean {
+  try {
+    const threads = listChatThreads({ archived: false });
+    if (threads.length === 0) return false;
+    const recent = Date.now() - 7 * 24 * 60 * 60_000;
+    return threads.some(
+      (t) =>
+        t.unreadCount > 0 ||
+        (t.lastMessageAt != null && t.lastMessageAt >= recent) ||
+        (t.updatedAt != null && t.updatedAt >= recent),
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function beginClassicChatDefer(
+  amountSats: number,
+  ms = CHAT_RACE_MS + 2_000,
+): void {
+  const abs = Math.floor(amountSats);
+  if (!(abs > 0)) return;
+  const until = Date.now() + Math.max(1_000, ms);
+  const prev = classicDeferUntil.get(abs) ?? 0;
+  classicDeferUntil.set(abs, Math.max(prev, until));
+}
+
+export function isClassicChatDeferPending(amountSats: number): boolean {
+  const abs = Math.floor(amountSats);
+  const until = classicDeferUntil.get(abs);
+  if (until == null) return false;
+  if (Date.now() >= until) {
+    classicDeferUntil.delete(abs);
+    return false;
+  }
+  return true;
+}
+
+export function endClassicChatDefer(amountSats: number): void {
+  classicDeferUntil.delete(Math.floor(amountSats));
+}
+
+/** Call from payment_receipt ingest (inbound). */
 export function noteChatInboundReceiptHint(
   contactId: string,
   amountSats: number,
@@ -44,9 +100,9 @@ export function noteChatInboundReceiptHint(
   recentReceiptHints.push({ amountSats: abs, contactId, at: Date.now() });
 }
 
-export function consumeChatInboundReceiptHint(
+export function peekChatInboundReceiptHint(
   amountSats: number,
-  newerThanMs = 90_000,
+  newerThanMs = 120_000,
 ): ReceiptHint | null {
   pruneHints();
   const abs = Math.abs(Math.floor(amountSats));
@@ -55,10 +111,20 @@ export function consumeChatInboundReceiptHint(
     const h = recentReceiptHints[i];
     if (h.at < since) continue;
     if (Math.abs(h.amountSats - abs) > 1) continue;
-    recentReceiptHints.splice(i, 1);
     return h;
   }
   return null;
+}
+
+export function consumeChatInboundReceiptHint(
+  amountSats: number,
+  newerThanMs = 90_000,
+): ReceiptHint | null {
+  const h = peekChatInboundReceiptHint(amountSats, newerThanMs);
+  if (!h) return null;
+  const idx = recentReceiptHints.lastIndexOf(h);
+  if (idx >= 0) recentReceiptHints.splice(idx, 1);
+  return h;
 }
 
 /** Outbound pay-requests we published that still await payment. */
@@ -69,18 +135,18 @@ function findOpenPayRequestForAmount(amountSats: number): {
 } | null {
   const abs = Math.abs(Math.floor(amountSats));
   if (!(abs > 0)) return null;
-  const threads = [
-    ...listChatThreads({ archived: false }),
-    ...listChatThreads({ archived: true }),
-  ];
   const since = Date.now() - 24 * 60 * 60_000;
-  for (const t of threads) {
-    const msgs = listChatMessages(t.contactId, 80);
+  for (const t of allThreads()) {
+    const msgs = listChatMessages(t.contactId, 40);
     for (let i = msgs.length - 1; i >= 0; i--) {
       const m = msgs[i];
       if (m.kind !== "request" || m.direction !== "out") continue;
       if (m.createdAt < since) continue;
-      if (m.status === "paid" || m.status === "declined" || m.status === "expired") {
+      if (
+        m.status === "paid" ||
+        m.status === "declined" ||
+        m.status === "expired"
+      ) {
         continue;
       }
       if (m.amountSats == null || Math.abs(m.amountSats - abs) > 1) continue;
@@ -136,7 +202,6 @@ export function ensureChatInboundBubble(opts: {
     status: opts.status ?? "paid",
     paymentId: newChatId("pay"),
     requestId: opts.requestId ?? null,
-    // Unread unless this exact thread is open (banner/badge still update elsewhere).
     bumpUnread: focused !== opts.contactId,
   });
   if (opts.requestId) {
@@ -153,17 +218,22 @@ export function ensureChatInboundBubble(opts: {
 
 /**
  * Hard rule: chat-originated inbound → chat UX only, never classic overlay.
- * Races a short Nostr catch-up so Ark-before-giftwrap still lands as a bubble.
+ * Suppress-first race so Ark-before-giftwrap never flashes classic (α71).
+ *
+ * @param opts.forceClassicOk — POS/Receive awaiting payment may fall through to
+ *   classic after the race if there is no chat match (do not hold forever).
  */
 export async function preferChatInboundOverClassic(
   amountSats: number,
+  opts?: { forceClassicOk?: boolean },
 ): Promise<boolean> {
   const abs = Math.floor(amountSats);
   if (!(abs > 0)) return false;
 
-  // Already on ChatThread — overlay always suppressed (existing rule).
+  beginClassicChatDefer(abs);
+
+  // Already on ChatThread — overlay always suppressed.
   if (isChatThreadFocused()) {
-    // Still try to attach a bubble if a request matches.
     const open = findOpenPayRequestForAmount(abs);
     if (open) {
       ensureChatInboundBubble({
@@ -176,7 +246,6 @@ export async function preferChatInboundOverClassic(
     return true;
   }
 
-  // Open pay-request we sent — peer is paying us in chat.
   const open = findOpenPayRequestForAmount(abs);
   if (open) {
     return ensureChatInboundBubble({
@@ -187,37 +256,36 @@ export async function preferChatInboundOverClassic(
     });
   }
 
-  // Receipt already ingested (hint) — bubble exists or is en route.
-  if (consumeChatInboundReceiptHint(abs, 120_000)) {
+  if (peekChatInboundReceiptHint(abs, 120_000)) {
     console.warn("[basic] fundsNotice suppressed (chat receipt hint)", abs);
     return true;
   }
 
-  // Race: catch up gift-wraps then re-check hint (Ark often beats NIP-17 by seconds).
   const started = Date.now();
   try {
     await catchUpGiftWraps({ force: true });
   } catch (e) {
     console.warn("[basic] chat inbound catchUp failed", e);
   }
-  if (consumeChatInboundReceiptHint(abs, 120_000)) {
+  if (peekChatInboundReceiptHint(abs, 120_000)) {
     console.warn("[basic] fundsNotice suppressed (chat receipt after catchUp)", abs);
     return true;
+  }
+  for (const t of allThreads()) {
+    if (hasRecentInboundPaymentBubble(t.contactId, abs, 90_000)) {
+      console.warn("[basic] fundsNotice suppressed (chat bubble present)", abs);
+      return true;
+    }
   }
 
   const remain = CHAT_RACE_MS - (Date.now() - started);
   if (remain > 50) {
     await sleep(remain);
-    if (consumeChatInboundReceiptHint(abs, 120_000)) {
+    if (peekChatInboundReceiptHint(abs, 120_000)) {
       console.warn("[basic] fundsNotice suppressed (chat receipt after race)", abs);
       return true;
     }
-    // Live wrap may have inserted bubble without going through noteHint — scan threads.
-    const threads = [
-      ...listChatThreads({ archived: false }),
-      ...listChatThreads({ archived: true }),
-    ];
-    for (const t of threads) {
+    for (const t of allThreads()) {
       if (hasRecentInboundPaymentBubble(t.contactId, abs, 90_000)) {
         console.warn("[basic] fundsNotice suppressed (chat bubble present)", abs);
         return true;
@@ -225,21 +293,13 @@ export async function preferChatInboundOverClassic(
     }
   }
 
-  return false;
-}
-
-/** After classic notice already shown: dismiss if chat receipt lands. */
-export function shouldDismissClassicNoticeForChat(amountSats: number): boolean {
-  const abs = Math.floor(amountSats);
-  if (!(abs > 0)) return false;
-  if (consumeChatInboundReceiptHint(abs, 180_000)) return true;
-  const threads = [
-    ...listChatThreads({ archived: false }),
-    ...listChatThreads({ archived: true }),
-  ];
-  for (const t of threads) {
-    if (hasRecentInboundPaymentBubble(t.contactId, abs, 180_000)) return true;
+  // Pay in Chat in use: hold classic — receipt/live wrap will own the bubble.
+  // POS/Receive (forceClassicOk) may still show classic after a failed match.
+  if (hasChatPayContext() && !opts?.forceClassicOk) {
+    console.warn("[basic] fundsNotice suppressed (chat context hold)", abs);
+    return true;
   }
+
   return false;
 }
 
@@ -260,11 +320,7 @@ export function dismissClassicFundsNoticeIfChat(amountSats: number): void {
   );
   let bubble = false;
   if (!hint) {
-    const threads = [
-      ...listChatThreads({ archived: false }),
-      ...listChatThreads({ archived: true }),
-    ];
-    bubble = threads.some((t) =>
+    bubble = allThreads().some((t) =>
       hasRecentInboundPaymentBubble(t.contactId, abs, 180_000),
     );
   }

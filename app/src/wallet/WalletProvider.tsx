@@ -40,6 +40,10 @@ import { mnemonicFromEntropy } from "../onboarding/mnemonicFromEntropy";
 import { combineCsprngWithMotion } from "../onboarding/motionEntropy";
 import { isChatThreadFocused } from "../chat/chatThreadFocus";
 import {
+  beginClassicChatDefer,
+  endClassicChatDefer,
+  hasChatPayContext,
+  isClassicChatDeferPending,
   preferChatInboundOverClassic,
   registerClassicFundsNoticeDismiss,
 } from "../chat/chatInboundPrefer";
@@ -705,7 +709,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const emitFundsNotice = useCallback((
     amount: number,
     kind: FundsNotice["kind"],
-    opts?: { bypassSendSuppress?: boolean },
+    opts?: { bypassSendSuppress?: boolean; afterChatPrefer?: boolean },
   ): "shown" | "busy" | "blocked" => {
     if (amount <= 0) return "busy";
     // After Exit Fiat Mode: suppress sats/boarding toasts for the swap fill
@@ -748,6 +752,37 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     // ChatThread focused: never classic overlay (bubble owns UX).
     if (isChatThreadFocused()) {
       console.warn("[basic] fundsNotice suppressed (chat thread)", kind, amount);
+      return "busy";
+    }
+    // α71: persistBalance / notify both hit emitFundsNotice. Suppress-first when
+    // chat context or an in-flight chat race — never flash classic mid-race.
+    if (
+      kind === "arkade" &&
+      !opts?.afterChatPrefer &&
+      (isClassicChatDeferPending(amount) || hasChatPayContext())
+    ) {
+      beginClassicChatDefer(amount);
+      const forceClassicOk = !!opts?.bypassSendSuppress;
+      void (async () => {
+        let chatOnly = false;
+        try {
+          chatOnly = await preferChatInboundOverClassic(amount, {
+            forceClassicOk,
+          });
+        } catch (e) {
+          console.warn("[basic] preferChatInboundOverClassic failed", e);
+        } finally {
+          endClassicChatDefer(amount);
+        }
+        if (chatOnly) {
+          console.warn("[basic] fundsNotice suppressed (chat prefer)", amount);
+          return;
+        }
+        emitFundsNotice(amount, kind, {
+          bypassSendSuppress: opts?.bypassSendSuppress,
+          afterChatPrefer: true,
+        });
+      })();
       return "busy";
     }
     // Post-send suppress blocks poll catch-up false positives — not SDK push receives.
@@ -1314,13 +1349,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           void loadBalance(w, walletId);
           return;
         }
+        // Event path (notifyIncoming): balance only. Rematerialize here stacked
+        // 12s ASP work on Xiaomi and froze every tap (α69–α71).
         if (isEvent) {
-          void (async () => {
-            await loadBalance(w, walletId);
-            if (selectedIdRef.current !== walletId) return;
-            if (posUiHoldRef.current > 0) return;
-            await refreshActivityRef.current();
-          })();
+          void loadBalance(w, walletId);
           return;
         }
         void reloadWalletRef.current(w, walletId);
@@ -2571,63 +2603,36 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   });
                   acknowledgeIncomingAmount(amount);
                 } else {
-                  // Chat & Pay hard rule: never classic Funds Received for chat pays
-                  // (even off ChatThread). Race short Nostr catch-up vs Ark push (α70).
-                  void (async () => {
+                  // Ack + Home update FIRST so persistBalance cannot toast the same
+                  // delta as classic Funds Received while chat race runs (α71).
+                  beginClassicChatDefer(amount);
+                  acknowledgeIncomingAmount(amount);
+                  applyLocalReceive(amount);
+                  const wid = selectedIdRef.current;
+                  if (wid) {
                     try {
-                      const chatOnly = await preferChatInboundOverClassic(amount);
-                      if (chatOnly) {
-                        acknowledgeIncomingAmount(amount);
-                        applyLocalReceive(amount);
-                        const wid = selectedIdRef.current;
-                        if (wid) {
-                          try {
-                            recordOptimisticArkadeReceive(
-                              getNetworkConfig().id,
-                              wid,
-                              { amountSats: amount },
-                            );
-                            setActivityEpoch((n) => n + 1);
-                          } catch (e) {
-                            console.warn(
-                              "[basic] optimistic receive activity failed",
-                              e,
-                            );
-                          }
-                        }
-                        return;
-                      }
+                      recordOptimisticArkadeReceive(
+                        getNetworkConfig().id,
+                        wid,
+                        { amountSats: amount },
+                      );
+                      setActivityEpoch((n) => n + 1);
                     } catch (e) {
-                      console.warn("[basic] preferChatInboundOverClassic failed", e);
+                      console.warn(
+                        "[basic] optimistic receive activity failed",
+                        e,
+                      );
                     }
-                    const shown = emitFundsNotice(amount, "arkade", {
-                      bypassSendSuppress: expectingReceive,
-                    });
-                    if (shown === "shown") {
-                      acknowledgeIncomingAmount(amount);
-                      applyLocalReceive(amount);
-                      const wid = selectedIdRef.current;
-                      if (wid) {
-                        try {
-                          recordOptimisticArkadeReceive(
-                            getNetworkConfig().id,
-                            wid,
-                            { amountSats: amount },
-                          );
-                          setActivityEpoch((n) => n + 1);
-                        } catch (e) {
-                          console.warn(
-                            "[basic] optimistic receive activity failed",
-                            e,
-                          );
-                        }
-                      }
-                    }
-                  })();
+                  }
+                  // emitFundsNotice suppress-first when chat context / defer pending.
+                  emitFundsNotice(amount, "arkade", {
+                    bypassSendSuppress: expectingReceive,
+                  });
                 }
               }
             }
           }
+          // Balance only — rematerialize on notify froze Xiaomi taps (α71).
           scheduleReload(w, walletId, { event: true });
         });
         if (cancelled) {
