@@ -24,6 +24,7 @@ import {
   findMessageByNostrEventId,
   findMessageByRequestId,
   insertChatMessage,
+  listChatMessages,
   updateChatMessage,
 } from "./chatStore";
 import { freezeFiatCaptionFromSats } from "./formatChatAmount";
@@ -202,6 +203,38 @@ export async function ingestChatEnvelope(opts: {
       } else {
         fiatCaption = await freezeCaptionIfFiat(envelope.amountSats);
         status = "paid";
+      }
+      // α72: Ark-before-receipt may already have inserted an inbound bubble —
+      // upgrade it instead of duplicating "You received".
+      if (direction === "in" && envelope.amountSats > 0) {
+        const abs = Math.floor(envelope.amountSats);
+        const recent = listChatMessages(contactId, 40).find(
+          (m) =>
+            m.kind === "payment" &&
+            m.direction === "in" &&
+            m.amountSats != null &&
+            Math.abs(m.amountSats - abs) <= 1 &&
+            Date.now() - m.createdAt < 180_000,
+        );
+        if (recent) {
+          updateChatMessage(recent.id, {
+            status,
+            memo: envelope.memo ?? recent.memo,
+            paymentId: envelope.paymentId,
+            nostrEventId: wrapEventId,
+            fiatCaption: fiatCaption ?? recent.fiatCaption,
+          });
+          if (envelope.relatedRequestId) {
+            const req = findMessageByRequestId(
+              contactId,
+              envelope.relatedRequestId,
+            );
+            if (req) updateChatMessage(req.id, { status: "paid" });
+          }
+          noteChatInboundReceiptHint(contactId, abs);
+          dismissClassicFundsNoticeIfChat(abs);
+          return true;
+        }
       }
       insertChatMessage({
         contactId,

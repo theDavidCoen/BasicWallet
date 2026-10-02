@@ -250,9 +250,9 @@ export function mergeRecipientsByAddress(recipients: SendRecipient[]): SendRecip
 
 const SEND_TIMEOUT_MS_DEFAULT = 45_000;
 const TXID_GRACE_MS = 1_500;
-/** Slow polls — 350ms hammered ASP during wallet.send (α69 false timeout). */
+/** Default poll — chat overrides faster (α72). */
 const SPEND_POLL_MS = 2_500;
-/** Let send have exclusive ASP before spend-drop balance reads. */
+/** Default delay before spend-drop reads — chat overrides (α69 was 12s → ~10s You sent). */
 const SPEND_DROP_START_MS = 12_000;
 
 export type SendWaitResult = { txid: string; via: "send" | "spend" };
@@ -270,12 +270,24 @@ export async function waitForSendOrSpendDrop(
     selectedVtxos?: SpendableVtxo[];
     prevAvailable: number | null;
     timeoutMs?: number;
+    /** Delay before first spendable read (default 12s; chat uses ~2s). */
+    spendDropStartMs?: number;
+    /** Interval between spendable reads. */
+    spendPollMs?: number;
+    /** Consecutive drop hits required (chat: 1). */
+    spendHitsRequired?: number;
+    /** Grace wait for real txid after spend-drop (chat: short). */
+    txidGraceMs?: number;
     onRealTxid?: (txid: string) => void;
     /** Fired if SDK send resolves after the waiter already timed out. */
     onLateSuccess?: (r: SendWaitResult) => void;
   },
 ): Promise<SendWaitResult> {
   const timeoutMs = opts.timeoutMs ?? SEND_TIMEOUT_MS_DEFAULT;
+  const spendDropStartMs = opts.spendDropStartMs ?? SPEND_DROP_START_MS;
+  const spendPollMs = opts.spendPollMs ?? SPEND_POLL_MS;
+  const spendHitsRequired = Math.max(1, opts.spendHitsRequired ?? 2);
+  const txidGraceMs = opts.txidGraceMs ?? TXID_GRACE_MS;
   const recipients = opts.recipients;
   if (recipients.length === 0) {
     throw new Error("No recipients");
@@ -346,25 +358,29 @@ export async function waitForSendOrSpendDrop(
     try {
       if (target == null) return;
       const deadline = Date.now() + timeoutMs;
-      await sleep(SPEND_DROP_START_MS);
+      await sleep(spendDropStartMs);
       let hits = 0;
+      let first = true;
       while (!settled && Date.now() < deadline) {
-        await sleep(SPEND_POLL_MS);
+        // First read right after start delay — don't burn an extra poll interval (α72).
+        if (!first) await sleep(spendPollMs);
+        first = false;
         if (settled) return;
         const avail = await readSpendableAvailable(w);
         if (avail == null) continue;
         if (avail <= target + 1) hits += 1;
         else hits = 0;
-        if (hits < 2) continue;
+        if (hits < spendHitsRequired) continue;
         console.warn("[basic] send spend-drop detected", {
           prev: opts.prevAvailable,
           avail,
           amount: total,
           n: recipients.length,
+          hits,
         });
         const txid = await Promise.race([
           sendP.catch(() => null),
-          sleep(TXID_GRACE_MS).then(() => `pending:${Date.now()}`),
+          sleep(txidGraceMs).then(() => `pending:${Date.now()}`),
         ]);
         if (txid == null) return;
         finish({ txid, via: "spend" });
@@ -384,7 +400,7 @@ export async function waitForSendOrSpendDrop(
       if (avail != null && avail <= target + 1) {
         const txid = await Promise.race([
           sendP.catch(() => null),
-          sleep(TXID_GRACE_MS).then(() => `pending:${Date.now()}`),
+          sleep(txidGraceMs).then(() => `pending:${Date.now()}`),
         ]);
         if (txid != null) {
           console.warn("[basic] send confirmed via spend after timeout", {

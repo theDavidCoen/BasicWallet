@@ -49,18 +49,42 @@ export async function publishChatEnvelope(
 
   try {
     const pubs = pool.publish(urls, wrap);
-    const settled = await Promise.allSettled(pubs);
-    for (let i = 0; i < urls.length; i++) {
-      const url = urls[i]!;
-      const r = settled[i]!;
-      if (r.status === "fulfilled") okRelays.push(url);
-      else {
-        failedRelays.push({
-          url,
-          error: r.reason instanceof Error ? r.reason.message : String(r.reason),
-        });
+    // First successful relay unblocks the publisher (α72); drain the rest before close.
+    await new Promise<void>((resolve, reject) => {
+      let pending = pubs.length;
+      let anyOk = false;
+      if (pending === 0) {
+        reject(new Error("No relays"));
+        return;
       }
-    }
+      pubs.forEach((p, i) => {
+        const url = urls[i]!;
+        void p.then(
+          () => {
+            if (!okRelays.includes(url)) okRelays.push(url);
+            anyOk = true;
+            resolve();
+          },
+          (err: unknown) => {
+            failedRelays.push({
+              url,
+              error: err instanceof Error ? err.message : String(err),
+            });
+            pending -= 1;
+            if (pending === 0 && !anyOk) {
+              reject(
+                new Error(
+                  failedRelays[0]?.error
+                    ? `Publish failed: ${failedRelays[0].error}`
+                    : "Publish failed on all relays",
+                ),
+              );
+            }
+          },
+        );
+      });
+    });
+    await Promise.allSettled(pubs);
   } finally {
     pool.close(urls);
   }

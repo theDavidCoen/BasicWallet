@@ -22,8 +22,8 @@ type ReceiptHint = { amountSats: number; contactId: string; at: number };
 
 const recentReceiptHints: ReceiptHint[] = [];
 const RECEIPT_HINT_TTL_MS = 5 * 60_000;
-/** Suppress classic until this window ends when chat context may claim the pay. */
-const CHAT_RACE_MS = 8_000;
+/** Brief wait for gift-wrap when no hot-thread bubble yet (α72). */
+const CHAT_RACE_MS = 3_500;
 
 /** amountSats → defer-until ms (persistBalance must not toast mid-race). */
 const classicDeferUntil = new Map<number, number>();
@@ -160,6 +160,21 @@ function findOpenPayRequestForAmount(amountSats: number): {
   return null;
 }
 
+/** Most recently active non-archived thread (for Ark-before-receipt bubbles). */
+function findRecentActiveChatContact(
+  newerThanMs = 2 * 60 * 60_000,
+): string | null {
+  const since = Date.now() - newerThanMs;
+  const threads = listChatThreads({ archived: false })
+    .filter((t) => (t.lastMessageAt ?? t.updatedAt ?? 0) >= since)
+    .sort(
+      (a, b) =>
+        (b.lastMessageAt ?? b.updatedAt ?? 0) -
+        (a.lastMessageAt ?? a.updatedAt ?? 0),
+    );
+  return threads[0]?.contactId ?? null;
+}
+
 function hasRecentInboundPaymentBubble(
   contactId: string,
   amountSats: number,
@@ -232,14 +247,21 @@ export async function preferChatInboundOverClassic(
 
   beginClassicChatDefer(abs);
 
-  // Already on ChatThread — overlay always suppressed.
+  // ChatThread open: show You received immediately on this contact (α72).
   if (isChatThreadFocused()) {
+    const focused = getFocusedChatContactId();
     const open = findOpenPayRequestForAmount(abs);
     if (open) {
       ensureChatInboundBubble({
         contactId: open.contactId,
         amountSats: abs,
         requestId: open.requestId,
+        status: "paid",
+      });
+    } else if (focused) {
+      ensureChatInboundBubble({
+        contactId: focused,
+        amountSats: abs,
         status: "paid",
       });
     }
@@ -259,6 +281,23 @@ export async function preferChatInboundOverClassic(
   if (peekChatInboundReceiptHint(abs, 120_000)) {
     console.warn("[basic] fundsNotice suppressed (chat receipt hint)", abs);
     return true;
+  }
+
+  // Immediate bubble on hottest chat thread — don't wait for NIP-17 (α72).
+  // Receipt ingest upgrades/dedupes the same amount.
+  if (hasChatPayContext()) {
+    const hot = findRecentActiveChatContact();
+    if (hot) {
+      ensureChatInboundBubble({
+        contactId: hot,
+        amountSats: abs,
+        status: "paid",
+      });
+      // Still kick catch-up in background for the real receipt (memo/txid).
+      void catchUpGiftWraps({ force: true }).catch(() => {});
+      console.warn("[basic] fundsNotice suppressed (hot chat bubble)", abs);
+      return true;
+    }
   }
 
   const started = Date.now();

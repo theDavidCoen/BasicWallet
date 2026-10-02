@@ -302,12 +302,17 @@ export async function executeChatPay(opts: {
       });
     };
 
+    // α72: outbound polls paused — spend-drop can start early so "You sent"
+    // is not stuck ~12s waiting (α69 default). Receipt publishes ASAP after.
     const { txid } = await waitForSendOrSpendDrop(wallet, {
       recipients: [{ address: dest.address, amount: payAmount }],
       selectedVtxos: plan.selectedVtxos,
       prevAvailable: opts.hooks.spendable,
-      // Maxi/Fiat: ASP often slow under load; soft timeout confirms via spend (α69).
       timeoutMs: 120_000,
+      spendDropStartMs: 2_000,
+      spendPollMs: 1_000,
+      spendHitsRequired: 1,
+      txidGraceMs: 400,
       onRealTxid: (real) => {
         if (real && !real.startsWith("pending:")) {
           recordSentFromThisDevice(networkId, walletId, real);
@@ -318,17 +323,7 @@ export async function executeChatPay(opts: {
       },
     });
 
-    // Publish NIP-17 receipt immediately so peer chat bubble races Ark notify (α70).
-    void publishPaymentReceipt({
-      contactId: opts.contactId,
-      paymentId,
-      amountSats: payAmount,
-      memo: opts.memo,
-      txid,
-      rail: "arkade",
-      relatedRequestId: opts.requestId ?? undefined,
-    });
-
+    // You sent first (local SQL), then fire-and-forget NIP-17 receipt (α72).
     finalizeChatPayPaid({
       contactId: opts.contactId,
       amountSats: payAmount,
@@ -343,6 +338,15 @@ export async function executeChatPay(opts: {
       networkId,
       walletId,
       skipReceipt: true,
+    });
+    void publishPaymentReceipt({
+      contactId: opts.contactId,
+      paymentId,
+      amountSats: payAmount,
+      memo: opts.memo,
+      txid,
+      rail: "arkade",
+      relatedRequestId: opts.requestId ?? undefined,
     });
     return { txid, paymentId, address: dest.address };
   } catch (e) {
