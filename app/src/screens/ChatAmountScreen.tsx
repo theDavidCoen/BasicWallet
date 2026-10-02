@@ -335,7 +335,7 @@ export function ChatAmountScreen() {
               },
             });
           } catch (e) {
-            // executeChatPay may have late-settled → paid; don't overwrite.
+            // executeChatPay may have late-settled → paid; don't overwrite / alert.
             const cur = getChatMessage(local.id);
             if (cur?.status === "paid") {
               console.warn("[basic] chat send recovered as paid after error");
@@ -344,7 +344,9 @@ export function ChatAmountScreen() {
             updateChatMessage(local.id, { status: "failed" });
             const msg = e instanceof Error ? e.message : String(e);
             console.warn("[basic] chat send background failed", msg);
-            // Surface reason — bubble alone is easy to miss after goBack.
+            // Re-read: spend-drop reconcile can flip paid between checks (α75).
+            const again = getChatMessage(local.id);
+            if (again?.status === "paid") return;
             Alert.alert("Send failed", msg);
           } finally {
             endOutboundSend();

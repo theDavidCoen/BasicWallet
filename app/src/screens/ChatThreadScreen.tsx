@@ -439,12 +439,17 @@ export function ChatThreadScreen() {
     } catch (e) {
       if (localPaymentId) {
         const cur = getChatMessage(localPaymentId);
-        if (cur?.status !== "paid") {
+        if (cur?.status === "paid") {
+          console.warn("[basic] chat pay request recovered as paid after error");
+        } else {
           updateChatMessage(localPaymentId, { status: "failed" });
-          Alert.alert(
-            "Send failed",
-            e instanceof Error ? e.message : "Unknown error",
-          );
+          const again = getChatMessage(localPaymentId);
+          if (again?.status !== "paid") {
+            Alert.alert(
+              "Send failed",
+              e instanceof Error ? e.message : "Unknown error",
+            );
+          }
         }
       } else {
         Alert.alert(

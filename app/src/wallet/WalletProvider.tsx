@@ -47,6 +47,10 @@ import {
   preferChatInboundOverClassic,
   registerClassicFundsNoticeDismiss,
 } from "../chat/chatInboundPrefer";
+import {
+  noteChatReceiveApplied,
+  registerChatReceiveBalanceHooks,
+} from "../chat/chatReceiveBalance";
 import { isPresencePromptInFlight } from "../security/presencePrompt";
 import { friendlyNetworkError } from "../util/friendlyNetworkError";
 import {
@@ -864,6 +868,24 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     });
     setBalanceStatus("ready");
   }, []);
+
+  useEffect(() => {
+    registerChatReceiveBalanceHooks({
+      applyLocalReceive,
+      pullLiveBalance: () => {
+        // Defer until ASP polls are free (often paused during peer send settle).
+        const tryPull = () => {
+          if (aspPollPausedRef.current > 0) {
+            setTimeout(tryPull, 400);
+            return;
+          }
+          pullBalanceNowRef.current();
+        };
+        tryPull();
+      },
+    });
+    return () => registerChatReceiveBalanceHooks(null);
+  }, [applyLocalReceive]);
 
   /** Floor Home balance at totalSats (no double-add when estimate + notify both fire). */
   const ensureBalanceAtLeast = useCallback((totalSats: number) => {
@@ -2606,7 +2628,19 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   // delta as classic Funds Received while chat race runs (α71).
                   beginClassicChatDefer(amount);
                   acknowledgeIncomingAmount(amount);
+                  // Always floor Home from novel vtxos; note so receipt does not double (α75).
                   applyLocalReceive(amount);
+                  if (hasChatPayContext()) {
+                    const txid = String(
+                      vtxos[0]?.txid ||
+                        (vtxos[0] as { arkTxId?: string } | undefined)?.arkTxId ||
+                        "",
+                    ).trim();
+                    noteChatReceiveApplied({
+                      amountSats: amount,
+                      paymentId: txid || null,
+                    });
+                  }
                   const wid = selectedIdRef.current;
                   if (wid) {
                     try {

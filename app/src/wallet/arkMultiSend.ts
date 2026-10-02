@@ -147,6 +147,16 @@ function vtxoHasAssets(v: SpendableVtxo): boolean {
   return Array.isArray(assets) && assets.length > 0;
 }
 
+export type PrepareDustSafeSendOpts = {
+  /** Per-attempt vtxo read timeout (default 2500). Chat uses 5000. */
+  timeoutMs?: number;
+  /**
+   * When true, never return a blind plan without selectedVtxos.
+   * Blind send is what caused Xiaomi DustChangeError after ASP already settled (α73–α74).
+   */
+  requireVtxos?: boolean;
+};
+
 /**
  * ASP rejects change below min vtxo even when the SDK encodes it as subdust.
  * When inputs carry leftover assets, change must be ≥ dust (SDK:
@@ -157,25 +167,68 @@ export async function prepareDustSafeSend(
   w: Pick<BasicWallet, "getSpendableVtxos">,
   amount: number,
   dust: number,
+  opts?: PrepareDustSafeSendOpts,
 ): Promise<DustSafeSendPlan> {
+  const timeoutMs = opts?.timeoutMs ?? 2_500;
+  const requireVtxos = !!opts?.requireVtxos;
+
   if (typeof w.getSpendableVtxos !== "function") {
+    if (requireVtxos) {
+      throw new Error(
+        "Could not read spendable coins for a safe send. Wait a moment and try again.",
+      );
+    }
     return { amount, amountBumped: false, originalAmount: amount };
   }
-  let list: SpendableVtxo[];
-  try {
-    list = await withTimeout(w.getSpendableVtxos(), 2_500, "getSpendableVtxos");
-  } catch {
+
+  let list: SpendableVtxo[] | null = null;
+  let lastErr: unknown = null;
+  // One retry — Xiaomi often times out the first vtxo read during ASP pause.
+  for (const ms of [timeoutMs, Math.max(timeoutMs, 8_000)]) {
+    try {
+      list = await withTimeout(w.getSpendableVtxos(), ms, "getSpendableVtxos");
+      lastErr = null;
+      break;
+    } catch (e) {
+      lastErr = e;
+      list = null;
+    }
+  }
+
+  if (!list) {
+    if (requireVtxos) {
+      throw new Error(
+        lastErr instanceof Error
+          ? `Could not read spendable coins (${lastErr.message}). Try again.`
+          : "Could not read spendable coins for a safe send. Try again.",
+      );
+    }
     return { amount, amountBumped: false, originalAmount: amount };
   }
+
   const coins = list.filter((v) => Number(v.value) > 0);
   const totalAvailable = coins.reduce((s, v) => s + Number(v.value ?? 0), 0);
   if (coins.length === 0) {
+    if (requireVtxos) {
+      throw new Error("No spendable sats available.");
+    }
     return {
       amount,
       amountBumped: false,
       originalAmount: amount,
       totalAvailable: 0,
     };
+  }
+
+  // Near-max send: leave no dust change against the whole wallet.
+  let payAmount = amount;
+  if (
+    totalAvailable > 0 &&
+    payAmount < totalAvailable &&
+    totalAvailable - payAmount > 0 &&
+    totalAvailable - payAmount < dust
+  ) {
+    payAmount = totalAvailable;
   }
 
   // Prefer pure-BTC coins first so sats sends avoid pulling asset change.
@@ -187,13 +240,13 @@ export async function prepareDustSafeSend(
   const selected: SpendableVtxo[] = [];
   let selectedSum = 0;
   for (const coin of preferOrder) {
-    if (selectedSum >= amount) break;
+    if (selectedSum >= payAmount) break;
     selected.push(coin);
     selectedSum += coin.value;
   }
-  if (selectedSum < amount) {
+  if (selectedSum < payAmount) {
     throw new Error(
-      `Insufficient sats to send (have ${selectedSum.toLocaleString("en-US")}, need ${amount.toLocaleString("en-US")}). ` +
+      `Insufficient sats to send (have ${selectedSum.toLocaleString("en-US")}, need ${payAmount.toLocaleString("en-US")}). ` +
         `In Fiat Mode, Home shows stable balance — convert more or wait for sats to settle.`,
     );
   }
@@ -201,7 +254,7 @@ export async function prepareDustSafeSend(
   const unused = preferOrder.filter(
     (c) => !selected.some((s) => vtxoKey(s) === vtxoKey(c)),
   );
-  let change = selectedSum - amount;
+  let change = selectedSum - payAmount;
   const needsAssetCarrier = () =>
     selected.some(vtxoHasAssets) && change < dust;
 
@@ -210,7 +263,7 @@ export async function prepareDustSafeSend(
     if (!(change > 0 && change < dust) && !needsAssetCarrier()) break;
     selected.push(coin);
     selectedSum += coin.value;
-    change = selectedSum - amount;
+    change = selectedSum - payAmount;
   }
 
   if (needsAssetCarrier()) {
@@ -221,6 +274,7 @@ export async function prepareDustSafeSend(
   }
 
   if (change > 0 && change < dust) {
+    // Send the whole selected set — exact change-free settle (near-balance pays).
     return {
       amount: selectedSum,
       selectedVtxos: selected,
@@ -231,9 +285,9 @@ export async function prepareDustSafeSend(
   }
 
   return {
-    amount,
+    amount: payAmount,
     selectedVtxos: selected,
-    amountBumped: false,
+    amountBumped: payAmount !== amount,
     originalAmount: amount,
     totalAvailable,
   };

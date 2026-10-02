@@ -161,21 +161,6 @@ function findOpenPayRequestForAmount(amountSats: number): {
   return null;
 }
 
-/** Most recently active non-archived thread (for Ark-before-receipt bubbles). */
-function findRecentActiveChatContact(
-  newerThanMs = 2 * 60 * 60_000,
-): string | null {
-  const since = Date.now() - newerThanMs;
-  const threads = listChatThreads({ archived: false })
-    .filter((t) => (t.lastMessageAt ?? t.updatedAt ?? 0) >= since)
-    .sort(
-      (a, b) =>
-        (b.lastMessageAt ?? b.updatedAt ?? 0) -
-        (a.lastMessageAt ?? a.updatedAt ?? 0),
-    );
-  return threads[0]?.contactId ?? null;
-}
-
 function hasRecentInboundPaymentBubble(
   contactId: string,
   amountSats: number,
@@ -304,22 +289,9 @@ export async function preferChatInboundOverClassic(
     return true;
   }
 
-  // Immediate bubble on hottest chat thread — don't wait for NIP-17 (α72).
-  // Receipt ingest upgrades/dedupes the same amount.
-  if (hasChatPayContext()) {
-    const hot = findRecentActiveChatContact();
-    if (hot) {
-      ensureChatInboundBubble({
-        contactId: hot,
-        amountSats: abs,
-        status: "paid",
-      });
-      // Still kick catch-up in background for the real receipt (memo/txid).
-      void catchUpGiftWraps({ force: true }).catch(() => {});
-      console.warn("[basic] fundsNotice suppressed (hot chat bubble)", abs);
-      return true;
-    }
-  }
+  // α75: do NOT invent a bubble on the "hottest" contact. That created ghost
+  // You received rows (and made chat history disagree with Home). Hold classic
+  // while chat context is live; catch-up / receipt owns the real bubble.
 
   const started = Date.now();
   try {
