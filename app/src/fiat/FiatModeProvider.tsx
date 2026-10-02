@@ -508,13 +508,13 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         // Do not publish 0 — keeps Home on pending/last-good path.
         return;
       }
-      // Transient ~2× (old assets + unsettled swap fill) — hold last good.
-      // Modest increases (post-convert) always adopt — never stay stuck on last-good.
+      // Transient exact ~2× (old assets + unsettled duplicate fill) — hold last good.
+      // Multi-convert catch-up (e.g. 15.67 → 37.17) must adopt, not look like 2×.
       const good = lastGoodDepixRef.current;
       if (
         good != null &&
         good >= 0.01 &&
-        live > good * 1.75 + 0.05
+        Math.abs(live - good * 2) <= 0.5
       ) {
         console.warn("[basic] depix poll ignore double-count overshoot", {
           live,
