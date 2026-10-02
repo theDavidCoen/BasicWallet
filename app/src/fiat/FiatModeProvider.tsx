@@ -1287,23 +1287,38 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       }
       const minBase = fiatMinBaseSats(networkId);
       const reserve = DEFAULT_MIN_VTXO_SATS;
-      // USDT/DePix receives land with a ~330 sat carrier. On Mutinynet
-      // minBase === 330, so carrier alone used to re-fire CONVERTING forever.
-      // Require a real BTC inbound: enough after dust reserve for minBase.
-      if (!(sats > reserve)) {
-        console.warn("[basic] auto-inbound skip dust carrier", { sats, reserve });
+      const total = Math.floor(sats);
+      // Single dust carrier (asset change) — never start a convert loop.
+      if (!(total > reserve)) {
+        console.warn("[basic] auto-inbound skip dust carrier", {
+          sats: total,
+          reserve,
+        });
         return;
       }
-      if (sats - reserve < minBase) {
-        console.warn("[basic] auto-inbound skip below min after reserve", {
-          sats,
+      // Prefer leave a dust carrier for leftover assets. If that drops below
+      // solver minBase, swap the full bag (same as Enter) so small classic
+      // receives still convert (α65: 639 delta / 1299 total stuck as sats).
+      let swap: number;
+      if (total - reserve >= minBase) {
+        swap = total - reserve;
+      } else if (total >= minBase) {
+        swap = total;
+      } else {
+        console.warn("[basic] auto-inbound skip below minBase", {
+          sats: total,
           reserve,
           minBase,
         });
         return;
       }
-      const swap = sats - reserve;
-      autoInboundSatsRef.current = Math.floor(sats);
+      autoInboundSatsRef.current = total;
+      console.warn("[basic] auto-inbound queue", {
+        total,
+        swap,
+        minBase,
+        reserve,
+      });
       // Quiet background — never Enter CONVERTING modal.
       void runJob("auto-inbound", "btc-to-depix", BigInt(Math.floor(swap)), {
         quiet: true,
@@ -1313,7 +1328,8 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   );
 
   // Inbound sats while in Fiat Mode → quiet auto-swap to designated stable.
-  // Ignore dust-sized deltas (asset carriers) — those are not BTC to convert.
+  // Ignore only single dust carriers — not "below minBase+dust" (that blocked
+  // real ~R$3 payments: delta 639 < minMeaningful 1331).
   useEffect(() => {
     if (!state?.fiatMode || converting || jobBusyRef.current) {
       // While a job runs, keep the sats baseline — do NOT adopt live balance.
@@ -1331,36 +1347,29 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     lastSatsRef.current = balanceSats;
     if (prev == null) return;
     const delta = balanceSats - prev;
-    const minMeaningful = Math.max(
-      fiatMinBaseSats(networkId) + DEFAULT_MIN_VTXO_SATS,
-      DEFAULT_MIN_VTXO_SATS * 2 + 1,
-    );
-    if (delta >= minMeaningful) {
-      maybeAutoSwapInboundSats(delta);
-    } else if (delta > 0) {
-      console.warn("[basic] auto-inbound ignore small sats delta", {
-        delta,
-        minMeaningful,
-      });
+    // Exact dust / 2×dust carriers from asset change — not classic BTC receive.
+    if (delta > 0 && delta <= DEFAULT_MIN_VTXO_SATS) {
+      console.warn("[basic] auto-inbound ignore dust carrier delta", { delta });
+      return;
+    }
+    if (delta > DEFAULT_MIN_VTXO_SATS) {
+      // Convert *total* excess (not only delta) so partial receives accumulate
+      // up to minBase (639 + prior 660 → 1299 ≥ 1001).
+      maybeAutoSwapInboundSats(balanceSats);
     }
   }, [balanceSats, state?.fiatMode, converting, maybeAutoSwapInboundSats, networkId]);
 
   // Recovery: Fiat Mode with idle excess BTC (missed delta / failed job).
-  // Same threshold as delta path; backoff so a hard swap error cannot loop.
+  // Chat pay hold (suppress / outbound bubble / payConvert) still blocks this.
   useEffect(() => {
     if (!state?.fiatMode || converting || jobBusyRef.current) return;
     if (payConvertInFlightRef.current) return;
     if (Date.now() < suppressAutoInboundUntilRef.current) return;
     if (hasOutboundPayInFlight()) return;
     if (balanceSats == null) return;
-    const reserve = DEFAULT_MIN_VTXO_SATS;
     const minBase = fiatMinBaseSats(networkId);
-    const minMeaningful = Math.max(
-      minBase + reserve,
-      DEFAULT_MIN_VTXO_SATS * 2 + 1,
-    );
-    if (balanceSats < minMeaningful) return;
-    if (balanceSats - reserve < minBase) return;
+    // Enough to meet solver min (maybeAutoSwap decides reserve vs full bag).
+    if (balanceSats < minBase) return;
     // Slower backoff — idle recovery was racing chat Send (α63 R$12 timeout).
     if (Date.now() - idleAutoInboundAtRef.current < 60_000) return;
     idleAutoInboundAtRef.current = Date.now();

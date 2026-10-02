@@ -2,7 +2,7 @@
   "expo": {
     "name": "Basic",
     "slug": "basic-wallet",
-    "version": "0.7.0-alpha.65",
+    "version": "0.7.0-alpha.66",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "splash": {
