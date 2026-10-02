@@ -40,6 +40,7 @@ import {
 import {
   clearThreadUnread,
   ensureChatThread,
+  failStaleOutboundPayments,
   getChatThread,
   insertChatMessage,
   listChatMessages,
@@ -105,6 +106,7 @@ export function ChatThreadScreen() {
     fiatMode,
     convertDepixToSatsForPay,
     depixDisplay,
+    holdAutoInboundForPay,
   } = useFiatMode();
   const network = getNetworkConfig();
   const [draft, setDraft] = useState("");
@@ -137,6 +139,8 @@ export function ChatThreadScreen() {
   }, [contactId]);
 
   useEffect(() => {
+    // Ghost Converting/Sending from killed convert+send → failed.
+    failStaleOutboundPayments({ olderThanMs: 90_000 });
     const task = InteractionManager.runAfterInteractions(() => {
       reloadLight();
     });
@@ -357,6 +361,7 @@ export function ChatThreadScreen() {
       });
       localPaymentId = local.id;
 
+      holdAutoInboundForPay(180_000);
       const ensured = await ensureSatsForPay({
         satsNeeded: msg.amountSats,
         spendable: spendable ?? null,
@@ -366,6 +371,7 @@ export function ChatThreadScreen() {
         convertDepixToSatsForPay,
         quiet: true,
       });
+      holdAutoInboundForPay(180_000);
       setPayBusyLabel("Sending…");
       updateChatMessage(local.id, { status: "sending" });
 

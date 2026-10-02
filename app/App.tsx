@@ -5,6 +5,7 @@ import { ActivityIndicator, LogBox, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { wipePlaintextAccountDbsIfNeeded } from "./src/account/sqliteCipher";
+import { failStaleOutboundPayments } from "./src/chat/chatStore";
 import { registerAppRemount } from "./src/runtime/remountApp";
 import { loadNetworkPreferences } from "./src/config/networkPrefs";
 import { RootNavigator } from "./src/navigation/RootNavigator";
@@ -68,6 +69,12 @@ export default function App() {
           const legacyMainnetOnly = !fullyMigrated && (await hadLegacyMainnetCipherMigration());
           wipePlaintextAccountDbsIfNeeded({ fullyMigrated, legacyMainnetOnly });
           if (!fullyMigrated) await markSqlCipherMigrated();
+        }
+        // Orphaned Converting/Sending bubbles (killed convert+send) → failed.
+        try {
+          failStaleOutboundPayments({ olderThanMs: 90_000 });
+        } catch (e) {
+          console.warn("[basic] failStaleOutboundPayments boot skipped", e);
         }
         if (!cancelled) setDbKeyReady(true);
       } catch (e) {

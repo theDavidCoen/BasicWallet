@@ -30,6 +30,7 @@ import {
   setAutoInboundBusy,
   settleChatInboundFiatPaid,
 } from "../chat/chatInboundFiat";
+import { hasOutboundPayInFlight } from "../chat/chatStore";
 import { getNetworkConfig } from "../config/network";
 import { DEFAULT_MIN_VTXO_SATS } from "../wallet/arkMultiSend";
 import { getOpenWalletMode } from "../wallet/hdWallet";
@@ -127,6 +128,11 @@ type FiatModeContextValue = {
     satsNeeded: number,
     opts?: { quiet?: boolean },
   ) => Promise<number>;
+  /**
+   * Hold auto-inbound so leftover pay sats are not re-swapped to stable
+   * while chat/classic send is in flight (or just failed mid-send).
+   */
+  holdAutoInboundForPay: (ms?: number) => void;
 };
 
 const FiatModeContext = createContext<FiatModeContextValue | null>(null);
@@ -262,6 +268,9 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   /** Outbound chat/classic pay convert — auto-inbound must not steal the job mutex. */
   const payConvertInFlightRef = useRef(false);
   const activeJobKindRef = useRef<FiatModeJobKind>(null);
+  /** Skip VTXO fallback after timeouts (α63 thrash: every 4s poll hit getVtxos). */
+  const depixVtxoCooldownUntilRef = useRef(0);
+  const depixPollInFlightRef = useRef(false);
 
   const networkId = getNetworkConfig().id;
   const walletId = selectedWallet?.kind === "arkade" ? selectedWallet.id : null;
@@ -411,14 +420,27 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
 
   /** After auto-inbound fill: adopt live stable as Home truth (skip overshoot guards). */
   const adoptLiveDepixDisplay = useCallback(
-    (liveDisplay: number) => {
+    (liveDisplay: number, opts?: { holdForceMs?: number }) => {
       const live = Math.round(Number(liveDisplay) * 100) / 100;
       if (!(live >= 0.01)) return;
+      const prev = lastDepixRef.current ?? lastGoodDepixRef.current;
+      // No-op adopt: same amount must not re-extend force window or rewrite storage.
+      if (prev != null && Math.abs(prev - live) <= 0.005) {
+        lastGoodDepixRef.current = live;
+        lastDepixRef.current = live;
+        if (opts?.holdForceMs != null && opts.holdForceMs > 0) {
+          adoptLiveDepixUntilRef.current = Date.now() + opts.holdForceMs;
+        }
+        return;
+      }
       clearOptimisticDepix();
       lastGoodDepixRef.current = live;
       lastDepixRef.current = live;
       setDepixDisplay(live);
-      adoptLiveDepixUntilRef.current = Date.now() + 90_000;
+      // Only auto-inbound settle should hold force-adopt (not every poll).
+      if (opts?.holdForceMs != null && opts.holdForceMs > 0) {
+        adoptLiveDepixUntilRef.current = Date.now() + opts.holdForceMs;
+      }
       if (walletId) {
         void writeFiatModeState(networkId, walletId, { lastGoodDisplay: live });
       }
@@ -433,6 +455,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       clearOptimisticDepix();
       return;
     }
+    // Never compete with swap/send for ASP bandwidth (α63 Xiaomi lag + send timeout).
+    if (jobBusyRef.current || payConvertInFlightRef.current) return;
+    if (depixPollInFlightRef.current) return;
+    depixPollInFlightRef.current = true;
     try {
       const raw = await wallet.getBalance();
       let atomic = readDepixAtomicFromBalance(
@@ -440,12 +466,14 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         depixAssetIdForNetwork(networkId),
       );
       const goodHint = lastGoodDepixRef.current ?? 0;
-      // Balance.assets can lag after convert — if at/below last-good, check VTXOs.
-      if (
-        atomic <= 0n ||
-        (goodHint >= 0.01 &&
-          depixAtomicToDisplay(atomic, networkId) <= goodHint + 0.02)
-      ) {
+      const liveFromBal = depixAtomicToDisplay(atomic, networkId);
+      // VTXO fallback only when balance is empty/missing while we expect funds —
+      // NOT when live already matches last-good (α61–63 thrashed getVtxos every 4s).
+      const needVtxoFallback =
+        Date.now() >= depixVtxoCooldownUntilRef.current &&
+        goodHint >= 0.01 &&
+        (atomic <= 0n || liveFromBal + 0.5 < goodHint);
+      if (needVtxoFallback) {
         const fromVtxos = await readDepixAtomicFromVtxos(wallet, networkId);
         if (fromVtxos > atomic) {
           console.warn("[basic] depix poll prefer vtxo sum", {
@@ -453,11 +481,15 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
             vtxos: String(fromVtxos),
           });
           atomic = fromVtxos;
+        } else {
+          // Timeouts return 0n — cool down so we do not stack getVtxos every poll.
+          depixVtxoCooldownUntilRef.current = Date.now() + 60_000;
         }
       }
       const live = depixAtomicToDisplay(atomic, networkId);
       const forceAdopt = Date.now() < adoptLiveDepixUntilRef.current;
       if (forceAdopt && live >= 0.01) {
+        // Same-value no-op inside adopt; do not re-arm force window here.
         adoptLiveDepixDisplay(live);
         return;
       }
@@ -553,6 +585,8 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       // Keep showing last good on transient read errors.
       const good = lastGoodDepixRef.current;
       if (good != null && good >= 0.01) setDepixDisplay(good);
+    } finally {
+      depixPollInFlightRef.current = false;
     }
   }, [
     wallet,
@@ -590,10 +624,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     if (!state?.fiatMode || !wallet) return;
     void refreshDepixBalance();
     // Pure asset receives may not change balanceSats (amount: 0 carrier).
-    // Poll the designated stable so BRL/USD Funds Received can fire.
-    const timer = setInterval(() => void refreshDepixBalance(), 4_000);
+    // Slow poll — α59–63 used 4s + VTXO fallback and saturated ASP on Xiaomi.
+    const timer = setInterval(() => void refreshDepixBalance(), 12_000);
     return () => clearInterval(timer);
-  }, [state?.fiatMode, wallet, refreshDepixBalance, balanceSats]);
+  }, [state?.fiatMode, wallet, refreshDepixBalance]);
 
   /**
    * Cold open / reinstall recovery: lastGood can be stale after a convert that
@@ -620,15 +654,31 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
             raw,
             depixAssetIdForNetwork(networkId),
           );
-          const fromVtxos = await readDepixAtomicFromVtxos(wallet, networkId);
-          if (fromVtxos > atomic) atomic = fromVtxos;
-          const live = depixAtomicToDisplay(atomic, networkId);
+          const shown =
+            lastDepixRef.current ?? lastGoodDepixRef.current ?? 0;
+          let live = depixAtomicToDisplay(atomic, networkId);
+          // VTXO only when balance empty or clearly below last-good (not every attempt).
+          if (
+            (atomic <= 0n || (shown >= 0.01 && live + 0.5 < shown)) &&
+            Date.now() >= depixVtxoCooldownUntilRef.current
+          ) {
+            try {
+              const fromVtxos = await readDepixAtomicFromVtxos(
+                wallet,
+                networkId,
+              );
+              if (fromVtxos > atomic) {
+                atomic = fromVtxos;
+                live = depixAtomicToDisplay(atomic, networkId);
+              }
+            } catch {
+              depixVtxoCooldownUntilRef.current = Date.now() + 60_000;
+            }
+          }
           if (!(live >= 0.01)) {
             console.warn("[basic] cold-start depix empty", { attempt });
             continue;
           }
-          const shown =
-            lastDepixRef.current ?? lastGoodDepixRef.current ?? 0;
           if (live > shown + 0.04) {
             console.warn("[basic] cold-start adopt live depix", {
               live,
@@ -640,7 +690,6 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
                   depixAssetIdForNetwork(networkId),
                 ),
               ),
-              vtxoAtomic: String(fromVtxos),
             });
             adoptLiveDepixDisplay(live);
             return;
@@ -968,7 +1017,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
             }
 
             if (liveAtomic != null && liveAtomic > 0n) {
-              adoptLiveDepixDisplay(depixAtomicToDisplay(liveAtomic, networkId));
+              adoptLiveDepixDisplay(
+                depixAtomicToDisplay(liveAtomic, networkId),
+                { holdForceMs: 45_000 },
+              );
             } else if (takeAtomic != null && takeAtomic > 0n) {
               applyLocalDepixReceive(depixAtomicToDisplay(takeAtomic, networkId), {
                 force: true,
@@ -1021,7 +1073,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
             maxiBaselineReadyRef.current = false;
           } else if (kind === "pay-convert") {
             // Hold auto-inbound so pay sats are not immediately re-swapped.
-            suppressAutoInboundUntilRef.current = Date.now() + 120_000;
+            suppressAutoInboundUntilRef.current = Date.now() + 180_000;
             await patchState({ pendingJob: null, lastSwapId: result.swapId });
           } else {
             await patchState({ pendingJob: null, lastSwapId: result.swapId });
@@ -1211,6 +1263,13 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     // Cancel UI removed — keep no-op for API stability.
   }, []);
 
+  const holdAutoInboundForPay = useCallback((ms = 180_000) => {
+    const until = Date.now() + Math.max(5_000, ms);
+    if (until > suppressAutoInboundUntilRef.current) {
+      suppressAutoInboundUntilRef.current = until;
+    }
+  }, []);
+
   const maybeAutoSwapInboundSats = useCallback(
     (sats: number) => {
       if (!state?.fiatMode || converting || jobBusyRef.current) return;
@@ -1220,6 +1279,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       }
       if (Date.now() < suppressAutoInboundUntilRef.current) {
         console.warn("[basic] auto-inbound suppress (pay-convert hold)", { sats });
+        return;
+      }
+      if (hasOutboundPayInFlight()) {
+        console.warn("[basic] auto-inbound skip (outbound chat pay)", { sats });
         return;
       }
       const minBase = fiatMinBaseSats(networkId);
@@ -1288,6 +1351,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     if (!state?.fiatMode || converting || jobBusyRef.current) return;
     if (payConvertInFlightRef.current) return;
     if (Date.now() < suppressAutoInboundUntilRef.current) return;
+    if (hasOutboundPayInFlight()) return;
     if (balanceSats == null) return;
     const reserve = DEFAULT_MIN_VTXO_SATS;
     const minBase = fiatMinBaseSats(networkId);
@@ -1297,7 +1361,8 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     );
     if (balanceSats < minMeaningful) return;
     if (balanceSats - reserve < minBase) return;
-    if (Date.now() - idleAutoInboundAtRef.current < 20_000) return;
+    // Slower backoff — idle recovery was racing chat Send (α63 R$12 timeout).
+    if (Date.now() - idleAutoInboundAtRef.current < 60_000) return;
     idleAutoInboundAtRef.current = Date.now();
     console.warn("[basic] auto-inbound idle recovery", { balanceSats });
     maybeAutoSwapInboundSats(balanceSats);
@@ -1394,7 +1459,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       if (preSats >= need) return preSats;
 
       payConvertInFlightRef.current = true;
-      suppressAutoInboundUntilRef.current = Date.now() + 120_000;
+      holdAutoInboundForPay(180_000);
       try {
       const code = fiatStableForNetwork(networkId).displayCode;
       const uiDisplay = depixDisplay ?? lastGoodDepixRef.current ?? 0;
@@ -1551,6 +1616,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       readLiveSpendableAtomic,
       clearOptimisticDepix,
       waitForFiatJobSlot,
+      holdAutoInboundForPay,
     ],
   );
 
@@ -1666,6 +1732,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       applyLocalDepixReceive,
       maybeAutoSwapInboundSats,
       convertDepixToSatsForPay,
+      holdAutoInboundForPay,
     }),
     [
       fiatMode,
@@ -1685,6 +1752,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       applyLocalDepixReceive,
       maybeAutoSwapInboundSats,
       convertDepixToSatsForPay,
+      holdAutoInboundForPay,
       networkId,
     ],
   );

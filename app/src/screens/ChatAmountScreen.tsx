@@ -47,6 +47,7 @@ export function ChatAmountScreen() {
     fiatMode,
     convertDepixToSatsForPay,
     depixDisplay,
+    holdAutoInboundForPay,
   } = useFiatMode();
   const {
     wallet,
@@ -269,6 +270,8 @@ export function ChatAmountScreen() {
           const payDeadline = Date.now() + 4 * 60_000;
           const payTimedOut = () => Date.now() > payDeadline;
           try {
+            // Hold auto-inbound for leftover / pre-existing sats during send.
+            holdAutoInboundForPay(180_000);
             if (needConvert) {
               updateChatMessage(local.id, { status: "converting" });
             }
@@ -284,6 +287,7 @@ export function ChatAmountScreen() {
             if (payTimedOut()) {
               throw new Error("Conversion timed out. Try again.");
             }
+            holdAutoInboundForPay(180_000);
             updateChatMessage(local.id, { status: "sending" });
             await executeChatPay({
               contactId,
@@ -300,10 +304,10 @@ export function ChatAmountScreen() {
             });
           } catch (e) {
             updateChatMessage(local.id, { status: "failed" });
-            console.warn(
-              "[basic] chat send background failed",
-              e instanceof Error ? e.message : e,
-            );
+            const msg = e instanceof Error ? e.message : String(e);
+            console.warn("[basic] chat send background failed", msg);
+            // Surface reason — bubble alone is easy to miss after goBack.
+            Alert.alert("Send failed", msg);
           }
         })();
       } catch (e) {
@@ -326,6 +330,7 @@ export function ChatAmountScreen() {
       selectedWallet,
       network.id,
       convertDepixToSatsForPay,
+      holdAutoInboundForPay,
       spot,
       beginOutboundSend,
       endOutboundSend,

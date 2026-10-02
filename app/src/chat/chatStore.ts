@@ -227,6 +227,50 @@ export function listInboundPaymentsByStatus(
   return rows.map(rowToMessage);
 }
 
+/**
+ * Mark orphaned outbound converting/sending bubbles as failed.
+ * Background convert+send dies on kill/reinstall; UI must not stay on Converting forever.
+ */
+export function failStaleOutboundPayments(opts?: {
+  olderThanMs?: number;
+}): number {
+  const olderThanMs = opts?.olderThanMs ?? 2 * 60_000;
+  const cutoff = Date.now() - Math.max(0, olderThanMs);
+  try {
+    const result = db().runSync(
+      `UPDATE chat_message
+       SET status = 'failed', updated_at = ?
+       WHERE kind = 'payment' AND direction = 'out'
+         AND status IN ('converting', 'sending')
+         AND created_at < ?`,
+      [Date.now(), cutoff],
+    );
+    const n = Number((result as { changes?: number } | null)?.changes ?? 0);
+    if (n > 0) {
+      console.warn("[basic] failStaleOutboundPayments", { n, olderThanMs });
+      notify();
+    }
+    return n;
+  } catch (e) {
+    console.warn("[basic] failStaleOutboundPayments failed", e);
+    return 0;
+  }
+}
+
+/** True while an outbound chat pay is still mid convert/send (any age). */
+export function hasOutboundPayInFlight(): boolean {
+  try {
+    const row = db().getFirstSync<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM chat_message
+       WHERE kind = 'payment' AND direction = 'out'
+         AND status IN ('converting', 'sending')`,
+    );
+    return (row?.n ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
 export type InsertChatMessageInput = {
   id?: string;
   contactId: string;

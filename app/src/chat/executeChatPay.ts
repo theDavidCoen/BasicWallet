@@ -167,7 +167,8 @@ export async function executeChatPay(opts: {
       recipients: [{ address: dest.address, amount: payAmount }],
       selectedVtxos: plan.selectedVtxos,
       prevAvailable: opts.hooks.spendable,
-      timeoutMs: 45_000,
+      // Fiat convert+send needs more headroom — ASP often busy after swap (α63).
+      timeoutMs: 90_000,
       onRealTxid: (real) => {
         if (real && !real.startsWith("pending:")) {
           recordSentFromThisDevice(networkId, walletId, real);
