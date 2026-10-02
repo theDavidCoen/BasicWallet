@@ -133,6 +133,11 @@ type FiatModeContextValue = {
    * while chat/classic send is in flight (or just failed mid-send).
    */
   holdAutoInboundForPay: (ms?: number) => void;
+  /**
+   * Home caption when inbound value is held below the auto-convert minimum
+   * (Fiat: sats accumulating; Maxi: designated stable accumulating).
+   */
+  pendingConvertHint: string | null;
 };
 
 const FiatModeContext = createContext<FiatModeContextValue | null>(null);
@@ -229,6 +234,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const [pendingEnterFiat, setPendingEnterFiat] = useState<number | null>(null);
   /** Default ON until storage loads. */
   const [bitcoinMaxiMode, setBitcoinMaxiMode] = useState(true);
+  /** Maxi: live designated-asset display held below convert min (Home caption). */
+  const [maxiPendingDisplay, setMaxiPendingDisplay] = useState<number | null>(
+    null,
+  );
   const abortRef = useRef<AbortController | null>(null);
   const activeSwapIdRef = useRef<string | null>(null);
   const walletIdRef = useRef<string | null>(null);
@@ -707,9 +716,12 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     };
   }, [state?.fiatMode, wallet, walletId, networkId, adoptLiveDepixDisplay]);
 
-  // Spot BTC/fiat for Home secondary sats-estimate of the stable (not leftover carrier dust).
+  // Spot BTC/fiat for Home secondary sats-estimate + Maxi pending-min checks.
   useEffect(() => {
-    if (!state?.fiatMode) {
+    const needSpot =
+      Boolean(state?.fiatMode) ||
+      (Boolean(bitcoinMaxiMode) && !state?.fiatMode);
+    if (!needSpot) {
       setBtcBrl(null);
       return;
     }
@@ -724,7 +736,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [state?.fiatMode, depixDisplay, networkId]);
+  }, [state?.fiatMode, bitcoinMaxiMode, depixDisplay, networkId]);
 
   const patchState = useCallback(
     async (patch: Partial<FiatModeState>) => {
@@ -1380,19 +1392,33 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   /**
    * Bitcoin Maxi Mode: outside Fiat Mode, inbound designated stable assets
    * (DePix / USDT) auto-swap to sats. Baseline first poll (no swap of stock);
-   * swap only when atomic increases.
+   * swap only when atomic increases *and* estimated sats ≥ solver minBase
+   * (below that: Home pending caption, wait to accumulate).
    */
   useEffect(() => {
     if (!wallet || !walletId) return;
     if (state?.fiatMode || converting || !bitcoinMaxiMode) {
       maxiAssetBaselineRef.current = null;
       maxiBaselineReadyRef.current = false;
+      setMaxiPendingDisplay(null);
       return;
     }
     if (!isFiatModeSwapAvailable(networkId)) return;
 
     let cancelled = false;
     const assetId = depixAssetIdForNetwork(networkId);
+    const minBase = fiatMinBaseSats(networkId);
+
+    const meetsConvertMin = (display: number): boolean => {
+      if (!(display >= 0.01)) return false;
+      const spot = btcBrl;
+      if (spot != null && spot > 0) {
+        const est = brlToSatsEstimate(display, spot);
+        return est != null && est >= minBase;
+      }
+      // No spot yet — allow tiny dust UI only; hold sub-1.00 for caption.
+      return display >= 1;
+    };
 
     const tick = async () => {
       if (cancelled || jobBusyRef.current) return;
@@ -1401,19 +1427,38 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         const raw = await wallet.getBalance();
         if (cancelled) return;
         const atomic = readDepixAtomicFromBalance(raw, assetId);
+        const display = depixAtomicToDisplay(atomic, networkId);
+        const ready = meetsConvertMin(display);
+
         if (!maxiBaselineReadyRef.current) {
           maxiAssetBaselineRef.current = atomic;
           maxiBaselineReadyRef.current = true;
+          setMaxiPendingDisplay(
+            display >= 0.01 && !ready ? display : null,
+          );
           console.warn("[basic] maxi baseline asset", {
             atomic: String(atomic),
+            display,
+            pending: display >= 0.01 && !ready,
           });
           return;
         }
         const prev = maxiAssetBaselineRef.current ?? 0n;
         if (atomic > prev && atomic > 0n) {
-          const display = depixAtomicToDisplay(atomic, networkId);
           if (display < 0.01) {
             maxiAssetBaselineRef.current = atomic;
+            setMaxiPendingDisplay(null);
+            return;
+          }
+          if (!ready) {
+            // Below min — keep bag, show Home caption, do not swap yet.
+            maxiAssetBaselineRef.current = atomic;
+            setMaxiPendingDisplay(display);
+            console.warn("[basic] maxi hold below convert min", {
+              display,
+              atomic: String(atomic),
+              minBase,
+            });
             return;
           }
           console.warn("[basic] maxi auto-swap asset→sats", {
@@ -1421,6 +1466,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
             display,
             prev: String(prev),
           });
+          setMaxiPendingDisplay(null);
           // Optimistically raise baseline so we do not stack jobs on the same bump.
           maxiAssetBaselineRef.current = atomic;
           const ok = await runJob("maxi-inbound", "depix-to-btc", atomic, {
@@ -1430,11 +1476,15 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
             // Allow retry on next poll if swap failed.
             maxiAssetBaselineRef.current = prev;
             maxiBaselineReadyRef.current = true;
+            setMaxiPendingDisplay(display);
           }
           return;
         }
         // Asset decreased or flat (after swap / spend) — track live.
         maxiAssetBaselineRef.current = atomic;
+        setMaxiPendingDisplay(
+          display >= 0.01 && !ready ? display : null,
+        );
       } catch (e) {
         console.warn("[basic] maxi asset poll failed", e);
       }
@@ -1454,6 +1504,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     bitcoinMaxiMode,
     networkId,
     runJob,
+    btcBrl,
   ]);
 
   const convertDepixToSatsForPay = useCallback(
@@ -1743,6 +1794,49 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     return brlToSatsEstimate(depixDisplay, btcBrl);
   }, [fiatMode, depixDisplay, btcBrl]);
 
+  /**
+   * Home: pending auto-convert caption.
+   * Fiat — live sats above a single dust carrier and below solver minBase.
+   * Maxi — designated stable held below convert min (see maxi poll).
+   * Never use optimistic pay-convert floors during outbound hold.
+   */
+  const pendingConvertHint = useMemo((): string | null => {
+    if (converting) return null;
+    const minBase = fiatMinBaseSats(networkId);
+    const dust = DEFAULT_MIN_VTXO_SATS;
+    const stable = fiatStableForNetwork(networkId);
+
+    if (fiatMode) {
+      if (payConvertInFlightRef.current) return null;
+      if (Date.now() < suppressAutoInboundUntilRef.current) return null;
+      if (hasOutboundPayInFlight()) return null;
+      const sats = balanceSats;
+      if (sats == null) return null;
+      // α66: ignore only ≤ dust carrier; show real pending excess below minBase.
+      if (!(sats > dust) || sats >= minBase) return null;
+      return `+ ${sats.toLocaleString("en-US")} sats to be converted after minimum is reached`;
+    }
+
+    if (bitcoinMaxiMode && maxiPendingDisplay != null && maxiPendingDisplay >= 0.01) {
+      const qty =
+        stable.decimals <= 2
+          ? maxiPendingDisplay.toLocaleString("en-US", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })
+          : String(maxiPendingDisplay);
+      return `+ ${qty} ${stable.ticker} to be converted after minimum is reached`;
+    }
+    return null;
+  }, [
+    fiatMode,
+    converting,
+    balanceSats,
+    bitcoinMaxiMode,
+    maxiPendingDisplay,
+    networkId,
+  ]);
+
   const value = useMemo<FiatModeContextValue>(
     () => ({
       fiatMode,
@@ -1765,6 +1859,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       maybeAutoSwapInboundSats,
       convertDepixToSatsForPay,
       holdAutoInboundForPay,
+      pendingConvertHint,
     }),
     [
       fiatMode,
@@ -1785,6 +1880,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       maybeAutoSwapInboundSats,
       convertDepixToSatsForPay,
       holdAutoInboundForPay,
+      pendingConvertHint,
       networkId,
     ],
   );
