@@ -48,6 +48,7 @@ import {
   padSatsForDepixSwap,
   satsToFiatEstimate,
   stripFiatModeLabelSuffix,
+  sumDesignatedAssetAtomic,
 } from "./depixAssets";
 import {
   quietFiatEnterNotices,
@@ -130,11 +131,17 @@ type FiatModeContextValue = {
 
 const FiatModeContext = createContext<FiatModeContextValue | null>(null);
 
+/**
+ * Read designated-asset atomic from getBalance().
+ * Take the *max* across availableAssets and assets — availableAssets can lag
+ * after a swap fill while `assets` already shows the new total (α60 stuck Home).
+ */
 function readDepixAtomicFromBalance(raw: unknown, assetId: string): bigint {
   if (!raw || typeof raw !== "object") return 0n;
   const o = raw as Record<string, unknown>;
   const lists = [o.availableAssets, o.assets].filter(Array.isArray) as unknown[][];
   const want = assetId.toLowerCase();
+  let best = 0n;
   for (const list of lists) {
     for (const item of list) {
       if (!item || typeof item !== "object") continue;
@@ -142,10 +149,53 @@ function readDepixAtomicFromBalance(raw: unknown, assetId: string): bigint {
       const id = String(row.assetId ?? row.id ?? "").toLowerCase();
       if (id !== want) continue;
       const amt = row.amount;
-      if (typeof amt === "bigint") return amt;
-      if (typeof amt === "number" && Number.isFinite(amt)) return BigInt(Math.floor(amt));
-      if (typeof amt === "string" && /^\d+$/.test(amt)) return BigInt(amt);
+      let n = 0n;
+      if (typeof amt === "bigint") n = amt;
+      else if (typeof amt === "number" && Number.isFinite(amt)) {
+        n = BigInt(Math.floor(amt));
+      } else if (typeof amt === "string" && /^\d+$/.test(amt)) n = BigInt(amt);
+      if (n > best) best = n;
     }
+  }
+  return best;
+}
+
+async function readDepixAtomicFromVtxos(
+  wallet: object,
+  networkId: Parameters<typeof sumDesignatedAssetAtomic>[1],
+): Promise<bigint> {
+  const w = wallet as {
+    getSpendableVtxos?: () => Promise<unknown>;
+    getVtxos?: () => Promise<unknown>;
+  };
+  const tryList = async (label: string, p: Promise<unknown>): Promise<bigint> => {
+    const list = await Promise.race([
+      p,
+      new Promise<never>((_, rej) =>
+        setTimeout(() => rej(new Error(`${label} timeout`)), 3500),
+      ),
+    ]);
+    if (!Array.isArray(list)) return 0n;
+    return sumDesignatedAssetAtomic(
+      list as Parameters<typeof sumDesignatedAssetAtomic>[0],
+      networkId,
+    );
+  };
+  try {
+    if (typeof w.getSpendableVtxos === "function") {
+      const n = await tryList("getSpendableVtxos", w.getSpendableVtxos());
+      if (n > 0n) return n;
+    }
+  } catch (e) {
+    console.warn("[basic] depix vtxo spendable read failed", e);
+  }
+  try {
+    if (typeof w.getVtxos === "function") {
+      const n = await tryList("getVtxos", w.getVtxos());
+      if (n > 0n) return n;
+    }
+  } catch (e) {
+    console.warn("[basic] depix vtxo read failed", e);
   }
   return 0n;
 }
@@ -207,6 +257,8 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const idleAutoInboundAtRef = useRef(0);
   /** After auto-inbound: refresh must adopt live DePix (skip overshoot hold). */
   const adoptLiveDepixUntilRef = useRef(0);
+  /** One cold-start reconcile pass per wallet+fiat session. */
+  const coldStartReconcileKeyRef = useRef<string | null>(null);
 
   const networkId = getNetworkConfig().id;
   const walletId = selectedWallet?.kind === "arkade" ? selectedWallet.id : null;
@@ -374,19 +426,30 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     }
     try {
       const raw = await wallet.getBalance();
-      const atomic = readDepixAtomicFromBalance(raw, depixAssetIdForNetwork(networkId));
+      let atomic = readDepixAtomicFromBalance(
+        raw,
+        depixAssetIdForNetwork(networkId),
+      );
+      const goodHint = lastGoodDepixRef.current ?? 0;
+      // Balance.assets can lag after convert — if at/below last-good, check VTXOs.
+      if (
+        atomic <= 0n ||
+        (goodHint >= 0.01 &&
+          depixAtomicToDisplay(atomic, networkId) <= goodHint + 0.02)
+      ) {
+        const fromVtxos = await readDepixAtomicFromVtxos(wallet, networkId);
+        if (fromVtxos > atomic) {
+          console.warn("[basic] depix poll prefer vtxo sum", {
+            balance: String(atomic),
+            vtxos: String(fromVtxos),
+          });
+          atomic = fromVtxos;
+        }
+      }
       const live = depixAtomicToDisplay(atomic, networkId);
       const forceAdopt = Date.now() < adoptLiveDepixUntilRef.current;
       if (forceAdopt && live >= 0.01) {
-        clearOptimisticDepix();
-        lastGoodDepixRef.current = live;
-        lastDepixRef.current = live;
-        if (walletId) {
-          void writeFiatModeState(networkId, walletId, {
-            lastGoodDisplay: live,
-          });
-        }
-        setDepixDisplay(live);
+        adoptLiveDepixDisplay(live);
         return;
       }
       const opt = optimisticDepixRef.current;
@@ -399,36 +462,24 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
           return;
         }
         // Transient overshoot (double-count / unsettled vtxos) — keep optimistic.
+        // Clear increase above last-good still adopts (stuck-Home recovery).
         if (live > opt + 0.05) {
+          const good = lastGoodDepixRef.current ?? 0;
+          if (live > good + 0.05 && live <= good * 1.75 + 0.05) {
+            adoptLiveDepixDisplay(live);
+            return;
+          }
           console.warn("[basic] depix poll ignore overshoot", { live, opt });
           return;
         }
         // Live caught up to optimistic (±0.02) — adopt and clear hold.
         if (Math.abs(live - opt) <= 0.02) {
-          clearOptimisticDepix();
-          if (live >= 0.01) {
-            lastGoodDepixRef.current = live;
-            if (walletId) {
-              void writeFiatModeState(networkId, walletId, {
-                lastGoodDisplay: live,
-              });
-            }
-          }
-          setDepixDisplay(live);
+          adoptLiveDepixDisplay(live);
           return;
         }
         // Live slightly below optimistic (fee dust) — adopt when close.
         if (live >= opt - 0.05 && live <= opt) {
-          clearOptimisticDepix();
-          if (live >= 0.01) {
-            lastGoodDepixRef.current = live;
-            if (walletId) {
-              void writeFiatModeState(networkId, walletId, {
-                lastGoodDisplay: live,
-              });
-            }
-          }
-          setDepixDisplay(live);
+          adoptLiveDepixDisplay(live);
           return;
         }
         // Still settling — keep showing optimistic.
@@ -458,10 +509,9 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         return;
       }
       // Transient ~2× (old assets + unsettled swap fill) — hold last good.
-      // Skip while post-auto-inbound adopt window is open.
+      // Modest increases (post-convert) always adopt — never stay stuck on last-good.
       const good = lastGoodDepixRef.current;
       if (
-        !forceAdopt &&
         good != null &&
         good >= 0.01 &&
         live > good * 1.75 + 0.05
@@ -473,6 +523,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         optimisticDepixRef.current = good;
         optimisticDepixUntilRef.current = Date.now() + 12_000;
         setDepixDisplay(good);
+        return;
+      }
+      if (good != null && live > good + 0.04) {
+        adoptLiveDepixDisplay(live);
         return;
       }
       clearOptimisticDepix();
@@ -491,7 +545,13 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       const good = lastGoodDepixRef.current;
       if (good != null && good >= 0.01) setDepixDisplay(good);
     }
-  }, [wallet, walletId, networkId, clearOptimisticDepix]);
+  }, [
+    wallet,
+    walletId,
+    networkId,
+    clearOptimisticDepix,
+    adoptLiveDepixDisplay,
+  ]);
 
   /**
    * Live spendable stable atomic only — never lastGood / optimistic.
@@ -525,6 +585,69 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     const timer = setInterval(() => void refreshDepixBalance(), 4_000);
     return () => clearInterval(timer);
   }, [state?.fiatMode, wallet, refreshDepixBalance, balanceSats]);
+
+  /**
+   * Cold open / reinstall recovery: lastGood can be stale after a convert that
+   * never force-adopted. Retry live balance + VTXO sum and adopt when higher.
+   */
+  useEffect(() => {
+    if (!state?.fiatMode || !wallet || !walletId) {
+      coldStartReconcileKeyRef.current = null;
+      return;
+    }
+    const key = `${networkId}:${walletId}:fiat`;
+    if (coldStartReconcileKeyRef.current === key) return;
+    coldStartReconcileKeyRef.current = key;
+    let cancelled = false;
+    const recover = async () => {
+      for (let attempt = 0; attempt < 6 && !cancelled; attempt++) {
+        if (attempt > 0) {
+          await new Promise((r) => setTimeout(r, 1200 * attempt));
+        }
+        if (cancelled) return;
+        try {
+          const raw = await wallet.getBalance();
+          let atomic = readDepixAtomicFromBalance(
+            raw,
+            depixAssetIdForNetwork(networkId),
+          );
+          const fromVtxos = await readDepixAtomicFromVtxos(wallet, networkId);
+          if (fromVtxos > atomic) atomic = fromVtxos;
+          const live = depixAtomicToDisplay(atomic, networkId);
+          if (!(live >= 0.01)) {
+            console.warn("[basic] cold-start depix empty", { attempt });
+            continue;
+          }
+          const shown =
+            lastDepixRef.current ?? lastGoodDepixRef.current ?? 0;
+          if (live > shown + 0.04) {
+            console.warn("[basic] cold-start adopt live depix", {
+              live,
+              shown,
+              attempt,
+              balanceAtomic: String(
+                readDepixAtomicFromBalance(
+                  raw,
+                  depixAssetIdForNetwork(networkId),
+                ),
+              ),
+              vtxoAtomic: String(fromVtxos),
+            });
+            adoptLiveDepixDisplay(live);
+            return;
+          }
+          // Live confirms shown — stop retrying.
+          if (Math.abs(live - shown) <= 0.05) return;
+        } catch (e) {
+          console.warn("[basic] cold-start depix reconcile failed", e);
+        }
+      }
+    };
+    void recover();
+    return () => {
+      cancelled = true;
+    };
+  }, [state?.fiatMode, wallet, walletId, networkId, adoptLiveDepixDisplay]);
 
   // Spot BTC/fiat for Home secondary sats-estimate of the stable (not leftover carrier dust).
   useEffect(() => {

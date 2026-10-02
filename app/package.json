@@ -1,6 +1,6 @@
 {
   "name": "basic-wallet",
-  "version": "0.7.0-alpha.60",
+  "version": "0.7.0-alpha.61",
   "private": true,
   "main": "index.ts",
   "scripts": {
