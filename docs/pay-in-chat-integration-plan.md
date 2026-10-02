@@ -9,7 +9,7 @@
 **Date:** 2026-10-01  
 **Decisions locked:** 2026-10-01 (David); hub placement locked 2026-10-01
 
-**Related (asset-aware / Fiat Mode):** [`pay-in-chat-fiat-asset-plan.md`](./pay-in-chat-fiat-asset-plan.md) — per-viewer card denominations (Fiat↔Maxi) + DePix/USDT→sats convert before chat Send/Pay. Phase A+B shipping on `david/payinchat` (α53+).
+**Related (asset-aware / Fiat Mode):** [`pay-in-chat-fiat-asset-plan.md`](./pay-in-chat-fiat-asset-plan.md) — per-viewer card denominations (Fiat↔Maxi) + DePix/USDT→sats convert before chat Send/Pay. Phase A+B shipping on `david/payinchat` (α53+; Confirm+bio-first + bubble convert status α55+).
 
 ---
 
