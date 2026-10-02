@@ -21,6 +21,8 @@ export type DustSafeSendPlan = {
   selectedVtxos?: SpendableVtxo[];
   amountBumped: boolean;
   originalAmount: number;
+  /** Sum of all spendable vtxo values at plan time (for spend-drop baseline). */
+  totalAvailable?: number;
 };
 
 export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -52,18 +54,43 @@ export function extractSendTxid(raw: unknown): string {
   return String(raw ?? "");
 }
 
-export async function readSpendableAvailable(w: {
-  getSpendableVtxos?: () => Promise<Array<{ value?: number }>>;
-}): Promise<number | null> {
-  if (typeof w.getSpendableVtxos !== "function") return null;
-  try {
-    const list = await withTimeout(w.getSpendableVtxos(), 1_200, "getSpendableVtxos");
-    let available = 0;
-    for (const v of list) available += Number(v.value ?? 0);
-    return available;
-  } catch {
-    return null;
+export async function readSpendableAvailable(
+  w: {
+    getSpendableVtxos?: () => Promise<Array<{ value?: number }>>;
+    getBalance?: () => Promise<{ available?: number } | unknown>;
+  },
+  opts?: { timeoutMs?: number },
+): Promise<number | null> {
+  const timeoutMs = opts?.timeoutMs ?? 1_200;
+  if (typeof w.getSpendableVtxos === "function") {
+    try {
+      const list = await withTimeout(
+        w.getSpendableVtxos(),
+        timeoutMs,
+        "getSpendableVtxos",
+      );
+      let available = 0;
+      for (const v of list) available += Number(v.value ?? 0);
+      return available;
+    } catch {
+      /* fall through to getBalance — Xiaomi often times out vtxo reads (α73) */
+    }
   }
+  if (typeof w.getBalance === "function") {
+    try {
+      const raw = await withTimeout(w.getBalance(), timeoutMs, "getBalance");
+      if (
+        raw &&
+        typeof raw === "object" &&
+        typeof (raw as { available?: unknown }).available === "number"
+      ) {
+        return Math.floor((raw as { available: number }).available);
+      }
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 function vtxoBatchExpiry(v: SpendableVtxo): number {
@@ -132,8 +159,14 @@ export async function prepareDustSafeSend(
     return { amount, amountBumped: false, originalAmount: amount };
   }
   const coins = list.filter((v) => Number(v.value) > 0);
+  const totalAvailable = coins.reduce((s, v) => s + Number(v.value ?? 0), 0);
   if (coins.length === 0) {
-    return { amount, amountBumped: false, originalAmount: amount };
+    return {
+      amount,
+      amountBumped: false,
+      originalAmount: amount,
+      totalAvailable: 0,
+    };
   }
 
   // Prefer pure-BTC coins first so sats sends avoid pulling asset change.
@@ -184,6 +217,7 @@ export async function prepareDustSafeSend(
       selectedVtxos: selected,
       amountBumped: true,
       originalAmount: amount,
+      totalAvailable,
     };
   }
 
@@ -192,6 +226,7 @@ export async function prepareDustSafeSend(
     selectedVtxos: selected,
     amountBumped: false,
     originalAmount: amount,
+    totalAvailable,
   };
 }
 
@@ -278,6 +313,8 @@ export async function waitForSendOrSpendDrop(
     spendHitsRequired?: number;
     /** Grace wait for real txid after spend-drop (chat: short). */
     txidGraceMs?: number;
+    /** Per-read timeout for spendable/balance during spend-drop. */
+    spendReadTimeoutMs?: number;
     onRealTxid?: (txid: string) => void;
     /** Fired if SDK send resolves after the waiter already timed out. */
     onLateSuccess?: (r: SendWaitResult) => void;
@@ -288,6 +325,7 @@ export async function waitForSendOrSpendDrop(
   const spendPollMs = opts.spendPollMs ?? SPEND_POLL_MS;
   const spendHitsRequired = Math.max(1, opts.spendHitsRequired ?? 2);
   const txidGraceMs = opts.txidGraceMs ?? TXID_GRACE_MS;
+  const spendReadTimeoutMs = opts.spendReadTimeoutMs ?? 1_200;
   const recipients = opts.recipients;
   if (recipients.length === 0) {
     throw new Error("No recipients");
@@ -366,8 +404,15 @@ export async function waitForSendOrSpendDrop(
         if (!first) await sleep(spendPollMs);
         first = false;
         if (settled) return;
-        const avail = await readSpendableAvailable(w);
-        if (avail == null) continue;
+        const avail = await readSpendableAvailable(w, {
+          timeoutMs: spendReadTimeoutMs,
+        });
+        if (avail == null) {
+          console.warn("[basic] spend-drop read null (retry)", {
+            timeoutMs: spendReadTimeoutMs,
+          });
+          continue;
+        }
         if (avail <= target + 1) hits += 1;
         else hits = 0;
         if (hits < spendHitsRequired) continue;
@@ -396,7 +441,9 @@ export async function waitForSendOrSpendDrop(
   } catch (e) {
     // Soft timeout: funds often already left while SDK promise hung (α69).
     if (!settled && target != null) {
-      const avail = await readSpendableAvailable(w);
+      const avail = await readSpendableAvailable(w, {
+        timeoutMs: Math.max(spendReadTimeoutMs, 4_000),
+      });
       if (avail != null && avail <= target + 1) {
         const txid = await Promise.race([
           sendP.catch(() => null),

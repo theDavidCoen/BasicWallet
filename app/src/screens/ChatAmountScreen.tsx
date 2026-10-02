@@ -283,6 +283,8 @@ export function ChatAmountScreen() {
         void (async () => {
           const payDeadline = Date.now() + 4 * 60_000;
           const payTimedOut = () => Date.now() > payDeadline;
+          // Pause ASP polls before ensureSats/getBalance so Xiaomi send isn't starved (α73).
+          beginOutboundSend();
           try {
             // Hold auto-inbound for leftover / pre-existing sats during send.
             holdAutoInboundForPay(180_000);
@@ -344,6 +346,8 @@ export function ChatAmountScreen() {
             console.warn("[basic] chat send background failed", msg);
             // Surface reason — bubble alone is easy to miss after goBack.
             Alert.alert("Send failed", msg);
+          } finally {
+            endOutboundSend();
           }
         })();
       } catch (e) {

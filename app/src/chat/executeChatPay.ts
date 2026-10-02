@@ -12,6 +12,7 @@ import {
   formatSendError,
   prepareDustSafeSend,
   readMinVtxoSats,
+  readSpendableAvailable,
   waitForSendOrSpendDrop,
   type SendRecipient,
 } from "../wallet/arkMultiSend";
@@ -199,13 +200,6 @@ export async function executeChatPay(opts: {
   });
 
   const { wallet, walletId, networkId } = opts.hooks;
-  const dust = await readMinVtxoSats(wallet);
-  if (amount < dust) {
-    throw new Error(`Minimum send is ${dust} sats (ASP dust / min vtxo).`);
-  }
-  if (opts.hooks.spendable != null && amount > opts.hooks.spendable) {
-    throw new Error("Insufficient balance.");
-  }
 
   if (!opts.skipPresence) {
     const auth = await requireUserPresence("Confirm send");
@@ -260,10 +254,19 @@ export async function executeChatPay(opts: {
     updateChatMessage(opts.localMessageId, { status: "sending" });
   }
 
-  // Pause balance/activity ASP polls before vtxo select + send (α69).
+  // Pause ASP polls before getInfo/vtxo select — Xiaomi starves wallet.send otherwise (α73).
   opts.hooks.beginOutboundSend();
   let payAmount = amount;
+  let optimisticPaid = false;
+  let prevAvailable: number | null = opts.hooks.spendable;
   try {
+    const dust = await readMinVtxoSats(wallet);
+    if (amount < dust) {
+      throw new Error(`Minimum send is ${dust} sats (ASP dust / min vtxo).`);
+    }
+    if (opts.hooks.spendable != null && amount > opts.hooks.spendable) {
+      throw new Error("Insufficient balance.");
+    }
     const recipients: SendRecipient[] = [{ address: dest.address, amount }];
     const plan = await prepareDustSafeSend(wallet, amount, dust);
     payAmount = plan.amount;
@@ -276,11 +279,22 @@ export async function executeChatPay(opts: {
       recipients,
     );
 
+    // Prefer vtxo-sum baseline — UI spendable can be stale/null (disables spend-drop).
+    prevAvailable =
+      plan.totalAvailable != null && plan.totalAvailable > 0
+        ? plan.totalAvailable
+        : opts.hooks.spendable;
+
     const settleLate = (txid: string) => {
       const msg = opts.localMessageId
         ? getChatMessage(opts.localMessageId)
         : null;
-      if (msg?.status === "paid") return;
+      if (msg?.status === "paid") {
+        if (txid && !txid.startsWith("pending:")) {
+          recordSentFromThisDevice(networkId, walletId, txid);
+        }
+        return;
+      }
       console.warn("[basic] chat pay late settle → paid", {
         amount: payAmount,
         txid: txid.slice(0, 16),
@@ -302,17 +316,19 @@ export async function executeChatPay(opts: {
       });
     };
 
-    // α72: outbound polls paused — spend-drop can start early so "You sent"
-    // is not stuck ~12s waiting (α69 default). Receipt publishes ASAP after.
-    const { txid } = await waitForSendOrSpendDrop(wallet, {
+    // Start ASP send, then flip You sent immediately (α73). Xiaomi often holds
+    // wallet.send >20s while funds already left; spend-drop vtxo reads also time out.
+    const pendingTxid = `pending:${Date.now()}`;
+    const sendWait = waitForSendOrSpendDrop(wallet, {
       recipients: [{ address: dest.address, amount: payAmount }],
       selectedVtxos: plan.selectedVtxos,
-      prevAvailable: opts.hooks.spendable,
+      prevAvailable,
       timeoutMs: 120_000,
-      spendDropStartMs: 2_000,
-      spendPollMs: 1_000,
+      spendDropStartMs: 0,
+      spendPollMs: 800,
       spendHitsRequired: 1,
-      txidGraceMs: 400,
+      txidGraceMs: 300,
+      spendReadTimeoutMs: 4_000,
       onRealTxid: (real) => {
         if (real && !real.startsWith("pending:")) {
           recordSentFromThisDevice(networkId, walletId, real);
@@ -323,7 +339,6 @@ export async function executeChatPay(opts: {
       },
     });
 
-    // You sent first (local SQL), then fire-and-forget NIP-17 receipt (α72).
     finalizeChatPayPaid({
       contactId: opts.contactId,
       amountSats: payAmount,
@@ -332,23 +347,70 @@ export async function executeChatPay(opts: {
       fiatCaption: opts.fiatCaption,
       localMessageId: opts.localMessageId,
       paymentId,
-      txid,
+      txid: pendingTxid,
       applyLocalSpend: opts.hooks.applyLocalSpend,
       bumpActivity: opts.hooks.bumpActivity,
       networkId,
       walletId,
       skipReceipt: true,
     });
+    optimisticPaid = true;
+    console.warn("[basic] chat pay optimistic You sent", {
+      amount: payAmount,
+      prevAvailable,
+    });
+    // Yield so RN paints "You sent" before more ASP/bridge work.
+    await new Promise<void>((r) => setTimeout(r, 0));
     void publishPaymentReceipt({
       contactId: opts.contactId,
       paymentId,
       amountSats: payAmount,
       memo: opts.memo,
-      txid,
+      txid: pendingTxid,
       rail: "arkade",
       relatedRequestId: opts.requestId ?? undefined,
     });
-    return { txid, paymentId, address: dest.address };
+
+    try {
+      const { txid } = await sendWait;
+      if (txid && !txid.startsWith("pending:")) {
+        recordSentFromThisDevice(networkId, walletId, txid);
+        // Refresh receipt with real txid (best-effort).
+        void publishPaymentReceipt({
+          contactId: opts.contactId,
+          paymentId,
+          amountSats: payAmount,
+          memo: opts.memo,
+          txid,
+          rail: "arkade",
+          relatedRequestId: opts.requestId ?? undefined,
+        });
+      }
+      return { txid, paymentId, address: dest.address };
+    } catch (sendErr) {
+      // Optimistic paid: only fail UI if activity/pending cannot prove settle.
+      const recovered = findAlreadySettledOutbound({
+        networkId,
+        walletId,
+        contactId: opts.contactId,
+        amountSats: payAmount,
+      });
+      if (recovered) {
+        console.warn("[basic] chat pay kept optimistic after send err", {
+          amount: payAmount,
+          txid: recovered.txid.slice(0, 16),
+        });
+        if (recovered.txid && !recovered.txid.startsWith("pending:")) {
+          recordSentFromThisDevice(networkId, walletId, recovered.txid);
+        }
+        return {
+          txid: recovered.txid,
+          paymentId: recovered.paymentId ?? paymentId,
+          address: dest.address,
+        };
+      }
+      throw sendErr;
+    }
   } catch (e) {
     // Last chance: activity / pending stamp may already prove success.
     const recovered = findAlreadySettledOutbound({
@@ -382,6 +444,34 @@ export async function executeChatPay(opts: {
         paymentId: recovered.paymentId ?? paymentId,
         address: dest.address,
       };
+    }
+    // Optimistic You sent: keep if spendable already dropped; else revert to failed.
+    if (optimisticPaid) {
+      try {
+        const avail = await readSpendableAvailable(wallet, { timeoutMs: 4_000 });
+        if (
+          prevAvailable != null &&
+          avail != null &&
+          avail <= prevAvailable - payAmount + 1
+        ) {
+          console.warn("[basic] chat pay kept optimistic (spend dropped)", {
+            prevAvailable,
+            avail,
+            amount: payAmount,
+          });
+          return {
+            txid: `pending:${Date.now()}`,
+            paymentId,
+            address: dest.address,
+          };
+        }
+      } catch {
+        /* ignore */
+      }
+      if (opts.localMessageId) {
+        updateChatMessage(opts.localMessageId, { status: "failed" });
+      }
+      console.warn("[basic] chat pay reverted optimistic You sent", e);
     }
 
     if (opts.localMessageId) {

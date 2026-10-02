@@ -354,6 +354,7 @@ export function ChatThreadScreen() {
     setActionBusy(msg.requestId);
     setPayBusyLabel(willConvert ? "Converting…" : "Sending…");
     let localPaymentId: string | null = null;
+    beginOutboundSend();
     try {
       // Biometrics before any convert (no global CONVERTING dialog for chat).
       const auth = await requireUserPresence("Confirm send");
@@ -452,6 +453,7 @@ export function ChatThreadScreen() {
         );
       }
     } finally {
+      endOutboundSend();
       setActionBusy(null);
       setPayBusyLabel(null);
     }
