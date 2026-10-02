@@ -108,8 +108,13 @@ type FiatModeContextValue = {
    * Convert DePix/USDT → BTC for a sats pay.
    * Targeted: only `satsNeeded` + fee pad (not full stable balance).
    * Resolves with observed spendable sats after fill (or throws).
+   * `quiet: true` suppresses the full-screen converting overlay (chat pay
+   * shows progress on the payment bubble instead).
    */
-  convertDepixToSatsForPay: (satsNeeded: number) => Promise<number>;
+  convertDepixToSatsForPay: (
+    satsNeeded: number,
+    opts?: { quiet?: boolean },
+  ) => Promise<number>;
 };
 
 const FiatModeContext = createContext<FiatModeContextValue | null>(null);
@@ -996,7 +1001,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   ]);
 
   const convertDepixToSatsForPay = useCallback(
-    async (satsNeeded: number): Promise<number> => {
+    async (
+      satsNeeded: number,
+      opts?: { quiet?: boolean },
+    ): Promise<number> => {
       const need = Math.floor(satsNeeded);
       if (!(need > 0)) return balanceSats ?? 0;
 
@@ -1035,6 +1043,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
           giveDisplay,
           haveDisplay: display,
           atomic: String(atomic),
+          quiet: Boolean(opts?.quiet),
         });
       } else {
         // No spot — convert full balance (cannot target safely).
@@ -1043,6 +1052,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
           need,
           display,
           atomic: String(atomic),
+          quiet: Boolean(opts?.quiet),
         });
       }
 
@@ -1056,7 +1066,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       ensureBalanceAtLeast(preSats + need);
       suppressAutoInboundUntilRef.current = Date.now() + 120_000;
 
-      const ok = await runJob("pay-convert", "depix-to-btc", atomic);
+      // Chat pay uses quiet so the bubble owns progress (no global CONVERTING).
+      const ok = await runJob("pay-convert", "depix-to-btc", atomic, {
+        quiet: opts?.quiet,
+      });
       if (!ok) {
         throw new Error("Conversion incomplete");
       }

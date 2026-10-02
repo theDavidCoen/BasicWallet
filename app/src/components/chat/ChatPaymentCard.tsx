@@ -1,11 +1,26 @@
 import { StyleSheet, Text, View } from "react-native";
+import type { ChatMessageStatus } from "../../chat/types";
 import { colors } from "../../theme/colors";
+
+function paymentTitle(
+  outgoing: boolean,
+  status: ChatMessageStatus | null | undefined,
+): string {
+  if (!outgoing) return "You received";
+  if (status === "converting") return "Converting…";
+  if (status === "sending" || status === "pending" || status === "pending_out") {
+    return "Sending…";
+  }
+  if (status === "failed") return "Send failed";
+  return "You sent";
+}
 
 export function ChatPaymentCard({
   outgoing,
   amountSats,
   memo,
   timeLabel,
+  status,
   primaryAmount,
   secondaryAmount,
 }: {
@@ -13,6 +28,7 @@ export function ChatPaymentCard({
   amountSats: number;
   memo?: string | null;
   timeLabel?: string;
+  status?: ChatMessageStatus | null;
   /** Viewer-mode primary (defaults to sats). */
   primaryAmount?: string | null;
   /** Optional secondary line (e.g. ≈ N sats for Fiat). */
@@ -21,11 +37,26 @@ export function ChatPaymentCard({
   const primary =
     primaryAmount?.trim() || `${amountSats.toLocaleString("en-US")} sats`;
   const secondary = secondaryAmount?.trim() || null;
+  const title = paymentTitle(outgoing, status);
+  const inFlight =
+    outgoing &&
+    (status === "converting" ||
+      status === "sending" ||
+      status === "pending" ||
+      status === "pending_out");
+  const failed = outgoing && status === "failed";
 
   return (
     <View style={[styles.card, outgoing ? styles.out : styles.in]}>
-      <Text style={[styles.title, outgoing && styles.titleOut]}>
-        {outgoing ? "You sent" : "You received"}
+      <Text
+        style={[
+          styles.title,
+          outgoing && styles.titleOut,
+          failed && styles.titleFailed,
+          inFlight && styles.titleInFlight,
+        ]}
+      >
+        {title}
       </Text>
       <Text style={[styles.amount, outgoing && styles.amountOut]}>{primary}</Text>
       {secondary ? (
@@ -69,6 +100,8 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   titleOut: { color: "#555" },
+  titleInFlight: { color: "#888" },
+  titleFailed: { color: "#B00020" },
   amount: {
     fontFamily: "JetBrainsMono_700Bold",
     fontSize: 18,

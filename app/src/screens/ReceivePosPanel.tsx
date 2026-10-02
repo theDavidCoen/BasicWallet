@@ -127,7 +127,7 @@ export function ReceivePosPanel({
   /**
    * `receive` = classic POS (QR).
    * `chat-request` = amount entry then publish encrypted Nostr pay-request.
-   * `chat-send` = amount entry then Continue → convert if needed → biometrics.
+   * `chat-send` = amount entry then Confirm → biometrics → quiet convert/send.
    */
   variant?: "receive" | "chat-request" | "chat-send";
   /** Shown under title when variant is chat-request / chat-send. */
@@ -533,7 +533,7 @@ export function ReceivePosPanel({
         ) : isChatRequest ? (
           <Text style={styles.ctaText}>Send request</Text>
         ) : isChatSend ? (
-          <Text style={styles.ctaText}>Continue</Text>
+          <Text style={styles.ctaText}>Confirm</Text>
         ) : !fiatMode && !bip21Uri ? (
           <View style={styles.ctaBusy}>
             <ActivityIndicator color="#000" />

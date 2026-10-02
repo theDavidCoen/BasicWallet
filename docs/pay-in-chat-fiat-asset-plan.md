@@ -293,7 +293,7 @@ Phase B/C acceptance (cards): Fiat↔Maxi matrix in §3.2 matches primary denomi
 | # | Decision |
 | - | -------- |
 | 1 | **Targeted convert (B):** when Fiat Mode lacks sats, convert only `satsNeeded` + fee pad; leave remaining stable balance in fiat (not classic Send’s full-balance convert). |
-| 2 | **One-shot** chat Confirm: Confirm → convert if needed → biometrics → send (not classic Send’s two-step). |
+| 2 | **One-shot** chat Confirm: Confirm → **biometrics first** → leave to ChatThread → quiet convert (if needed) + send; progress on payment bubble (`converting` → `sending` → `You sent` / failed). Suppress global Fiat CONVERTING overlay for chat pay-convert (α55+). |
 | 3 | **Freeze** fiat captions at send/receive time (historical; do not recompute when spot moves). |
 | 5 | Maxi users see **sats only** on cards — no ≈ USD/EUR secondary in Phase B. |
 | 6 | Fiat **requester pads** `amountSats` for expected inbound sats→stable swap fees (same idea as Universal BIP21 receive). |

@@ -109,10 +109,17 @@ export async function executeChatPay(opts: {
   memo?: string;
   requestId?: string | null;
   hooks: ChatPayWalletHooks;
-  /** Skip presence when caller already gated (should stay false for MVP honesty). */
+  /** Skip presence when caller already gated (chat Send Confirm path). */
   skipPresence?: boolean;
   /** Frozen Fiat caption at send time (viewer history). */
   fiatCaption?: string | null;
+  /**
+   * Optimistic local payment row already inserted (chat Send leaves the amount
+   * screen before convert+send). Updated to paid/failed instead of a new insert.
+   */
+  localMessageId?: string | null;
+  /** Prefer this paymentId when creating/updating the local row. */
+  paymentId?: string | null;
 }): Promise<{ txid: string; paymentId: string; address: string }> {
   const amount = Math.floor(opts.amountSats);
   if (!(amount > 0)) throw new Error("Enter a positive amount.");
@@ -136,6 +143,10 @@ export async function executeChatPay(opts: {
     if (!auth.ok) {
       throw new Error(auth.reason || "Authentication required");
     }
+  }
+
+  if (opts.localMessageId) {
+    updateChatMessage(opts.localMessageId, { status: "sending" });
   }
 
   const recipients: SendRecipient[] = [{ address: dest.address, amount }];
@@ -169,18 +180,28 @@ export async function executeChatPay(opts: {
       recordSentFromThisDevice(networkId, walletId, txid);
     }
 
-    const paymentId = newChatId("pay");
-    insertChatMessage({
-      contactId: opts.contactId,
-      kind: "payment",
-      direction: "out",
-      amountSats: payAmount,
-      memo: opts.memo?.trim() || null,
-      status: "paid",
-      paymentId,
-      requestId: opts.requestId ?? null,
-      fiatCaption: opts.fiatCaption ?? null,
-    });
+    const paymentId = opts.paymentId?.trim() || newChatId("pay");
+    if (opts.localMessageId) {
+      updateChatMessage(opts.localMessageId, {
+        amountSats: payAmount,
+        memo: opts.memo?.trim() || null,
+        status: "paid",
+        paymentId,
+        fiatCaption: opts.fiatCaption ?? null,
+      });
+    } else {
+      insertChatMessage({
+        contactId: opts.contactId,
+        kind: "payment",
+        direction: "out",
+        amountSats: payAmount,
+        memo: opts.memo?.trim() || null,
+        status: "paid",
+        paymentId,
+        requestId: opts.requestId ?? null,
+        fiatCaption: opts.fiatCaption ?? null,
+      });
+    }
 
     if (opts.requestId) {
       const req = findMessageByRequestId(opts.contactId, opts.requestId);
@@ -200,6 +221,9 @@ export async function executeChatPay(opts: {
     opts.hooks.bumpActivity?.();
     return { txid, paymentId, address: dest.address };
   } catch (e) {
+    if (opts.localMessageId) {
+      updateChatMessage(opts.localMessageId, { status: "failed" });
+    }
     throw new Error(formatSendError(e, DEFAULT_MIN_VTXO_SATS));
   } finally {
     opts.hooks.endOutboundSend();

@@ -72,6 +72,8 @@ export type ChatMessageStatus =
   | "pending"
   | "pending_out"
   | "sent"
+  | "converting"
+  | "sending"
   | "failed"
   | "paid"
   | "declined"

@@ -1,8 +1,8 @@
 /**
  * Chat amount entry:
  * - Request → POS keypad (ReceivePosPanel chat-request) → publish pay-request
- * - Send → POS keypad (chat-send, Continue) → convert if needed → biometrics → send
- *   (one-shot; no separate Confirm send screen — matches Maxi / locked plan)
+ * - Send → POS keypad (chat-send, Confirm) → biometrics → leave to thread →
+ *   quiet convert (if needed) + send with bubble status (converting → sending → paid)
  * Pay-from-request never lands here (biometrics-only from the request card).
  */
 
@@ -14,6 +14,7 @@ import { isValidArkAddress } from "@arkade-os/sdk";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
 import { sendPayRequest } from "../chat/chatActions";
+import { insertChatMessage, updateChatMessage } from "../chat/chatStore";
 import {
   executeChatPay,
   resolveChatPayDestination,
@@ -21,6 +22,7 @@ import {
 import { ensureSatsForPay } from "../chat/ensureSatsForPay";
 import { freezeFiatCaptionFromSats } from "../chat/formatChatAmount";
 import type { ChatAsset } from "../chat/types";
+import { newChatId } from "../chat/types";
 import { getContact } from "../contacts/contactStore";
 import { contactDisplayName } from "../contacts/types";
 import { getNetworkConfig } from "../config/network";
@@ -30,6 +32,8 @@ import {
   padSatsForDepixSwap,
 } from "../fiat/depixAssets";
 import { useFiatMode } from "../fiat/FiatModeProvider";
+import { requireUserPresence } from "../security/userPresence";
+import { DEFAULT_MIN_VTXO_SATS } from "../wallet/arkMultiSend";
 import { useWallet } from "../wallet/WalletProvider";
 import { colors } from "../theme/colors";
 import { ReceivePosPanel } from "./ReceivePosPanel";
@@ -164,8 +168,12 @@ export function ChatAmountScreen() {
     ],
   );
 
-  /** Continue on POS → convert if needed → biometrics → send (no Confirm screen). */
-  const onChatSendContinue = useCallback(
+  /**
+   * Confirm on POS → biometrics first → leave to ChatThread → quiet convert
+   * (if needed) + send. Progress lives on the payment bubble, not the global
+   * Fiat Mode converting overlay.
+   */
+  const onChatSendConfirm = useCallback(
     async (sats: number, meta?: { fiatDisplay?: number }) => {
       if (!contact || busy) return;
       try {
@@ -186,26 +194,28 @@ export function ChatAmountScreen() {
       }
 
       const have = spendable ?? 0;
-      if (sats > have) {
-        if (!(fiatMode && (depixDisplay ?? 0) > 0)) {
-          Alert.alert(
-            "Insufficient balance",
-            "Enter an amount within your balance.",
-          );
-          return;
-        }
+      const dustTarget = fiatMode ? sats + DEFAULT_MIN_VTXO_SATS : sats;
+      const needConvert =
+        fiatMode && have < dustTarget && (depixDisplay ?? 0) > 0;
+      if (sats > have && !needConvert) {
+        Alert.alert(
+          "Insufficient balance",
+          "Enter an amount within your balance.",
+        );
+        return;
       }
 
       setBusy(true);
       try {
-        const ensured = await ensureSatsForPay({
-          satsNeeded: sats,
-          spendable: spendable ?? null,
-          fiatMode,
-          depixDisplay,
-          networkId: network.id,
-          convertDepixToSatsForPay,
-        });
+        // Auth before any convert / send I/O.
+        const auth = await requireUserPresence("Confirm send");
+        if (!auth.ok) {
+          Alert.alert(
+            "Authentication required",
+            auth.reason || "Confirm with biometrics or App PIN to send.",
+          );
+          return;
+        }
 
         let fiatCaption: string | null = null;
         if (fiatMode) {
@@ -219,28 +229,78 @@ export function ChatAmountScreen() {
           }
         }
 
-        await executeChatPay({
+        const paymentId = newChatId("pay");
+        const local = insertChatMessage({
           contactId,
+          kind: "payment",
+          direction: "out",
           amountSats: sats,
-          requestId: null,
           fiatCaption,
-          hooks: {
-            wallet,
-            walletId: selectedWallet.id,
-            networkId: network.id,
-            spendable: ensured.spendable ?? spendable ?? null,
-            beginOutboundSend,
-            endOutboundSend,
-            applyLocalSpend,
-            getFreshArkAddress: async () => rotateReceiveAddress(),
-            bumpActivity,
-          },
+          status: needConvert ? "converting" : "sending",
+          paymentId,
         });
+
+        // Leave Send immediately — bubble owns converting/sending/paid.
         if (navigation.canGoBack()) {
           navigation.goBack();
         } else {
           navigation.navigate("ChatThread", { contactId });
         }
+
+        // Capture hooks for post-unmount background work.
+        const hooks = {
+          wallet,
+          walletId: selectedWallet.id,
+          networkId: network.id,
+          spendable: spendable ?? null,
+          beginOutboundSend,
+          endOutboundSend,
+          applyLocalSpend,
+          getFreshArkAddress: async () => rotateReceiveAddress(),
+          bumpActivity,
+        };
+        const convert = convertDepixToSatsForPay;
+        const fiatOn = fiatMode;
+        const depix = depixDisplay;
+        const netId = network.id;
+        const spendNow = spendable ?? null;
+
+        void (async () => {
+          try {
+            if (needConvert) {
+              updateChatMessage(local.id, { status: "converting" });
+            }
+            const ensured = await ensureSatsForPay({
+              satsNeeded: sats,
+              spendable: spendNow,
+              fiatMode: fiatOn,
+              depixDisplay: depix,
+              networkId: netId,
+              convertDepixToSatsForPay: convert,
+              quiet: true,
+            });
+            updateChatMessage(local.id, { status: "sending" });
+            await executeChatPay({
+              contactId,
+              amountSats: sats,
+              requestId: null,
+              fiatCaption,
+              skipPresence: true,
+              localMessageId: local.id,
+              paymentId,
+              hooks: {
+                ...hooks,
+                spendable: ensured.spendable ?? spendNow,
+              },
+            });
+          } catch (e) {
+            updateChatMessage(local.id, { status: "failed" });
+            console.warn(
+              "[basic] chat send background failed",
+              e instanceof Error ? e.message : e,
+            );
+          }
+        })();
       } catch (e) {
         Alert.alert(
           "Send failed",
@@ -313,7 +373,7 @@ export function ChatAmountScreen() {
     );
   }
 
-  // Send — POS amount → Continue → convert if needed → biometrics → send
+  // Send — POS amount → Confirm → biometrics → thread + bubble progress
   return (
     <View style={styles.posFill}>
       <ReceivePosPanel
@@ -322,7 +382,7 @@ export function ChatAmountScreen() {
         onRequestUri={() => null}
         variant="chat-send"
         contactLabel={name}
-        onChatRequestConfirm={onChatSendContinue}
+        onChatRequestConfirm={onChatSendConfirm}
         chatRequestBusy={busy}
         fiatMode={fiatMode}
         active

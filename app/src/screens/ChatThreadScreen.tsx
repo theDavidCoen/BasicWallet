@@ -64,9 +64,11 @@ import { getNetworkConfig } from "../config/network";
 import { fetchFiatSpot, formatBrlDisplay, satsToFiatEstimate } from "../fiat/depixAssets";
 import { useFiatMode } from "../fiat/FiatModeProvider";
 import { hasNostrIdentity } from "../nostr/identityStore";
+import { requireUserPresence } from "../security/userPresence";
 import { useWallet } from "../wallet/WalletProvider";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
+import { DEFAULT_MIN_VTXO_SATS } from "../wallet/arkMultiSend";
 
 function formatTime(ms: number): string {
   try {
@@ -287,8 +289,10 @@ export function ChatThreadScreen() {
 
     const spendable = balance?.available ?? balanceSats;
     const need = msg.amountSats;
+    const dustTarget = fiatMode ? need + DEFAULT_MIN_VTXO_SATS : need;
+    const have = spendable ?? 0;
     const needConvert =
-      fiatMode && (spendable == null || spendable < need);
+      fiatMode && have < dustTarget && (depixDisplay ?? 0) > 0;
 
     if (needConvert) {
       if (!(depixDisplay != null && depixDisplay > 0)) {
@@ -320,6 +324,14 @@ export function ChatThreadScreen() {
       return;
     }
 
+    if (!needConvert && spendable != null && need > have) {
+      Alert.alert(
+        "Insufficient balance",
+        "Not enough sats to pay this request.",
+      );
+      return;
+    }
+
     await runPayRequest(msg, false);
   }
 
@@ -329,8 +341,21 @@ export function ChatThreadScreen() {
 
     const spendable = balance?.available ?? balanceSats;
     setActionBusy(msg.requestId);
-    setPayBusyLabel(willConvert ? "Converting…" : null);
+    setPayBusyLabel(null);
     try {
+      // Biometrics before any convert (no global CONVERTING dialog for chat).
+      const auth = await requireUserPresence("Confirm send");
+      if (!auth.ok) {
+        Alert.alert(
+          "Authentication required",
+          auth.reason || "Confirm with biometrics or App PIN to send.",
+        );
+        return;
+      }
+
+      if (willConvert) {
+        setPayBusyLabel("Converting…");
+      }
       const ensured = await ensureSatsForPay({
         satsNeeded: msg.amountSats,
         spendable: spendable ?? null,
@@ -338,8 +363,9 @@ export function ChatThreadScreen() {
         depixDisplay,
         networkId: network.id,
         convertDepixToSatsForPay,
+        quiet: true,
       });
-      setPayBusyLabel(null);
+      setPayBusyLabel(willConvert ? "Sending…" : null);
 
       let fiatCaption: string | null = null;
       if (fiatMode) {
@@ -353,6 +379,7 @@ export function ChatThreadScreen() {
         memo: msg.memo ?? undefined,
         requestId: msg.requestId,
         fiatCaption,
+        skipPresence: true,
         hooks: {
           wallet,
           walletId: selectedWallet.id,
@@ -500,6 +527,7 @@ export function ChatThreadScreen() {
                   amountSats={item.amountSats}
                   memo={item.memo}
                   timeLabel={time}
+                  status={item.status}
                   primaryAmount={view.primary}
                   secondaryAmount={view.secondary}
                 />

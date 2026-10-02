@@ -18,9 +18,14 @@ export async function ensureSatsForPay(opts: {
   fiatMode: boolean;
   depixDisplay: number | null;
   networkId: ArkadeNetworkId;
-  convertDepixToSatsForPay: (satsNeeded: number) => Promise<number>;
+  convertDepixToSatsForPay: (
+    satsNeeded: number,
+    convertOpts?: { quiet?: boolean },
+  ) => Promise<number>;
   /** Override dust reserve (tests); default ASP min vtxo. */
   dustReserve?: number;
+  /** Suppress Fiat Mode converting overlay (chat pay bubble owns UX). */
+  quiet?: boolean;
 }): Promise<{ spendable: number | null; converted: boolean }> {
   const need = Math.floor(opts.satsNeeded);
   if (!(need > 0)) throw new Error("Enter a positive amount.");
@@ -51,7 +56,9 @@ export async function ensureSatsForPay(opts: {
   }
 
   // Convert enough for payment + dust carrier (targeted; leaves remaining stable).
-  const available = await opts.convertDepixToSatsForPay(target);
+  const available = await opts.convertDepixToSatsForPay(target, {
+    quiet: opts.quiet,
+  });
   if (!(available >= need)) {
     throw new Error(
       `Converted but only ${available.toLocaleString("en-US")} sats available (need ${need.toLocaleString("en-US")}).`,
