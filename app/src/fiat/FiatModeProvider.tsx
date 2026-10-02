@@ -200,6 +200,8 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const autoInboundSatsRef = useRef(0);
   /** Designated-asset atomic baseline before auto-inbound fill. */
   const autoInboundBaselineRef = useRef<bigint | null>(null);
+  /** Backoff for idle excess-sats recovery (missed delta / α58 hang). */
+  const idleAutoInboundAtRef = useRef(0);
 
   const networkId = getNetworkConfig().id;
   const walletId = selectedWallet?.kind === "arkade" ? selectedWallet.id : null;
@@ -577,25 +579,17 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         console.warn("[basic] fiat quiet job start", kind, String(amount));
       }
 
-      // Auto-inbound: quiet BRL notices *before* fill notify, baseline asset for
-      // Activity/chat delta (never record full consolidated balance as receive).
+      // Auto-inbound: quiet BRL notices *before* fill notify; baseline from
+      // local refs (never block the swap on getBalance — ASP timeouts broke
+      // classic Receive→Fiat convert in α58). Chat status is best-effort only.
       if (kind === "auto-inbound") {
         quietFiatEnterNotices(90_000);
         setAutoInboundBusy(true);
         markChatInboundFiatConverting();
-        autoInboundBaselineRef.current = null;
-        try {
-          const raw = await wallet.getBalance();
-          autoInboundBaselineRef.current = readDepixAtomicFromBalance(
-            raw,
-            depixAssetIdForNetwork(networkId),
-          );
-        } catch {
-          const d =
-            lastGoodDepixRef.current ?? lastDepixRef.current ?? depixDisplay ?? 0;
-          autoInboundBaselineRef.current =
-            d > 0 ? depixDisplayToAtomic(d, networkId) : 0n;
-        }
+        const d =
+          lastGoodDepixRef.current ?? lastDepixRef.current ?? depixDisplay ?? 0;
+        autoInboundBaselineRef.current =
+          d > 0 ? depixDisplayToAtomic(d, networkId) : 0n;
         console.warn("[basic] auto-inbound baseline", {
           atomic: String(autoInboundBaselineRef.current ?? 0n),
           inboundSats: autoInboundSatsRef.current,
@@ -724,7 +718,12 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
                 : null;
             if (takeAtomic == null) {
               try {
-                const raw = await wallet.getBalance();
+                const raw = await Promise.race([
+                  wallet.getBalance(),
+                  new Promise<never>((_, rej) =>
+                    setTimeout(() => rej(new Error("take-delta timeout")), 4000),
+                  ),
+                ]);
                 const live = readDepixAtomicFromBalance(
                   raw,
                   depixAssetIdForNetwork(networkId),
@@ -1001,7 +1000,9 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   // Ignore dust-sized deltas (asset carriers) — those are not BTC to convert.
   useEffect(() => {
     if (!state?.fiatMode || converting || jobBusyRef.current) {
-      lastSatsRef.current = balanceSats;
+      // While a job runs, keep the sats baseline — do NOT adopt live balance.
+      // Rebasing here swallowed inbound deltas when α58 blocked on getBalance
+      // (jobBusy stuck / failed) and classic Receive never retried.
       return;
     }
     if (Date.now() < suppressAutoInboundUntilRef.current) {
@@ -1026,6 +1027,26 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         minMeaningful,
       });
     }
+  }, [balanceSats, state?.fiatMode, converting, maybeAutoSwapInboundSats, networkId]);
+
+  // Recovery: Fiat Mode with idle excess BTC (missed delta / failed job).
+  // Same threshold as delta path; backoff so a hard swap error cannot loop.
+  useEffect(() => {
+    if (!state?.fiatMode || converting || jobBusyRef.current) return;
+    if (Date.now() < suppressAutoInboundUntilRef.current) return;
+    if (balanceSats == null) return;
+    const reserve = DEFAULT_MIN_VTXO_SATS;
+    const minBase = fiatMinBaseSats(networkId);
+    const minMeaningful = Math.max(
+      minBase + reserve,
+      DEFAULT_MIN_VTXO_SATS * 2 + 1,
+    );
+    if (balanceSats < minMeaningful) return;
+    if (balanceSats - reserve < minBase) return;
+    if (Date.now() - idleAutoInboundAtRef.current < 20_000) return;
+    idleAutoInboundAtRef.current = Date.now();
+    console.warn("[basic] auto-inbound idle recovery", { balanceSats });
+    maybeAutoSwapInboundSats(balanceSats);
   }, [balanceSats, state?.fiatMode, converting, maybeAutoSwapInboundSats, networkId]);
 
   /**
