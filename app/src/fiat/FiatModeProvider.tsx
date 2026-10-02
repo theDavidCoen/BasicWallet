@@ -259,6 +259,9 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const adoptLiveDepixUntilRef = useRef(0);
   /** One cold-start reconcile pass per wallet+fiat session. */
   const coldStartReconcileKeyRef = useRef<string | null>(null);
+  /** Outbound chat/classic pay convert — auto-inbound must not steal the job mutex. */
+  const payConvertInFlightRef = useRef(false);
+  const activeJobKindRef = useRef<FiatModeJobKind>(null);
 
   const networkId = getNetworkConfig().id;
   const walletId = selectedWallet?.kind === "arkade" ? selectedWallet.id : null;
@@ -320,9 +323,15 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       ]);
       if (cancelled) return;
       setBitcoinMaxiMode(maxiOn);
-      // Stale pending enter/exit must not resume CONVERTING after reopen.
+      // Stale pending jobs must not block pay-convert / auto-inbound after reopen.
       let next = s;
-      if (s.pendingJob === "enter" || s.pendingJob === "exit") {
+      if (
+        s.pendingJob === "enter" ||
+        s.pendingJob === "exit" ||
+        s.pendingJob === "auto-inbound" ||
+        s.pendingJob === "pay-convert" ||
+        s.pendingJob === "maxi-inbound"
+      ) {
         next = await writeFiatModeState(networkId, walletId, {
           pendingJob: null,
         });
@@ -697,6 +706,34 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     void reopenWithWalletMode("hd");
   }, [walletId, reopenWithWalletMode]);
 
+  const waitForFiatJobSlot = useCallback(
+    async (opts: {
+      forKind: FiatModeJobKind;
+      timeoutMs: number;
+      /** When true, abort quiet background jobs so user pay-convert can run. */
+      preemptQuiet?: boolean;
+    }): Promise<void> => {
+      const deadline = Date.now() + opts.timeoutMs;
+      while (jobBusyRef.current) {
+        const active = activeJobKindRef.current;
+        if (
+          opts.preemptQuiet &&
+          opts.forKind === "pay-convert" &&
+          (active === "auto-inbound" || active === "maxi-inbound") &&
+          abortRef.current
+        ) {
+          console.warn("[basic] pay-convert preempt quiet job", { active });
+          abortRef.current.abort();
+        }
+        if (Date.now() > deadline) {
+          throw new Error("A conversion is already in progress.");
+        }
+        await new Promise<void>((r) => setTimeout(r, 200));
+      }
+    },
+    [],
+  );
+
   const runJob = useCallback(
     async (
       kind: FiatModeJobKind,
@@ -704,11 +741,17 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       amount: bigint,
       opts?: { quiet?: boolean; throwOnError?: boolean },
     ): Promise<boolean> => {
-      if (!wallet || !walletId || !kind) return false;
+      const fail = (msg: string): false => {
+        if (opts?.throwOnError) throw new Error(msg);
+        return false;
+      };
+      if (!wallet || !walletId || !kind) {
+        return fail("Wallet not ready for conversion.");
+      }
       // Never re-run enter once Fiat Mode is already on.
       if (kind === "enter" && state?.fiatMode) {
         console.warn("[basic] fiat job skip enter (already in fiat mode)");
-        return false;
+        return fail("Already in Fiat Mode.");
       }
       // Mutex is jobBusyRef only — `converting` is UI and can lag a frame after
       // confirmExit's spendable-balance check clears the overlay.
@@ -723,7 +766,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         }
         return false;
       }
-      if (!(amount > 0n)) return false;
+      if (!(amount > 0n)) return fail("Conversion amount must be positive.");
 
       const quiet =
         Boolean(opts?.quiet) ||
@@ -732,6 +775,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       const ac = new AbortController();
       abortRef.current = ac;
       jobBusyRef.current = true;
+      activeJobKindRef.current = kind;
       // Enter/exit/pay: full-screen CONVERTING. Auto-inbound: quiet background only.
       if (!quiet) {
         setConverting(true);
@@ -1029,6 +1073,9 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       } finally {
         endOutboundSend();
         jobBusyRef.current = false;
+        if (activeJobKindRef.current === kind) {
+          activeJobKindRef.current = null;
+        }
         if (kind === "auto-inbound") {
           setAutoInboundBusy(false);
           autoInboundBaselineRef.current = null;
@@ -1167,6 +1214,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const maybeAutoSwapInboundSats = useCallback(
     (sats: number) => {
       if (!state?.fiatMode || converting || jobBusyRef.current) return;
+      if (payConvertInFlightRef.current) {
+        console.warn("[basic] auto-inbound skip (pay-convert)", { sats });
+        return;
+      }
       if (Date.now() < suppressAutoInboundUntilRef.current) {
         console.warn("[basic] auto-inbound suppress (pay-convert hold)", { sats });
         return;
@@ -1235,6 +1286,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   // Same threshold as delta path; backoff so a hard swap error cannot loop.
   useEffect(() => {
     if (!state?.fiatMode || converting || jobBusyRef.current) return;
+    if (payConvertInFlightRef.current) return;
     if (Date.now() < suppressAutoInboundUntilRef.current) return;
     if (balanceSats == null) return;
     const reserve = DEFAULT_MIN_VTXO_SATS;
@@ -1341,11 +1393,20 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       const preSats = balanceSats ?? 0;
       if (preSats >= need) return preSats;
 
+      payConvertInFlightRef.current = true;
+      suppressAutoInboundUntilRef.current = Date.now() + 120_000;
+      try {
       const code = fiatStableForNetwork(networkId).displayCode;
       const uiDisplay = depixDisplay ?? lastGoodDepixRef.current ?? 0;
       if (!(uiDisplay > 0)) {
-        throw new Error(`No ${code} balance to convert`);
+        console.warn("[basic] pay-convert ui depix empty; reading live asset");
       }
+
+      await waitForFiatJobSlot({
+        forKind: "pay-convert",
+        timeoutMs: 90_000,
+        preemptQuiet: true,
+      });
 
       // Same as Exit: never fund from lastGood alone — ASP can show empty
       // assets while UI still shows R$ / USDT (→ Insufficient funds).
@@ -1415,13 +1476,15 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
 
       // Optimistic home floor so UI can proceed while ASP settles.
       ensureBalanceAtLeast(preSats + need);
-      suppressAutoInboundUntilRef.current = Date.now() + 120_000;
 
       // Chat pay uses quiet so the bubble owns progress (no global CONVERTING).
-      await runJob("pay-convert", "depix-to-btc", atomic, {
-        quiet: opts?.quiet,
+      const filled = await runJob("pay-convert", "depix-to-btc", atomic, {
+        quiet: opts?.quiet ?? true,
         throwOnError: true,
       });
+      if (!filled) {
+        throw new Error("Conversion incomplete");
+      }
 
       // Optimistic spend of converted stable (partial or full).
       const spentDisplay = depixAtomicToDisplay(atomic, networkId);
@@ -1472,6 +1535,9 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         preSats,
       });
       return Math.max(best, preSats + need);
+      } finally {
+        payConvertInFlightRef.current = false;
+      }
     },
     [
       balanceSats,
@@ -1484,6 +1550,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       applyLocalDepixSpend,
       readLiveSpendableAtomic,
       clearOptimisticDepix,
+      waitForFiatJobSlot,
     ],
   );
 

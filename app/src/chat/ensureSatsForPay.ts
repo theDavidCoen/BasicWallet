@@ -49,10 +49,10 @@ export async function ensureSatsForPay(opts: {
     throw new Error("Insufficient balance.");
   }
 
-  const display = opts.depixDisplay ?? 0;
   const unit = fiatStableForNetwork(opts.networkId).displayCode;
+  const display = opts.depixDisplay ?? 0;
   if (!(display > 0)) {
-    throw new Error(`No ${unit} balance to convert`);
+    console.warn("[basic] ensureSatsForPay stale depix display; trying live convert");
   }
 
   // Convert enough for payment + dust carrier (targeted; leaves remaining stable).

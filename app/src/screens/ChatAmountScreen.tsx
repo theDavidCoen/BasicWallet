@@ -266,6 +266,8 @@ export function ChatAmountScreen() {
         const spendNow = spendable ?? null;
 
         void (async () => {
+          const payDeadline = Date.now() + 4 * 60_000;
+          const payTimedOut = () => Date.now() > payDeadline;
           try {
             if (needConvert) {
               updateChatMessage(local.id, { status: "converting" });
@@ -279,6 +281,9 @@ export function ChatAmountScreen() {
               convertDepixToSatsForPay: convert,
               quiet: true,
             });
+            if (payTimedOut()) {
+              throw new Error("Conversion timed out. Try again.");
+            }
             updateChatMessage(local.id, { status: "sending" });
             await executeChatPay({
               contactId,
