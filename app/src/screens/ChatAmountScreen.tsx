@@ -14,7 +14,11 @@ import { isValidArkAddress } from "@arkade-os/sdk";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
 import { sendPayRequest } from "../chat/chatActions";
-import { insertChatMessage, updateChatMessage } from "../chat/chatStore";
+import {
+  getChatMessage,
+  insertChatMessage,
+  updateChatMessage,
+} from "../chat/chatStore";
 import {
   executeChatPay,
   resolveChatPayDestination,
@@ -329,6 +333,12 @@ export function ChatAmountScreen() {
               },
             });
           } catch (e) {
+            // executeChatPay may have late-settled → paid; don't overwrite.
+            const cur = getChatMessage(local.id);
+            if (cur?.status === "paid") {
+              console.warn("[basic] chat send recovered as paid after error");
+              return;
+            }
             updateChatMessage(local.id, { status: "failed" });
             const msg = e instanceof Error ? e.message : String(e);
             console.warn("[basic] chat send background failed", msg);

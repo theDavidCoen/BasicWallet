@@ -250,10 +250,17 @@ export function mergeRecipientsByAddress(recipients: SendRecipient[]): SendRecip
 
 const SEND_TIMEOUT_MS_DEFAULT = 45_000;
 const TXID_GRACE_MS = 1_500;
-const SPEND_POLL_MS = 350;
+/** Slow polls — 350ms hammered ASP during wallet.send (α69 false timeout). */
+const SPEND_POLL_MS = 2_500;
+/** Let send have exclusive ASP before spend-drop balance reads. */
+const SPEND_DROP_START_MS = 12_000;
+
+export type SendWaitResult = { txid: string; via: "send" | "spend" };
 
 /**
  * Resolve as soon as SDK send returns *or* local spendable drops by ~total.
+ * On soft timeout: one final spend check (funds often already left — α69).
+ * Late SDK success still invokes onLateSuccess (chat bubble reconcile).
  * Poll stops when settled — no leaked timers.
  */
 export async function waitForSendOrSpendDrop(
@@ -264,8 +271,10 @@ export async function waitForSendOrSpendDrop(
     prevAvailable: number | null;
     timeoutMs?: number;
     onRealTxid?: (txid: string) => void;
+    /** Fired if SDK send resolves after the waiter already timed out. */
+    onLateSuccess?: (r: SendWaitResult) => void;
   },
-): Promise<{ txid: string; via: "send" | "spend" }> {
+): Promise<SendWaitResult> {
   const timeoutMs = opts.timeoutMs ?? SEND_TIMEOUT_MS_DEFAULT;
   const recipients = opts.recipients;
   if (recipients.length === 0) {
@@ -273,16 +282,21 @@ export async function waitForSendOrSpendDrop(
   }
   const total = recipients.reduce((s, r) => s + r.amount, 0);
   const tuple = recipients as [SendRecipient, ...SendRecipient[]];
+  const target =
+    opts.prevAvailable != null && opts.prevAvailable > 0
+      ? opts.prevAvailable - total
+      : null;
 
   let settled = false;
-  let resolveEarly!: (v: { txid: string; via: "send" | "spend" }) => void;
+  let timedOut = false;
+  let resolveEarly!: (v: SendWaitResult) => void;
   let rejectEarly!: (e: unknown) => void;
-  const early = new Promise<{ txid: string; via: "send" | "spend" }>((resolve, reject) => {
+  const early = new Promise<SendWaitResult>((resolve, reject) => {
     resolveEarly = resolve;
     rejectEarly = reject;
   });
 
-  const finish = (v: { txid: string; via: "send" | "spend" }) => {
+  const finish = (v: SendWaitResult) => {
     if (settled) return;
     settled = true;
     resolveEarly(v);
@@ -294,19 +308,32 @@ export async function waitForSendOrSpendDrop(
       : w.send({ recipients: tuple })
   ).then((raw) => {
     const txid = extractSendTxid(raw);
+    if (timedOut && !settled) {
+      console.warn("[basic] send late success after timeout", {
+        txid: txid.slice(0, 16),
+        amount: total,
+      });
+      opts.onLateSuccess?.({ txid, via: "send" });
+      settled = true;
+      return txid;
+    }
     finish({ txid, via: "send" });
     return txid;
   });
 
   void sendP
     .then((txid) => {
-      if (txid) opts.onRealTxid?.(txid);
+      if (txid && !txid.startsWith("pending:")) opts.onRealTxid?.(txid);
     })
     .catch(() => {
       /* rejection handled below */
     });
 
   void sendP.catch((e) => {
+    if (timedOut) {
+      console.warn("[basic] send error after timeout", e);
+      return;
+    }
     if (!settled) {
       settled = true;
       rejectEarly(e);
@@ -317,9 +344,9 @@ export async function waitForSendOrSpendDrop(
 
   void (async () => {
     try {
-      if (opts.prevAvailable == null || !(opts.prevAvailable > 0)) return;
-      const target = opts.prevAvailable - total;
+      if (target == null) return;
       const deadline = Date.now() + timeoutMs;
+      await sleep(SPEND_DROP_START_MS);
       let hits = 0;
       while (!settled && Date.now() < deadline) {
         await sleep(SPEND_POLL_MS);
@@ -348,5 +375,29 @@ export async function waitForSendOrSpendDrop(
     }
   })();
 
-  return withTimeout(early, timeoutMs, "send");
+  try {
+    return await withTimeout(early, timeoutMs, "send");
+  } catch (e) {
+    // Soft timeout: funds often already left while SDK promise hung (α69).
+    if (!settled && target != null) {
+      const avail = await readSpendableAvailable(w);
+      if (avail != null && avail <= target + 1) {
+        const txid = await Promise.race([
+          sendP.catch(() => null),
+          sleep(TXID_GRACE_MS).then(() => `pending:${Date.now()}`),
+        ]);
+        if (txid != null) {
+          console.warn("[basic] send confirmed via spend after timeout", {
+            prev: opts.prevAvailable,
+            avail,
+            amount: total,
+          });
+          finish({ txid, via: "spend" });
+          return { txid, via: "spend" };
+        }
+      }
+    }
+    timedOut = true;
+    throw e;
+  }
 }

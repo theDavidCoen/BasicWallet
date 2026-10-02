@@ -25,9 +25,11 @@ import {
   insertChatMessage,
   findMessageByRequestId,
   updateChatMessage,
+  getChatMessage,
 } from "./chatStore";
 import { publishPaymentReceipt, replyPayRequestWithAddress } from "./chatActions";
 import { newChatId } from "./types";
+import { findAlreadySettledOutbound } from "./reconcileOutboundChat";
 
 export type ChatPayWalletHooks = {
   wallet: BasicWallet;
@@ -103,6 +105,69 @@ export async function shareFreshArkForRequest(opts: {
   return addr;
 }
 
+function finalizeChatPayPaid(opts: {
+  contactId: string;
+  amountSats: number;
+  memo?: string;
+  requestId?: string | null;
+  fiatCaption?: string | null;
+  localMessageId?: string | null;
+  paymentId: string;
+  txid: string;
+  applyLocalSpend?: (sats: number) => void;
+  bumpActivity?: () => void;
+  networkId: ArkadeNetworkId;
+  walletId: string;
+  /** Skip optimistic spend when reconciling an already-broadcast send. */
+  skipLocalSpend?: boolean;
+}): void {
+  if (!opts.skipLocalSpend) {
+    opts.applyLocalSpend?.(opts.amountSats);
+  }
+  if (opts.txid && !opts.txid.startsWith("pending:")) {
+    recordSentFromThisDevice(opts.networkId, opts.walletId, opts.txid);
+  }
+
+  if (opts.localMessageId) {
+    updateChatMessage(opts.localMessageId, {
+      amountSats: opts.amountSats,
+      memo: opts.memo?.trim() || null,
+      status: "paid",
+      paymentId: opts.paymentId,
+      fiatCaption: opts.fiatCaption ?? null,
+    });
+  } else {
+    insertChatMessage({
+      contactId: opts.contactId,
+      kind: "payment",
+      direction: "out",
+      amountSats: opts.amountSats,
+      memo: opts.memo?.trim() || null,
+      status: "paid",
+      paymentId: opts.paymentId,
+      requestId: opts.requestId ?? null,
+      fiatCaption: opts.fiatCaption ?? null,
+    });
+  }
+
+  if (opts.requestId) {
+    const req = findMessageByRequestId(opts.contactId, opts.requestId);
+    if (req) updateChatMessage(req.id, { status: "paid" });
+  }
+
+  void publishPaymentReceipt({
+    contactId: opts.contactId,
+    paymentId: opts.paymentId,
+    amountSats: opts.amountSats,
+    memo: opts.memo,
+    txid: opts.txid,
+    rail: "arkade",
+    relatedRequestId: opts.requestId ?? undefined,
+  });
+
+  opts.bumpActivity?.();
+}
+
 export async function executeChatPay(opts: {
   contactId: string;
   amountSats: number;
@@ -145,16 +210,60 @@ export async function executeChatPay(opts: {
     }
   }
 
+  const paymentId = opts.paymentId?.trim() || newChatId("pay");
+
+  // Double-spend guard: prior false-Failed / hung send already settled on-chain.
+  const already = findAlreadySettledOutbound({
+    networkId,
+    walletId,
+    contactId: opts.contactId,
+    amountSats: amount,
+  });
+  if (already) {
+    console.warn("[basic] chat pay skip (already settled)", {
+      amount,
+      messageId: already.messageId.slice(0, 12),
+      txid: already.txid.slice(0, 16),
+    });
+    if (opts.localMessageId && opts.localMessageId !== already.messageId) {
+      // Collapse the new optimistic bubble; keep the reconciled one paid.
+      updateChatMessage(opts.localMessageId, { status: "paid" });
+    }
+    const settleId = opts.localMessageId ?? already.messageId;
+    finalizeChatPayPaid({
+      contactId: opts.contactId,
+      amountSats: amount,
+      memo: opts.memo,
+      requestId: opts.requestId,
+      fiatCaption: opts.fiatCaption,
+      localMessageId: settleId,
+      paymentId: already.paymentId ?? paymentId,
+      txid: already.txid,
+      applyLocalSpend: opts.hooks.applyLocalSpend,
+      bumpActivity: opts.hooks.bumpActivity,
+      networkId,
+      walletId,
+      skipLocalSpend: true,
+    });
+    return {
+      txid: already.txid,
+      paymentId: already.paymentId ?? paymentId,
+      address: dest.address,
+    };
+  }
+
   if (opts.localMessageId) {
     updateChatMessage(opts.localMessageId, { status: "sending" });
   }
 
-  const recipients: SendRecipient[] = [{ address: dest.address, amount }];
-  const plan = await prepareDustSafeSend(wallet, amount, dust);
-  const payAmount = plan.amount;
-
+  // Pause balance/activity ASP polls before vtxo select + send (α69).
   opts.hooks.beginOutboundSend();
+  let payAmount = amount;
   try {
+    const recipients: SendRecipient[] = [{ address: dest.address, amount }];
+    const plan = await prepareDustSafeSend(wallet, amount, dust);
+    payAmount = plan.amount;
+
     notePendingSendFromThisDevice(
       networkId,
       walletId,
@@ -163,65 +272,98 @@ export async function executeChatPay(opts: {
       recipients,
     );
 
+    const settleLate = (txid: string) => {
+      const msg = opts.localMessageId
+        ? getChatMessage(opts.localMessageId)
+        : null;
+      if (msg?.status === "paid") return;
+      console.warn("[basic] chat pay late settle → paid", {
+        amount: payAmount,
+        txid: txid.slice(0, 16),
+        was: msg?.status ?? null,
+      });
+      finalizeChatPayPaid({
+        contactId: opts.contactId,
+        amountSats: payAmount,
+        memo: opts.memo,
+        requestId: opts.requestId,
+        fiatCaption: opts.fiatCaption,
+        localMessageId: opts.localMessageId,
+        paymentId,
+        txid,
+        applyLocalSpend: opts.hooks.applyLocalSpend,
+        bumpActivity: opts.hooks.bumpActivity,
+        networkId,
+        walletId,
+      });
+    };
+
     const { txid } = await waitForSendOrSpendDrop(wallet, {
       recipients: [{ address: dest.address, amount: payAmount }],
       selectedVtxos: plan.selectedVtxos,
       prevAvailable: opts.hooks.spendable,
-      // Fiat convert+send needs more headroom — ASP often busy after swap (α63).
-      timeoutMs: 90_000,
+      // Maxi/Fiat: ASP often slow under load; soft timeout confirms via spend (α69).
+      timeoutMs: 120_000,
       onRealTxid: (real) => {
         if (real && !real.startsWith("pending:")) {
           recordSentFromThisDevice(networkId, walletId, real);
         }
       },
+      onLateSuccess: (r) => {
+        settleLate(r.txid);
+      },
     });
 
-    opts.hooks.applyLocalSpend(payAmount);
-    if (txid) {
-      recordSentFromThisDevice(networkId, walletId, txid);
-    }
-
-    const paymentId = opts.paymentId?.trim() || newChatId("pay");
-    if (opts.localMessageId) {
-      updateChatMessage(opts.localMessageId, {
-        amountSats: payAmount,
-        memo: opts.memo?.trim() || null,
-        status: "paid",
-        paymentId,
-        fiatCaption: opts.fiatCaption ?? null,
-      });
-    } else {
-      insertChatMessage({
-        contactId: opts.contactId,
-        kind: "payment",
-        direction: "out",
-        amountSats: payAmount,
-        memo: opts.memo?.trim() || null,
-        status: "paid",
-        paymentId,
-        requestId: opts.requestId ?? null,
-        fiatCaption: opts.fiatCaption ?? null,
-      });
-    }
-
-    if (opts.requestId) {
-      const req = findMessageByRequestId(opts.contactId, opts.requestId);
-      if (req) updateChatMessage(req.id, { status: "paid" });
-    }
-
-    void publishPaymentReceipt({
+    finalizeChatPayPaid({
       contactId: opts.contactId,
-      paymentId,
       amountSats: payAmount,
       memo: opts.memo,
+      requestId: opts.requestId,
+      fiatCaption: opts.fiatCaption,
+      localMessageId: opts.localMessageId,
+      paymentId,
       txid,
-      rail: "arkade",
-      relatedRequestId: opts.requestId ?? undefined,
+      applyLocalSpend: opts.hooks.applyLocalSpend,
+      bumpActivity: opts.hooks.bumpActivity,
+      networkId,
+      walletId,
     });
-
-    opts.hooks.bumpActivity?.();
     return { txid, paymentId, address: dest.address };
   } catch (e) {
+    // Last chance: activity / pending stamp may already prove success.
+    const recovered = findAlreadySettledOutbound({
+      networkId,
+      walletId,
+      contactId: opts.contactId,
+      amountSats: payAmount,
+    });
+    if (recovered) {
+      console.warn("[basic] chat pay recovered after error", {
+        amount: payAmount,
+        txid: recovered.txid.slice(0, 16),
+      });
+      finalizeChatPayPaid({
+        contactId: opts.contactId,
+        amountSats: payAmount,
+        memo: opts.memo,
+        requestId: opts.requestId,
+        fiatCaption: opts.fiatCaption,
+        localMessageId: opts.localMessageId ?? recovered.messageId,
+        paymentId: recovered.paymentId ?? paymentId,
+        txid: recovered.txid,
+        applyLocalSpend: opts.hooks.applyLocalSpend,
+        bumpActivity: opts.hooks.bumpActivity,
+        networkId,
+        walletId,
+        skipLocalSpend: true,
+      });
+      return {
+        txid: recovered.txid,
+        paymentId: recovered.paymentId ?? paymentId,
+        address: dest.address,
+      };
+    }
+
     if (opts.localMessageId) {
       updateChatMessage(opts.localMessageId, { status: "failed" });
     }

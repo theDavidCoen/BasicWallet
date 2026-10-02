@@ -1480,6 +1480,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     const tick = async () => {
       if (cancelled || jobBusyRef.current) return;
       if (walletIdRef.current !== walletId) return;
+      // Never fight chat Maxi/Fiat send or pay-convert hold (α69 Xiaomi thrash).
+      if (payConvertInFlightRef.current) return;
+      if (Date.now() < suppressAutoInboundUntilRef.current) return;
+      if (hasOutboundPayInFlight()) return;
       try {
         const raw = await wallet.getBalance();
         if (cancelled) return;
@@ -1548,7 +1552,8 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     };
 
     void tick();
-    const timer = setInterval(() => void tick(), 5_000);
+    // 15s — 5s getBalance fought wallet.send / notify on Xiaomi (α69).
+    const timer = setInterval(() => void tick(), 15_000);
     return () => {
       cancelled = true;
       clearInterval(timer);

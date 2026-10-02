@@ -71,8 +71,9 @@ export default function App() {
           if (!fullyMigrated) await markSqlCipherMigrated();
         }
         // Orphaned Converting/Sending bubbles (killed convert+send) → failed.
+        // Wait past chat send soft-timeout (α69 false 90s timeout on Xiaomi).
         try {
-          failStaleOutboundPayments({ olderThanMs: 90_000 });
+          failStaleOutboundPayments({ olderThanMs: 4 * 60_000 });
         } catch (e) {
           console.warn("[basic] failStaleOutboundPayments boot skipped", e);
         }

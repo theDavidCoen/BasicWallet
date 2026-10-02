@@ -227,14 +227,37 @@ export function listInboundPaymentsByStatus(
   return rows.map(rowToMessage);
 }
 
+/** Recent outbound payment cards in the given statuses (newest first). */
+export function listOutboundPaymentsByStatus(
+  statuses: ChatMessageStatus[],
+  newerThanMs = 30 * 60_000,
+): ChatMessage[] {
+  if (statuses.length === 0) return [];
+  const since = Date.now() - Math.max(0, newerThanMs);
+  const placeholders = statuses.map(() => "?").join(", ");
+  const rows = db().getAllSync<MessageRow>(
+    `SELECT * FROM chat_message
+     WHERE kind = 'payment' AND direction = 'out'
+       AND status IN (${placeholders})
+       AND created_at >= ?
+     ORDER BY created_at DESC
+     LIMIT 40`,
+    [...statuses, since],
+  );
+  return rows.map(rowToMessage);
+}
+
 /**
  * Mark orphaned outbound converting/sending bubbles as failed.
  * Background convert+send dies on kill/reinstall; UI must not stay on Converting forever.
+ * Prefer reconcileOutboundChatPayments first — false timeouts must not stick as Failed (α69).
  */
 export function failStaleOutboundPayments(opts?: {
   olderThanMs?: number;
 }): number {
-  const olderThanMs = opts?.olderThanMs ?? 2 * 60_000;
+  // Default above chat send soft-timeout (90–120s) so in-flight Maxi sends are not
+  // falsely failed while ASP is still settling the promise.
+  const olderThanMs = opts?.olderThanMs ?? 4 * 60_000;
   const cutoff = Date.now() - Math.max(0, olderThanMs);
   try {
     const result = db().runSync(

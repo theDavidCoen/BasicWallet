@@ -41,6 +41,7 @@ import {
   clearThreadUnread,
   ensureChatThread,
   failStaleOutboundPayments,
+  getChatMessage,
   getChatThread,
   insertChatMessage,
   listChatMessages,
@@ -48,6 +49,7 @@ import {
   subscribeChatStore,
   updateChatMessage,
 } from "../chat/chatStore";
+import { reconcileOutboundChatPayments } from "../chat/reconcileOutboundChat";
 import { setChatThreadFocused } from "../chat/chatThreadFocus";
 import type { ChatMessage } from "../chat/types";
 import { newChatId } from "../chat/types";
@@ -101,6 +103,7 @@ export function ChatThreadScreen() {
     applyLocalSpend,
     rotateReceiveAddress,
     bumpActivity,
+    refreshActivity,
   } = useWallet();
   const {
     fiatMode,
@@ -139,15 +142,26 @@ export function ChatThreadScreen() {
   }, [contactId]);
 
   useEffect(() => {
-    // Ghost Converting/Sending from killed convert+send → failed.
-    failStaleOutboundPayments({ olderThanMs: 90_000 });
+    // α69: flip false-Failed / hung Sending → paid when activity proves settle.
+    if (selectedWallet?.id) {
+      try {
+        reconcileOutboundChatPayments({
+          networkId: network.id,
+          walletId: selectedWallet.id,
+        });
+      } catch (e) {
+        console.warn("[basic] reconcileOutboundChatPayments skipped", e);
+      }
+    }
+    // Ghost Converting/Sending only after send soft-timeout window (4 min).
+    failStaleOutboundPayments({ olderThanMs: 4 * 60_000 });
     const task = InteractionManager.runAfterInteractions(() => {
       reloadLight();
     });
     return () => {
       task.cancel();
     };
-  }, [reloadLight]);
+  }, [reloadLight, selectedWallet?.id, network.id]);
 
   useEffect(() => {
     return subscribeChatStore(() => {
@@ -191,14 +205,32 @@ export function ChatThreadScreen() {
           setMessages(listChatMessages(contactId));
           clearThreadUnread(contactId);
         });
-        void catchUpGiftWraps({ force: true });
-        void flushChatOutbox();
+        void (async () => {
+          // Activity first so α69 reconcile can see settled sends, then Nostr.
+          if (selectedWallet?.id) {
+            try {
+              await refreshActivity();
+            } catch (e) {
+              console.warn("[basic] chat focus refreshActivity failed", e);
+            }
+            try {
+              reconcileOutboundChatPayments({
+                networkId: network.id,
+                walletId: selectedWallet.id,
+              });
+            } catch (e) {
+              console.warn("[basic] chat focus reconcile failed", e);
+            }
+          }
+          await catchUpGiftWraps({ force: true });
+          await flushChatOutbox();
+        })();
       });
       return () => {
         setChatThreadFocused(false);
         task.cancel();
       };
-    }, [contactId]),
+    }, [contactId, selectedWallet?.id, network.id, refreshActivity]),
   );
 
   useEffect(() => {
@@ -413,9 +445,20 @@ export function ChatThreadScreen() {
       });
     } catch (e) {
       if (localPaymentId) {
-        updateChatMessage(localPaymentId, { status: "failed" });
+        const cur = getChatMessage(localPaymentId);
+        if (cur?.status !== "paid") {
+          updateChatMessage(localPaymentId, { status: "failed" });
+          Alert.alert(
+            "Send failed",
+            e instanceof Error ? e.message : "Unknown error",
+          );
+        }
+      } else {
+        Alert.alert(
+          "Send failed",
+          e instanceof Error ? e.message : "Unknown error",
+        );
       }
-      Alert.alert("Send failed", e instanceof Error ? e.message : "Unknown error");
     } finally {
       setActionBusy(null);
       setPayBusyLabel(null);

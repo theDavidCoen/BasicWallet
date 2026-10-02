@@ -1681,6 +1681,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   /** Activity pull-to-refresh: history only — never block on getBalance. */
   const refreshActivity = useCallback(async () => {
+    // Never rematerialize during outbound send — fights wallet.send (α69).
+    if (aspPollPausedRef.current > 0) return;
     const walletId = selectedIdRef.current;
     if (!walletId) return;
     const networkId = getNetworkConfig().id;

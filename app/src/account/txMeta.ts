@@ -176,7 +176,7 @@ export function recordSentFromThisDevice(
   setTxMeta(networkId, walletId, activityId, { sentWith: label });
 }
 
-type PendingSendStamp = {
+export type PendingSendStamp = {
   networkId: ArkadeNetworkId;
   walletId: string;
   amountSats: number;
@@ -200,6 +200,26 @@ function prunePendingSends(now = Date.now()): void {
  * Call right before wallet.send — survives hung send promises so rematerialize
  * can still attach “Sent with …” and destinations to the outbound activity row.
  */
+/** Peek a recent pending send stamp (same wallet + amount) within TTL. */
+export function findPendingSendStamp(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+  amountSats: number,
+  newerThanMs = PENDING_SEND_TTL_MS,
+): PendingSendStamp | null {
+  prunePendingSends();
+  const abs = Math.abs(amountSats);
+  const since = Date.now() - Math.max(0, newerThanMs);
+  for (let i = pendingSends.length - 1; i >= 0; i--) {
+    const p = pendingSends[i];
+    if (p.networkId !== networkId || p.walletId !== walletId) continue;
+    if (Math.abs(p.amountSats - abs) > 1) continue;
+    if (p.at < since) continue;
+    return p;
+  }
+  return null;
+}
+
 export function notePendingSendFromThisDevice(
   networkId: ArkadeNetworkId,
   walletId: string,
