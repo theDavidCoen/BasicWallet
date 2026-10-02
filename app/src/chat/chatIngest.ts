@@ -22,9 +22,10 @@ import {
 import {
   ensureChatThread,
   findMessageByNostrEventId,
+  findMessageByPaymentId,
   findMessageByRequestId,
+  findRecentInboundPaymentByAmount,
   insertChatMessage,
-  listChatMessages,
   updateChatMessage,
 } from "./chatStore";
 import { freezeFiatCaptionFromSats } from "./formatChatAmount";
@@ -204,23 +205,27 @@ export async function ingestChatEnvelope(opts: {
         fiatCaption = await freezeCaptionIfFiat(envelope.amountSats);
         status = "paid";
       }
-      // α72: Ark-before-receipt may already have inserted an inbound bubble —
-      // upgrade it instead of duplicating "You received".
+      // α74: one bubble per payment — merge by paymentId, then amount (Ark notify /
+      // optimistic pending receipt + real receipt must not duplicate).
       if (direction === "in" && envelope.amountSats > 0) {
         const abs = Math.floor(envelope.amountSats);
-        const recent = listChatMessages(contactId, 40).find(
-          (m) =>
-            m.kind === "payment" &&
-            m.direction === "in" &&
-            m.amountSats != null &&
-            Math.abs(m.amountSats - abs) <= 1 &&
-            Date.now() - m.createdAt < 180_000,
+        const byPid = envelope.paymentId
+          ? findMessageByPaymentId(envelope.paymentId)
+          : null;
+        const recentAmt = findRecentInboundPaymentByAmount(
+          contactId,
+          abs,
+          90_000,
         );
+        // Merge: same paymentId, or Ark-notify placeholder still awaiting receipt.
+        const recent =
+          byPid ??
+          (recentAmt && !recentAmt.nostrEventId ? recentAmt : null);
         if (recent) {
           updateChatMessage(recent.id, {
             status,
             memo: envelope.memo ?? recent.memo,
-            paymentId: envelope.paymentId,
+            paymentId: envelope.paymentId || recent.paymentId,
             nostrEventId: wrapEventId,
             fiatCaption: fiatCaption ?? recent.fiatCaption,
           });
@@ -233,6 +238,17 @@ export async function ingestChatEnvelope(opts: {
           }
           noteChatInboundReceiptHint(contactId, abs);
           dismissClassicFundsNoticeIfChat(abs);
+          return true;
+        }
+      } else if (envelope.paymentId) {
+        const byPid = findMessageByPaymentId(envelope.paymentId);
+        if (byPid) {
+          updateChatMessage(byPid.id, {
+            status,
+            memo: envelope.memo ?? byPid.memo,
+            nostrEventId: wrapEventId,
+            fiatCaption: fiatCaption ?? byPid.fiatCaption,
+          });
           return true;
         }
       }

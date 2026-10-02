@@ -7,6 +7,15 @@ import type { BasicWallet } from "./hdWallet";
 export const DEFAULT_MIN_VTXO_SATS = 330;
 export const MAX_SEND_RECIPIENTS = 10;
 
+/**
+ * Fiat/ASP leftover carriers are exactly min vtxo or 2×min (idle sync).
+ * Do NOT treat every amount ≤660 as dust — that ate real 500/501 chat pays (α74).
+ */
+export function isDustCarrierAmount(amountSats: number): boolean {
+  const n = Math.floor(amountSats);
+  return n === DEFAULT_MIN_VTXO_SATS || n === DEFAULT_MIN_VTXO_SATS * 2;
+}
+
 /** Local alias — matches Wallet.getSpendableVtxos() / SendParams.selectedVtxos. */
 export type SpendableVtxo = NormalizedExtendedVirtualCoin;
 

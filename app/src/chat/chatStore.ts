@@ -207,6 +207,37 @@ export function findMessageByRequestId(
   return row ? rowToMessage(row) : null;
 }
 
+export function findMessageByPaymentId(paymentId: string): ChatMessage | null {
+  const id = paymentId.trim();
+  if (!id) return null;
+  const row = db().getFirstSync<MessageRow>(
+    `SELECT * FROM chat_message WHERE payment_id = ? LIMIT 1`,
+    [id],
+  );
+  return row ? rowToMessage(row) : null;
+}
+
+/** Newest inbound payment of this amount for contact (dedupe Ark notify vs receipt). */
+export function findRecentInboundPaymentByAmount(
+  contactId: string,
+  amountSats: number,
+  newerThanMs = 180_000,
+): ChatMessage | null {
+  const abs = Math.abs(Math.floor(amountSats));
+  const since = Date.now() - Math.max(0, newerThanMs);
+  const row = db().getFirstSync<MessageRow>(
+    `SELECT * FROM chat_message
+     WHERE contact_id = ? AND kind = 'payment' AND direction = 'in'
+       AND amount_sats IS NOT NULL
+       AND ABS(amount_sats - ?) <= 1
+       AND created_at >= ?
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [contactId, abs, since],
+  );
+  return row ? rowToMessage(row) : null;
+}
+
 /** Recent inbound payment cards in the given statuses (oldest last). */
 export function listInboundPaymentsByStatus(
   statuses: ChatMessageStatus[],

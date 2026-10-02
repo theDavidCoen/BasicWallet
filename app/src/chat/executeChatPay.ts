@@ -375,16 +375,8 @@ export async function executeChatPay(opts: {
       const { txid } = await sendWait;
       if (txid && !txid.startsWith("pending:")) {
         recordSentFromThisDevice(networkId, walletId, txid);
-        // Refresh receipt with real txid (best-effort).
-        void publishPaymentReceipt({
-          contactId: opts.contactId,
-          paymentId,
-          amountSats: payAmount,
-          memo: opts.memo,
-          txid,
-          rail: "arkade",
-          relatedRequestId: opts.requestId ?? undefined,
-        });
+        // Do NOT publish a second gift-wrap — α73 double receipt → duplicate
+        // "You received" on peer (α74). First receipt already has paymentId.
       }
       return { txid, paymentId, address: dest.address };
     } catch (sendErr) {

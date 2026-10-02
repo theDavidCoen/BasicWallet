@@ -21,7 +21,7 @@ import {
   type WalletRecord,
 } from "../account/walletRegistry";
 import { getNetworkConfig } from "../config/network";
-import { DEFAULT_MIN_VTXO_SATS } from "./arkMultiSend";
+import { DEFAULT_MIN_VTXO_SATS, isDustCarrierAmount } from "./arkMultiSend";
 import { isFiatModeActiveGate, optimisticDepixReceive, shouldSuppressFiatEnterBrlNotice, shouldSuppressFiatExitSatsNotice } from "../fiat/fiatModeGate";
 import {
   depixAssetIdForNetwork,
@@ -730,13 +730,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       console.warn("[basic] fundsNotice suppressed (fiat mode sats)", kind, amount);
       return "busy";
     }
-    // Dust floor even outside Fiat Mode (login/open catch-up of leftover carriers).
-    // Cap at 2× min VTXO — idle sync sometimes reports two carriers as one delta.
+    // Exact carrier amounts only (330 / 660) — never suppress real 500-sat pays (α74).
     if (
       (kind === "arkade" || kind === "boarding") &&
-      amount <= DEFAULT_MIN_VTXO_SATS * 2
+      isDustCarrierAmount(amount)
     ) {
-      console.warn("[basic] fundsNotice suppressed (dust floor)", kind, amount);
+      console.warn("[basic] fundsNotice suppressed (dust carrier)", kind, amount);
       return "busy";
     }
     // Enter Fiat Mode: suppress BRL toast for the enter swap fill itself.
@@ -999,7 +998,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         // Dust-only "catch-up" (330/660 carriers after Fiat enter / login) is baseline,
         // not a real receive while away — never clear open quiet to toast it.
         const dustOnlyCatchUp =
-          catchUpSats > 0 && catchUpSats <= DEFAULT_MIN_VTXO_SATS * 2;
+          catchUpSats > 0 && isDustCarrierAmount(catchUpSats);
         const catchUpWhileAway =
           catchUpSats > 0 &&
           !dustOnlyCatchUp &&
@@ -1109,12 +1108,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
               ackTotal: ack.total,
             });
           } else if (
-            // Dust-only bump (min VTXO carrier ×1–2) — never toast.
-            // Idle sync often reports 660 (=2×330) as one delta.
+            // Exact carrier deltas only (330 / 660) — not every small pay (α74).
             totalDelta > 0 &&
-            totalDelta <= DEFAULT_MIN_VTXO_SATS * 2
+            isDustCarrierAmount(totalDelta)
           ) {
-            console.warn("[basic] persistBalance skip dust delta", {
+            console.warn("[basic] persistBalance skip dust carrier delta", {
               totalDelta,
               live: bal.total,
               displayed: displayed?.total ?? null,
@@ -2597,8 +2595,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                     amount,
                   });
                   acknowledgeIncomingAmount(amount);
-                } else if (amount <= DEFAULT_MIN_VTXO_SATS * 2) {
-                  console.warn("[basic] notifyIncomingFunds skip dust floor", {
+                } else if (isDustCarrierAmount(amount)) {
+                  // Exact 330/660 carriers only — real 500/501 chat pays must apply (α74).
+                  console.warn("[basic] notifyIncomingFunds skip dust carrier", {
                     amount,
                   });
                   acknowledgeIncomingAmount(amount);

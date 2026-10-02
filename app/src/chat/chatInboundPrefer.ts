@@ -11,6 +11,7 @@ import {
   listChatThreads,
   updateChatMessage,
   findMessageByRequestId,
+  findRecentInboundPaymentByAmount,
 } from "./chatStore";
 import {
   getFocusedChatContactId,
@@ -180,16 +181,35 @@ function hasRecentInboundPaymentBubble(
   amountSats: number,
   newerThanMs = 120_000,
 ): boolean {
-  const abs = Math.abs(Math.floor(amountSats));
-  const since = Date.now() - newerThanMs;
-  return listChatMessages(contactId, 40).some(
-    (m) =>
-      m.kind === "payment" &&
-      m.direction === "in" &&
-      m.createdAt >= since &&
-      m.amountSats != null &&
-      Math.abs(m.amountSats - abs) <= 1,
+  return (
+    findRecentInboundPaymentByAmount(contactId, amountSats, newerThanMs) != null
   );
+}
+
+/** Sync claim so Ark notify + gift-wrap cannot both insert the same amount (α74). */
+const inboundBubbleClaims = new Map<string, number>();
+/** Short race window only — two real 500-sat pays minutes apart must both show. */
+const INBOUND_CLAIM_TTL_MS = 20_000;
+
+function inboundClaimKey(contactId: string, amountSats: number): string {
+  return `${contactId}:${Math.floor(amountSats)}`;
+}
+
+function tryClaimInboundBubble(contactId: string, amountSats: number): boolean {
+  const key = inboundClaimKey(contactId, amountSats);
+  const now = Date.now();
+  for (const [k, at] of inboundBubbleClaims) {
+    if (now - at > INBOUND_CLAIM_TTL_MS) inboundBubbleClaims.delete(k);
+  }
+  // Placeholder from Ark notify (no receipt yet) — merge, don't duplicate.
+  const existing = findRecentInboundPaymentByAmount(contactId, amountSats, 90_000);
+  if (existing && !existing.nostrEventId) {
+    inboundBubbleClaims.set(key, now);
+    return false;
+  }
+  if (inboundBubbleClaims.has(key)) return false;
+  inboundBubbleClaims.set(key, now);
+  return true;
 }
 
 /**
@@ -200,11 +220,12 @@ export function ensureChatInboundBubble(opts: {
   contactId: string;
   amountSats: number;
   requestId?: string | null;
+  paymentId?: string | null;
   status?: "paid" | "arriving";
 }): boolean {
   const abs = Math.floor(opts.amountSats);
   if (!opts.contactId || !(abs > 0)) return false;
-  if (hasRecentInboundPaymentBubble(opts.contactId, abs)) {
+  if (!tryClaimInboundBubble(opts.contactId, abs)) {
     noteChatInboundReceiptHint(opts.contactId, abs);
     return true;
   }
@@ -215,7 +236,7 @@ export function ensureChatInboundBubble(opts: {
     direction: "in",
     amountSats: abs,
     status: opts.status ?? "paid",
-    paymentId: newChatId("pay"),
+    paymentId: opts.paymentId?.trim() || newChatId("pay"),
     requestId: opts.requestId ?? null,
     bumpUnread: focused !== opts.contactId,
   });
