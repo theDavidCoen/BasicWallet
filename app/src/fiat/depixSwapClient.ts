@@ -167,67 +167,72 @@ function patchWalletSendForFullAssetDeposit(
   const originalSend: SendFn = w.send.bind(w);
   const want = assetId.toLowerCase();
 
-  const patchedSend = (async (...args: Parameters<SendFn>) => {
-    const params = args[0];
-    if (params && typeof params === "object" && !Array.isArray(params)) {
-      const p = params as {
-        amount?: number;
-        assets?: Array<{ assetId?: string; amount?: bigint | number | string }>;
-      };
-      const assets = p.assets;
-      if (Array.isArray(assets) && assets.length > 0) {
-        const give =
-          assets.find((a) => String(a.assetId ?? "").toLowerCase() === want) ??
-          assets[0];
-        const giveAmt = (() => {
-          const a = give?.amount;
-          if (typeof a === "bigint") return a;
-          if (typeof a === "number" && Number.isFinite(a)) return BigInt(Math.floor(a));
-          if (typeof a === "string" && /^\d+$/.test(a)) return BigInt(a);
-          return 0n;
-        })();
+  const patchedSend = ((...args: unknown[]) => {
+    const run = async (): Promise<string> => {
+      const params = args[0];
+      if (params && typeof params === "object" && !Array.isArray(params)) {
+        const p = params as {
+          amount?: number;
+          assets?: Array<{ assetId?: string; amount?: bigint | number | string }>;
+        };
+        const assets = p.assets;
+        if (Array.isArray(assets) && assets.length > 0) {
+          const give =
+            assets.find((a) => String(a.assetId ?? "").toLowerCase() === want) ??
+            assets[0];
+          const giveAmt = (() => {
+            const a = give?.amount;
+            if (typeof a === "bigint") return a;
+            if (typeof a === "number" && Number.isFinite(a)) {
+              return BigInt(Math.floor(a));
+            }
+            if (typeof a === "string" && /^\d+$/.test(a)) return BigInt(a);
+            return 0n;
+          })();
 
-        let liveAsset = 0n;
-        try {
-          const bal = await (
-            wallet as IWallet & { getBalance: () => Promise<unknown> }
-          ).getBalance();
-          liveAsset = readAssetAtomicFromBalance(bal, assetId);
-        } catch {
-          /* ignore */
-        }
+          let liveAsset = 0n;
+          try {
+            const bal = await (
+              wallet as IWallet & { getBalance: () => Promise<unknown> }
+            ).getBalance();
+            liveAsset = readAssetAtomicFromBalance(bal, assetId);
+          } catch {
+            /* ignore */
+          }
 
-        const givingAll = liveAsset > 0n && giveAmt >= liveAsset;
-        const carrier =
-          p.amount == null || !(Number(p.amount) > 0)
-            ? dust
-            : Math.floor(Number(p.amount));
-        const availableSats = await readAvailableSats(wallet);
-        const change = availableSats - carrier;
-        if (
-          givingAll &&
-          availableSats >= dust &&
-          change > 0 &&
-          change < dust
-        ) {
-          console.warn(
-            "[basic] swap fund bump asset carrier (avoid subdust change)",
-            {
-              carrier,
-              availableSats,
-              dust,
-              giveAmt: String(giveAmt),
-              liveAsset: String(liveAsset),
-            },
-          );
-          return originalSend({
-            ...(params as object),
-            amount: availableSats,
-          } as Parameters<SendFn>[0]);
+          const givingAll = liveAsset > 0n && giveAmt >= liveAsset;
+          const carrier =
+            p.amount == null || !(Number(p.amount) > 0)
+              ? dust
+              : Math.floor(Number(p.amount));
+          const availableSats = await readAvailableSats(wallet);
+          const change = availableSats - carrier;
+          if (
+            givingAll &&
+            availableSats >= dust &&
+            change > 0 &&
+            change < dust
+          ) {
+            console.warn(
+              "[basic] swap fund bump asset carrier (avoid subdust change)",
+              {
+                carrier,
+                availableSats,
+                dust,
+                giveAmt: String(giveAmt),
+                liveAsset: String(liveAsset),
+              },
+            );
+            return (originalSend as (...a: unknown[]) => Promise<string>)({
+              ...(params as object),
+              amount: availableSats,
+            });
+          }
         }
       }
-    }
-    return originalSend(...args);
+      return (originalSend as (...a: unknown[]) => Promise<string>)(...args);
+    };
+    return run();
   }) as SendFn;
 
   w.send = patchedSend;
