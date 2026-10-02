@@ -106,8 +106,15 @@ export async function readMinVtxoSats(w: {
   return DEFAULT_MIN_VTXO_SATS;
 }
 
+function vtxoHasAssets(v: SpendableVtxo): boolean {
+  const assets = (v as { assets?: unknown }).assets;
+  return Array.isArray(assets) && assets.length > 0;
+}
+
 /**
  * ASP rejects change below min vtxo even when the SDK encodes it as subdust.
+ * When inputs carry leftover assets, change must be ≥ dust (SDK:
+ * "N sats of change cannot carry M asset change(s), needs dust").
  * `amount` is the payment sum across all recipients.
  */
 export async function prepareDustSafeSend(
@@ -129,10 +136,15 @@ export async function prepareDustSafeSend(
     return { amount, amountBumped: false, originalAmount: amount };
   }
 
+  // Prefer pure-BTC coins first so sats sends avoid pulling asset change.
   const sorted = sortSpendableLikeSdk(coins);
+  const preferOrder = [
+    ...sorted.filter((c) => !vtxoHasAssets(c)),
+    ...sorted.filter((c) => vtxoHasAssets(c)),
+  ];
   const selected: SpendableVtxo[] = [];
   let selectedSum = 0;
-  for (const coin of sorted) {
+  for (const coin of preferOrder) {
     if (selectedSum >= amount) break;
     selected.push(coin);
     selectedSum += coin.value;
@@ -141,13 +153,26 @@ export async function prepareDustSafeSend(
     throw new Error("Insufficient funds");
   }
 
-  const unused = sorted.filter((c) => !selected.some((s) => vtxoKey(s) === vtxoKey(c)));
+  const unused = preferOrder.filter(
+    (c) => !selected.some((s) => vtxoKey(s) === vtxoKey(c)),
+  );
   let change = selectedSum - amount;
+  const needsAssetCarrier = () =>
+    selected.some(vtxoHasAssets) && change < dust;
+
+  // Subdust sats change, or 0-change with leftover assets (needs ≥dust carrier).
   for (const coin of unused) {
-    if (!(change > 0 && change < dust)) break;
+    if (!(change > 0 && change < dust) && !needsAssetCarrier()) break;
     selected.push(coin);
     selectedSum += coin.value;
     change = selectedSum - amount;
+  }
+
+  if (needsAssetCarrier()) {
+    throw new Error(
+      `Need about ${dust} sats of change to carry remaining assets. ` +
+        `Receive a little more sats, convert a bit more, or send less.`,
+    );
   }
 
   if (change > 0 && change < dust) {
@@ -169,6 +194,12 @@ export async function prepareDustSafeSend(
 
 export function formatSendError(e: unknown, dust = DEFAULT_MIN_VTXO_SATS): string {
   const msg = e instanceof Error ? e.message : String(e ?? "Unknown error");
+  if (/cannot carry .+ asset change/i.test(msg)) {
+    return (
+      `Need about ${dust} sats of change to carry remaining assets. ` +
+      `Receive a little more sats, convert a bit more, or send less.`
+    );
+  }
   if (
     /AMOUNT_TOO_LOW/i.test(msg) ||
     /min vtxo amount/i.test(msg) ||

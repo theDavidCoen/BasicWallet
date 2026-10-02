@@ -127,7 +127,7 @@ export function ReceivePosPanel({
   /**
    * `receive` = classic POS (QR).
    * `chat-request` = amount entry then publish encrypted Nostr pay-request.
-   * `chat-send` = amount entry then Continue → Confirm + biometrics.
+   * `chat-send` = amount entry then Continue → convert if needed → biometrics.
    */
   variant?: "receive" | "chat-request" | "chat-send";
   /** Shown under title when variant is chat-request / chat-send. */
