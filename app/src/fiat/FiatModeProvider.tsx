@@ -1455,9 +1455,6 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       const need = Math.floor(satsNeeded);
       if (!(need > 0)) return balanceSats ?? 0;
 
-      const preSats = balanceSats ?? 0;
-      if (preSats >= need) return preSats;
-
       payConvertInFlightRef.current = true;
       holdAutoInboundForPay(180_000);
       try {
@@ -1472,6 +1469,32 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         timeoutMs: 90_000,
         preemptQuiet: true,
       });
+
+      // Prefer live ASP sats — UI/ack floors from prior pay-convert are stale.
+      let preSats = balanceSats ?? 0;
+      if (wallet) {
+        try {
+          const raw = await wallet.getBalance();
+          if (
+            raw &&
+            typeof raw === "object" &&
+            typeof (raw as { available?: unknown }).available === "number"
+          ) {
+            const liveSats = Math.floor((raw as { available: number }).available);
+            if (liveSats < preSats) {
+              console.warn("[basic] pay-convert prefer live sats over UI", {
+                ui: preSats,
+                live: liveSats,
+                need,
+              });
+            }
+            preSats = liveSats;
+          }
+        } catch (e) {
+          console.warn("[basic] pay-convert live sats read failed", e);
+        }
+      }
+      if (preSats >= need) return preSats;
 
       // Same as Exit: never fund from lastGood alone — ASP can show empty
       // assets while UI still shows R$ / USDT (→ Insufficient funds).

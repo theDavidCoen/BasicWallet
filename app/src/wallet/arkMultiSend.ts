@@ -150,7 +150,10 @@ export async function prepareDustSafeSend(
     selectedSum += coin.value;
   }
   if (selectedSum < amount) {
-    throw new Error("Insufficient funds");
+    throw new Error(
+      `Insufficient sats to send (have ${selectedSum.toLocaleString("en-US")}, need ${amount.toLocaleString("en-US")}). ` +
+        `In Fiat Mode, Home shows stable balance — convert more or wait for sats to settle.`,
+    );
   }
 
   const unused = preferOrder.filter(
@@ -198,6 +201,12 @@ export function formatSendError(e: unknown, dust = DEFAULT_MIN_VTXO_SATS): strin
     return (
       `Need about ${dust} sats of change to carry remaining assets. ` +
       `Receive a little more sats, convert a bit more, or send less.`
+    );
+  }
+  if (/^Insufficient funds$/i.test(msg)) {
+    return (
+      `Insufficient sats to send. In Fiat Mode, Home shows your stable balance — ` +
+      `not spendable sats. Wait a moment and try again so the wallet can convert.`
     );
   }
   if (

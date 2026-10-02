@@ -194,14 +194,22 @@ export function ChatAmountScreen() {
         return;
       }
 
-      const have = spendable ?? 0;
-      const dustTarget = fiatMode ? sats + DEFAULT_MIN_VTXO_SATS : sats;
-      const needConvert =
-        fiatMode && have < dustTarget && (depixDisplay ?? 0) > 0;
-      if (sats > have && !needConvert) {
+      const haveUi = spendable ?? 0;
+      // Fiat: Home is stable — UI sats floors are often optimistic (pay-convert).
+      // Always take the convert path when DePix is shown; ensureSatsForPay reads
+      // live ASP sats and skips convert only when they truly cover the pay.
+      const needConvert = fiatMode && (depixDisplay ?? 0) > 0;
+      if (!fiatMode && sats > haveUi) {
         Alert.alert(
           "Insufficient balance",
           "Enter an amount within your balance.",
+        );
+        return;
+      }
+      if (fiatMode && !needConvert && sats > haveUi) {
+        Alert.alert(
+          "Insufficient balance",
+          "Not enough sats, and no stable balance to convert.",
         );
         return;
       }
@@ -231,6 +239,8 @@ export function ChatAmountScreen() {
         }
 
         const paymentId = newChatId("pay");
+        // Fiat Mode with DePix: always start as converting — ensureSats may no-op
+        // if live sats already cover the pay (bubble advances to sending).
         const local = insertChatMessage({
           contactId,
           kind: "payment",
@@ -275,6 +285,21 @@ export function ChatAmountScreen() {
             if (needConvert) {
               updateChatMessage(local.id, { status: "converting" });
             }
+            const readLiveSpendableSats = async (): Promise<number | null> => {
+              try {
+                const raw = await wallet.getBalance();
+                if (
+                  raw &&
+                  typeof raw === "object" &&
+                  typeof (raw as { available?: unknown }).available === "number"
+                ) {
+                  return Math.floor((raw as { available: number }).available);
+                }
+              } catch (e) {
+                console.warn("[basic] chat send live sats read failed", e);
+              }
+              return null;
+            };
             const ensured = await ensureSatsForPay({
               satsNeeded: sats,
               spendable: spendNow,
@@ -283,6 +308,7 @@ export function ChatAmountScreen() {
               networkId: netId,
               convertDepixToSatsForPay: convert,
               quiet: true,
+              readLiveSpendableSats,
             });
             if (payTimedOut()) {
               throw new Error("Conversion timed out. Try again.");

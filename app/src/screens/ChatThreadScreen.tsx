@@ -370,6 +370,21 @@ export function ChatThreadScreen() {
         networkId: network.id,
         convertDepixToSatsForPay,
         quiet: true,
+        readLiveSpendableSats: async () => {
+          try {
+            const raw = await wallet.getBalance();
+            if (
+              raw &&
+              typeof raw === "object" &&
+              typeof (raw as { available?: unknown }).available === "number"
+            ) {
+              return Math.floor((raw as { available: number }).available);
+            }
+          } catch {
+            /* ignore */
+          }
+          return null;
+        },
       });
       holdAutoInboundForPay(180_000);
       setPayBusyLabel("Sending…");

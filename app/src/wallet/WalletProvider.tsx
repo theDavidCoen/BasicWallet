@@ -899,9 +899,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       // ASP timeouts / partial vtxo views often return dust (330) or a stale low
       // total after Exit fill while ack already includes notifyIncoming proceeds.
       // Never regress ack or flash dust — that caused FUNDS RECEIVED on reopen.
+      // Fiat Mode exception: Home is stable (R$/USDT). Optimistic pay-convert
+      // floors (ensureBalanceAtLeast) must not pin fake sats forever when ASP
+      // only has dust carriers (α64: UI 3758 vs live 660 → skipped convert).
       const floor = Math.max(ack?.total ?? 0, displayed?.total ?? 0);
+      const fiatMode = isFiatModeActiveGate();
       if (
         !suppressed &&
+        !fiatMode &&
         floor > DEFAULT_MIN_VTXO_SATS * 2 &&
         bal.total + DEFAULT_MIN_VTXO_SATS * 2 < floor
       ) {
@@ -912,6 +917,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         });
         setBalanceStatus("ready");
         return;
+      }
+      if (
+        fiatMode &&
+        floor > DEFAULT_MIN_VTXO_SATS * 2 &&
+        bal.total + DEFAULT_MIN_VTXO_SATS * 2 < floor
+      ) {
+        console.warn("[basic] persistBalance adopt live sats (fiat mode)", {
+          live: bal.total,
+          floor,
+          ackTotal: ack?.total ?? null,
+        });
       }
 
       if (quiet) {
