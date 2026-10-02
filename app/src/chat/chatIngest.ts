@@ -15,8 +15,6 @@ import {
   dismissClassicFundsNoticeIfChat,
   noteChatInboundReceiptHint,
 } from "./chatInboundPrefer";
-import { applyChatReceiveBalanceOnce } from "./chatReceiveBalance";
-import { isFiatModeActiveGate } from "../fiat/fiatModeGate";
 import {
   findContactIdByPeerPubkey,
   silentlyUpsertContactArkFromChat,
@@ -240,14 +238,7 @@ export async function ingestChatEnvelope(opts: {
           }
           noteChatInboundReceiptHint(contactId, abs);
           dismissClassicFundsNoticeIfChat(abs);
-          // Maxi Home tracks ASP; Fiat Mode uses stables (never bump sats here).
-          if (!isFiatModeActiveGate()) {
-            applyChatReceiveBalanceOnce({
-              amountSats: abs,
-              paymentId: envelope.paymentId || recent.paymentId,
-              contactId,
-            });
-          }
+          // Home balance: ASP notify only (receipt must not double-apply — α76).
           return true;
         }
       } else if (envelope.paymentId) {
@@ -284,13 +275,6 @@ export async function ingestChatEnvelope(opts: {
       if (direction === "in" && envelope.amountSats > 0) {
         noteChatInboundReceiptHint(contactId, envelope.amountSats);
         dismissClassicFundsNoticeIfChat(envelope.amountSats);
-        if (!isFiatModeActiveGate()) {
-          applyChatReceiveBalanceOnce({
-            amountSats: envelope.amountSats,
-            paymentId: envelope.paymentId,
-            contactId,
-          });
-        }
       }
       return true;
     }

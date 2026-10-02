@@ -51,6 +51,7 @@ import {
   mergeRecipientsByAddress,
   prepareDustSafeSend,
   readMinVtxoSats,
+  readSpendableAvailable,
   waitForSendOrSpendDrop,
   withTimeout,
   type SendRecipient,
@@ -231,6 +232,7 @@ export function SendScreen() {
     selectedWallet,
     wallets,
     bumpActivity,
+    refreshBalanceOnly,
   } = useWallet();
   const { fiatMode, convertDepixToSatsForPay, depixDisplay, applyLocalDepixSpend } = useFiatMode();
   const network = getNetworkConfig();
@@ -1096,6 +1098,21 @@ export function SendScreen() {
         return;
       }
 
+      // Live vtxos win over inflated Home (α76 chat double-apply / stale Max).
+      if (!wantsAsset && paymentSum > 0) {
+        const live = await readSpendableAvailable(wallet, { timeoutMs: 5_000 });
+        if (live != null && paymentSum > live) {
+          void refreshBalanceOnly();
+          Alert.alert(
+            "Insufficient balance",
+            fiatMode
+              ? `Available: ${live.toLocaleString("en-US")} sats. In Fiat Mode, Home shows stable balance — convert more or wait for sats to settle.`
+              : `Available: ${live.toLocaleString("en-US")} sats`,
+          );
+          return;
+        }
+      }
+
       // Pure asset multi-send: no sats dust bump / change planning.
       let plan: Awaited<ReturnType<typeof prepareDustSafeSend>> = {
         amount: paymentSum,
@@ -1274,7 +1291,16 @@ export function SendScreen() {
         endOutboundSend();
       }
     } catch (e) {
-      Alert.alert("Send failed", formatSendError(e, dust));
+      const msg = formatSendError(e, dust);
+      if (/Insufficient sats/i.test(msg)) {
+        void refreshBalanceOnly();
+      }
+      Alert.alert(
+        "Send failed",
+        fiatMode && /Insufficient sats/i.test(msg)
+          ? `${msg} In Fiat Mode, Home shows stable balance — convert more or wait for sats to settle.`
+          : msg,
+      );
     } finally {
       setBusy(false);
     }
