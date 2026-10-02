@@ -215,6 +215,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const {
     wallet,
     selectedWallet,
+    balance,
     balanceSats,
     renameWallet,
     refresh,
@@ -224,6 +225,11 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     ensureBalanceAtLeast,
     bumpActivity,
   } = useWallet();
+  /** Prefer spendable offchain — total can include boarding / optimistic wedges. */
+  const spendableSats =
+    balance != null && Number.isFinite(balance.available)
+      ? Math.floor(balance.available)
+      : balanceSats;
 
   const [state, setState] = useState<FiatModeState | null>(null);
   const [converting, setConverting] = useState(false);
@@ -807,6 +813,11 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         return false;
       };
       if (!wallet || !walletId || !kind) {
+        console.warn("[basic] fiat job skip (wallet not ready)", {
+          kind,
+          hasWallet: Boolean(wallet),
+          walletId,
+        });
         return fail("Wallet not ready for conversion.");
       }
       // Never re-run enter once Fiat Mode is already on.
@@ -1299,44 +1310,80 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       }
       const minBase = fiatMinBaseSats(networkId);
       const reserve = DEFAULT_MIN_VTXO_SATS;
-      const total = Math.floor(sats);
-      // Single dust carrier (asset change) — never start a convert loop.
-      if (!(total > reserve)) {
-        console.warn("[basic] auto-inbound skip dust carrier", {
-          sats: total,
-          reserve,
-        });
-        return;
-      }
-      // Prefer leave a dust carrier for leftover assets. If that drops below
-      // solver minBase, swap the full bag (same as Enter) so small classic
-      // receives still convert (α65: 639 delta / 1299 total stuck as sats).
-      let swap: number;
-      if (total - reserve >= minBase) {
-        swap = total - reserve;
-      } else if (total >= minBase) {
-        swap = total;
-      } else {
-        console.warn("[basic] auto-inbound skip below minBase", {
-          sats: total,
-          reserve,
+      // Resolve live available before funding — UI total can exceed spendable
+      // (boarding / stale), which made α67 queue 1299 → Insufficient funds.
+      void (async () => {
+        if (jobBusyRef.current) return;
+        let live = Math.floor(sats);
+        try {
+          const raw = await (
+            wallet as { getBalance?: () => Promise<unknown> } | null
+          )?.getBalance?.();
+          if (
+            raw &&
+            typeof raw === "object" &&
+            typeof (raw as { available?: unknown }).available === "number"
+          ) {
+            const avail = Math.floor(
+              (raw as { available: number }).available,
+            );
+            if (avail >= 0) live = avail;
+          }
+        } catch (e) {
+          console.warn("[basic] auto-inbound live sats read failed", e);
+        }
+        const total = live;
+        console.warn("[basic] auto-inbound thresholds", {
+          uiSats: Math.floor(sats),
+          liveAvailable: live,
+          dust: reserve,
           minBase,
         });
-        return;
-      }
-      autoInboundSatsRef.current = total;
-      console.warn("[basic] auto-inbound queue", {
-        total,
-        swap,
-        minBase,
-        reserve,
-      });
-      // Quiet background — never Enter CONVERTING modal.
-      void runJob("auto-inbound", "btc-to-depix", BigInt(Math.floor(swap)), {
-        quiet: true,
-      });
+        // Single dust carrier (asset change) — never start a convert loop.
+        if (!(total > reserve)) {
+          console.warn("[basic] auto-inbound skip dust carrier", {
+            sats: total,
+            reserve,
+          });
+          return;
+        }
+        // Prefer leave a dust carrier for leftover assets. If that drops below
+        // solver minBase, swap the full bag (same as Enter) so small classic
+        // receives still convert (α65: 639 delta / 1299 total stuck as sats).
+        let swap: number;
+        if (total - reserve >= minBase) {
+          swap = total - reserve;
+        } else if (total >= minBase) {
+          swap = total;
+        } else {
+          console.warn("[basic] auto-inbound skip below minBase", {
+            sats: total,
+            reserve,
+            minBase,
+          });
+          return;
+        }
+        if (jobBusyRef.current) {
+          console.warn("[basic] auto-inbound skip (busy after live read)", {
+            total,
+            swap,
+          });
+          return;
+        }
+        autoInboundSatsRef.current = total;
+        console.warn("[basic] auto-inbound queue", {
+          total,
+          swap,
+          minBase,
+          reserve,
+        });
+        // Quiet background — never Enter CONVERTING modal.
+        void runJob("auto-inbound", "btc-to-depix", BigInt(Math.floor(swap)), {
+          quiet: true,
+        });
+      })();
     },
-    [state?.fiatMode, converting, runJob, networkId],
+    [state?.fiatMode, converting, runJob, networkId, wallet],
   );
 
   // Inbound sats while in Fiat Mode → quiet auto-swap to designated stable.
@@ -1378,16 +1425,26 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     if (payConvertInFlightRef.current) return;
     if (Date.now() < suppressAutoInboundUntilRef.current) return;
     if (hasOutboundPayInFlight()) return;
-    if (balanceSats == null) return;
+    if (spendableSats == null) return;
     const minBase = fiatMinBaseSats(networkId);
     // Enough to meet solver min (maybeAutoSwap decides reserve vs full bag).
-    if (balanceSats < minBase) return;
+    if (spendableSats < minBase) return;
     // Slower backoff — idle recovery was racing chat Send (α63 R$12 timeout).
     if (Date.now() - idleAutoInboundAtRef.current < 60_000) return;
     idleAutoInboundAtRef.current = Date.now();
-    console.warn("[basic] auto-inbound idle recovery", { balanceSats });
-    maybeAutoSwapInboundSats(balanceSats);
-  }, [balanceSats, state?.fiatMode, converting, maybeAutoSwapInboundSats, networkId]);
+    console.warn("[basic] auto-inbound idle recovery", {
+      spendableSats,
+      balanceTotal: balanceSats,
+    });
+    maybeAutoSwapInboundSats(spendableSats);
+  }, [
+    spendableSats,
+    balanceSats,
+    state?.fiatMode,
+    converting,
+    maybeAutoSwapInboundSats,
+    networkId,
+  ]);
 
   /**
    * Bitcoin Maxi Mode: outside Fiat Mode, inbound designated stable assets
@@ -1796,7 +1853,8 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
 
   /**
    * Home: pending auto-convert caption.
-   * Fiat — live sats above a single dust carrier and below solver minBase.
+   * Fiat — spendable sats above a single dust carrier (below *or* at/above
+   * minBase while auto-inbound has not cleared them — α68).
    * Maxi — designated stable held below convert min (see maxi poll).
    * Never use optimistic pay-convert floors during outbound hold.
    */
@@ -1810,11 +1868,23 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       if (payConvertInFlightRef.current) return null;
       if (Date.now() < suppressAutoInboundUntilRef.current) return null;
       if (hasOutboundPayInFlight()) return null;
-      const sats = balanceSats;
+      const sats = spendableSats;
       if (sats == null) return null;
-      // α66: ignore only ≤ dust carrier; show real pending excess below minBase.
-      if (!(sats > dust) || sats >= minBase) return null;
-      return `+ ${sats.toLocaleString("en-US")} sats to be converted after minimum is reached`;
+      // Ignore only ≤ dust carrier. Show while excess remains (α67 hid ≥minBase
+      // so a stuck 1299 convert left Home with no caption).
+      if (!(sats > dust)) return null;
+      const caption =
+        sats < minBase
+          ? `+ ${sats.toLocaleString("en-US")} sats to be converted after minimum is reached`
+          : `+ ${sats.toLocaleString("en-US")} sats to be converted`;
+      console.warn("[basic] pendingConvertHint", {
+        sats,
+        dust,
+        minBase,
+        balanceTotal: balanceSats,
+        caption,
+      });
+      return caption;
     }
 
     if (bitcoinMaxiMode && maxiPendingDisplay != null && maxiPendingDisplay >= 0.01) {
@@ -1831,6 +1901,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   }, [
     fiatMode,
     converting,
+    spendableSats,
     balanceSats,
     bitcoinMaxiMode,
     maxiPendingDisplay,
