@@ -433,7 +433,11 @@ export function recordOptimisticArkadeReceive(
   const row: ActivityRow = {
     id,
     title: "Receive",
-    subtitle: arkTxid ? arkTxid.slice(0, 16) : "Incoming",
+    subtitle: arkTxid
+      ? arkTxid.slice(0, 16)
+      : hasFiatAsset
+        ? "Converted"
+        : "Receive",
     amount: amount > 0 ? amount : 0,
     settled: false,
     status: "preconfirmed",

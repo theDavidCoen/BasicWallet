@@ -109,7 +109,10 @@ type FiatModeContextValue = {
   /** Optimistic DePix spend so Home does not flash 0 while ASP settles. */
   applyLocalDepixSpend: (displayAmount: number) => void;
   /** Optimistic DePix receive so Home updates with the Funds Received notice. */
-  applyLocalDepixReceive: (displayAmount: number) => void;
+  applyLocalDepixReceive: (
+    displayAmount: number,
+    opts?: { force?: boolean },
+  ) => void;
   /** After inbound sats while in fiat mode — swap to DePix (non-blocking job). */
   maybeAutoSwapInboundSats: (sats: number) => void;
   /**
@@ -202,6 +205,8 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const autoInboundBaselineRef = useRef<bigint | null>(null);
   /** Backoff for idle excess-sats recovery (missed delta / α58 hang). */
   const idleAutoInboundAtRef = useRef(0);
+  /** After auto-inbound: refresh must adopt live DePix (skip overshoot hold). */
+  const adoptLiveDepixUntilRef = useRef(0);
 
   const networkId = getNetworkConfig().id;
   const walletId = selectedWallet?.kind === "arkade" ? selectedWallet.id : null;
@@ -316,28 +321,50 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const applyLocalDepixReceive = useCallback((displayAmount: number) => {
-    const add = Number(displayAmount);
-    if (!(add > 0)) return;
-    setDepixDisplay((prev) => {
-      const base = prev ?? lastGoodDepixRef.current ?? 0;
-      // Full-balance replay mistaken as a receive (enter/auto fill) — would 2× Home.
-      if (base >= 0.01 && add >= base * 0.85) {
-        console.warn("[basic] applyLocalDepixReceive ignore near-full replay", {
-          add,
-          base,
-        });
-        return prev ?? base;
+  const applyLocalDepixReceive = useCallback(
+    (displayAmount: number, opts?: { force?: boolean }) => {
+      const add = Number(displayAmount);
+      if (!(add > 0)) return;
+      setDepixDisplay((prev) => {
+        const base = prev ?? lastGoodDepixRef.current ?? 0;
+        // Full-balance replay mistaken as a receive (enter/auto fill) — would 2× Home.
+        // Auto-inbound settle uses force / adoptLiveDepix after convert.
+        if (!opts?.force && base >= 0.01 && add >= base * 0.85) {
+          console.warn("[basic] applyLocalDepixReceive ignore near-full replay", {
+            add,
+            base,
+          });
+          return prev ?? base;
+        }
+        const next = Math.round((base + add) * 100) / 100;
+        optimisticDepixRef.current = next;
+        optimisticDepixUntilRef.current = Date.now() + 20_000;
+        lastDepixRef.current = next;
+        if (next >= 0.01) lastGoodDepixRef.current = next;
+        console.warn("[basic] applyLocalDepixReceive", { add, next, force: !!opts?.force });
+        return next;
+      });
+    },
+    [],
+  );
+
+  /** After auto-inbound fill: adopt live stable as Home truth (skip overshoot guards). */
+  const adoptLiveDepixDisplay = useCallback(
+    (liveDisplay: number) => {
+      const live = Math.round(Number(liveDisplay) * 100) / 100;
+      if (!(live >= 0.01)) return;
+      clearOptimisticDepix();
+      lastGoodDepixRef.current = live;
+      lastDepixRef.current = live;
+      setDepixDisplay(live);
+      adoptLiveDepixUntilRef.current = Date.now() + 90_000;
+      if (walletId) {
+        void writeFiatModeState(networkId, walletId, { lastGoodDisplay: live });
       }
-      const next = Math.round((base + add) * 100) / 100;
-      optimisticDepixRef.current = next;
-      optimisticDepixUntilRef.current = Date.now() + 20_000;
-      lastDepixRef.current = next;
-      if (next >= 0.01) lastGoodDepixRef.current = next;
-      console.warn("[basic] applyLocalDepixReceive", { add, next });
-      return next;
-    });
-  }, []);
+      console.warn("[basic] adoptLiveDepixDisplay", { live });
+    },
+    [clearOptimisticDepix, networkId, walletId],
+  );
 
   const refreshDepixBalance = useCallback(async () => {
     if (!wallet || !walletId) {
@@ -349,6 +376,19 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       const raw = await wallet.getBalance();
       const atomic = readDepixAtomicFromBalance(raw, depixAssetIdForNetwork(networkId));
       const live = depixAtomicToDisplay(atomic, networkId);
+      const forceAdopt = Date.now() < adoptLiveDepixUntilRef.current;
+      if (forceAdopt && live >= 0.01) {
+        clearOptimisticDepix();
+        lastGoodDepixRef.current = live;
+        lastDepixRef.current = live;
+        if (walletId) {
+          void writeFiatModeState(networkId, walletId, {
+            lastGoodDisplay: live,
+          });
+        }
+        setDepixDisplay(live);
+        return;
+      }
       const opt = optimisticDepixRef.current;
       const hold =
         opt != null && Date.now() < optimisticDepixUntilRef.current;
@@ -418,8 +458,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         return;
       }
       // Transient ~2× (old assets + unsettled swap fill) — hold last good.
+      // Skip while post-auto-inbound adopt window is open.
       const good = lastGoodDepixRef.current;
       if (
+        !forceAdopt &&
         good != null &&
         good >= 0.01 &&
         live > good * 1.75 + 0.05
@@ -710,34 +752,65 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
               pendingEnterDisplay: null,
             });
           } else if (kind === "auto-inbound") {
-            // Keep quiet through settle notify; record *delta* not full balance.
+            // Keep quiet through settle notify; Home adopts *live* balance;
+            // Activity records post-fee *delta* (never full consolidated bag).
             quietFiatEnterNotices(60_000);
+            const baseline =
+              autoInboundBaselineRef.current ??
+              (() => {
+                const d =
+                  lastGoodDepixRef.current ??
+                  lastDepixRef.current ??
+                  depixDisplay ??
+                  0;
+                return d > 0 ? depixDisplayToAtomic(d, networkId) : 0n;
+              })();
+            let liveAtomic: bigint | null = null;
+            try {
+              const raw = await Promise.race([
+                wallet.getBalance(),
+                new Promise<never>((_, rej) =>
+                  setTimeout(() => rej(new Error("live-adopt timeout")), 4000),
+                ),
+              ]);
+              liveAtomic = readDepixAtomicFromBalance(
+                raw,
+                depixAssetIdForNetwork(networkId),
+              );
+            } catch (e) {
+              console.warn("[basic] auto-inbound live adopt read failed", e);
+            }
+
             let takeAtomic =
               result.takeAmount != null && result.takeAmount > 0n
                 ? result.takeAmount
                 : null;
-            if (takeAtomic == null) {
-              try {
-                const raw = await Promise.race([
-                  wallet.getBalance(),
-                  new Promise<never>((_, rej) =>
-                    setTimeout(() => rej(new Error("take-delta timeout")), 4000),
-                  ),
-                ]);
-                const live = readDepixAtomicFromBalance(
-                  raw,
-                  depixAssetIdForNetwork(networkId),
-                );
-                const base = autoInboundBaselineRef.current ?? 0n;
-                if (live > base) takeAtomic = live - base;
-              } catch (e) {
-                console.warn("[basic] auto-inbound take delta failed", e);
+            if (liveAtomic != null && liveAtomic > baseline) {
+              const fromLive = liveAtomic - baseline;
+              // Swap take or notify often reports the consolidated VTXO (full bag).
+              // Prefer live−baseline whenever take looks like the whole balance.
+              if (
+                takeAtomic == null ||
+                takeAtomic >= liveAtomic ||
+                (baseline > 0n && takeAtomic > fromLive + fromLive / 10n)
+              ) {
+                takeAtomic = fromLive;
               }
+            } else if (takeAtomic == null && liveAtomic != null && baseline > 0n) {
+              /* live did not rise — leave take null */
             }
+
+            if (liveAtomic != null && liveAtomic > 0n) {
+              adoptLiveDepixDisplay(depixAtomicToDisplay(liveAtomic, networkId));
+            } else if (takeAtomic != null && takeAtomic > 0n) {
+              applyLocalDepixReceive(depixAtomicToDisplay(takeAtomic, networkId), {
+                force: true,
+              });
+            }
+
             if (takeAtomic != null && takeAtomic > 0n) {
               const display = depixAtomicToDisplay(takeAtomic, networkId);
               if (display >= 0.01) {
-                applyLocalDepixReceive(display);
                 const caption = formatBrlDisplay(display, { networkId });
                 try {
                   recordOptimisticArkadeReceive(networkId, walletId, {
@@ -759,12 +832,17 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
                 console.warn("[basic] auto-inbound settled receive", {
                   display,
                   takeAtomic: String(takeAtomic),
+                  liveAtomic: liveAtomic != null ? String(liveAtomic) : null,
+                  baseline: String(baseline),
                   inboundSats: autoInboundSatsRef.current,
                 });
               }
             } else {
               console.warn("[basic] auto-inbound fill without take delta", {
-                takeAmount: result.takeAmount != null ? String(result.takeAmount) : null,
+                takeAmount:
+                  result.takeAmount != null ? String(result.takeAmount) : null,
+                liveAtomic: liveAtomic != null ? String(liveAtomic) : null,
+                baseline: String(baseline),
               });
             }
             autoInboundBaselineRef.current = null;
@@ -859,6 +937,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       ensureBalanceAtLeast,
       setEnterPending,
       applyLocalDepixReceive,
+      adoptLiveDepixDisplay,
       bumpActivity,
     ],
   );

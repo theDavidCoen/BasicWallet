@@ -18,6 +18,8 @@ import { shareActivityCsv } from "../account/activityCsv";
 import { syncLightningHistory } from "../account/lightningActivity";
 import { backfillMissingFiat } from "../account/fiatRate";
 import { getNetworkConfig } from "../config/network";
+import { filterFiatModeActivityRows } from "../fiat/fiatActivityFilter";
+import { useFiatMode } from "../fiat/FiatModeProvider";
 import { useWallet } from "../wallet/WalletProvider";
 import { activityDepixAtomic, formatActivityAmountSigned, formatWhen, statusLabel } from "../wallet/activity";
 import { colors } from "../theme/colors";
@@ -25,6 +27,7 @@ import { colors } from "../theme/colors";
 export function ActivityScreen() {
   const navigation = useNavigation<RootNav>();
   const { selectedWallet, activityEpoch, refreshActivity, bumpActivity } = useWallet();
+  const { fiatMode, depixDisplay } = useFiatMode();
   const network = getNetworkConfig();
   const [rows, setRows] = useState<StoredActivity[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,13 +47,17 @@ export function ActivityScreen() {
       const list = query.trim()
         ? searchActivity(network.id, query, { walletId: selectedWallet.id })
         : readActivityFromDb(network.id, { walletId: selectedWallet.id });
-      setRows(list);
+      setRows(
+        fiatMode
+          ? filterFiatModeActivityRows(list, network.id, depixDisplay)
+          : list,
+      );
       void backfillMissingFiat(network.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load activity");
       setRows([]);
     }
-  }, [selectedWallet, network.id, query]);
+  }, [selectedWallet, network.id, query, fiatMode, depixDisplay]);
 
   useEffect(() => {
     setLoading(true);
@@ -121,27 +128,25 @@ export function ActivityScreen() {
         <View style={styles.titleSide} />
         <Text style={styles.title}>ACTIVITY</Text>
         <Pressable
-          style={[styles.titleSide, styles.exportBtn]}
+          style={styles.titleSide}
           onPress={() => void onExportCsv()}
-          disabled={exporting || loading}
-          hitSlop={8}
+          disabled={exporting}
+          hitSlop={10}
+          accessibilityRole="button"
           accessibilityLabel="Export activity CSV"
         >
-          {exporting ? (
-            <ActivityIndicator color={colors.fg} size="small" />
-          ) : (
-            <Text style={styles.exportLabel}>CSV</Text>
-          )}
+          <Text style={[styles.exportLabel, exporting && styles.exportBusy]}>
+            {exporting ? "…" : "CSV"}
+          </Text>
         </Pressable>
       </View>
-      <Text style={styles.caption}>
-        {selectedWallet?.label ?? "Wallet"}
-        {selectedWallet?.kind === "lightning"
-          ? " · Lightning invoices"
-          : " · boarding, receives, sends"}
+      <Text style={styles.sub}>
+        {selectedWallet
+          ? `${selectedWallet.label} · boarding, receives, sends`
+          : "No wallet selected"}
       </Text>
 
-      <View style={styles.searchWrap}>
+      <View style={styles.searchRow}>
         <TextInput
           style={styles.search}
           value={query}
@@ -179,55 +184,57 @@ export function ActivityScreen() {
             />
           }
           contentContainerStyle={rows.length === 0 ? styles.emptyWrap : styles.list}
-          ListEmptyComponent={
-            <Text style={styles.empty}>
-              {error ?? emptyHint}
-            </Text>
-          }
-          renderItem={({ item }) => (
-            <Pressable
-              style={styles.row}
-              onPress={() =>
-                navigation.navigate("ActivityDetail", {
-                  activityId: item.id,
-                  walletId: item.walletId,
-                })
-              }
-            >
-              <View style={styles.rowTop}>
-                <Text style={styles.rowTitle}>{item.title}</Text>
-                <Text
-                  style={[
-                    styles.rowAmount,
-                    (() => {
-                      const depix = activityDepixAtomic(item, network.id);
-                      const signed =
-                        depix != null && depix !== 0n
-                          ? depix > 0n
-                            ? 1
-                            : -1
-                          : item.amount;
-                      return signed > 0
-                        ? styles.pos
-                        : signed < 0
-                          ? styles.neg
-                          : null;
-                    })(),
-                  ]}
-                >
-                  {formatActivityAmountSigned(item, network.id)}
-                </Text>
-              </View>
-              <Text style={styles.rowSub}>{item.subtitle}</Text>
-              <Text style={styles.rowMeta}>
-                {statusLabel(item.status)}
-                {` · ${formatWhen(item.createdAt)}`}
-                {item.fiatAmount != null && item.fiatCode
-                  ? ` · ~${item.fiatAmount.toFixed(2)} ${item.fiatCode.toUpperCase()}`
-                  : ""}
-              </Text>
-            </Pressable>
-          )}
+          ListEmptyComponent={<Text style={styles.empty}>{error ?? emptyHint}</Text>}
+          renderItem={({ item }) => {
+            const amountLabel = formatActivityAmountSigned(item, network.id);
+            const depix = activityDepixAtomic(item, network.id);
+            const signed =
+              depix != null && depix !== 0n
+                ? depix > 0n
+                  ? 1
+                  : -1
+                : item.amount;
+            return (
+              <Pressable
+                onPress={() =>
+                  navigation.navigate("ActivityDetail", {
+                    activityId: item.id,
+                    walletId: item.walletId,
+                  })
+                }
+                accessibilityRole="button"
+                accessibilityLabel={`${item.title}, ${amountLabel}`}
+              >
+                <View style={styles.row}>
+                  <View style={styles.rowTop}>
+                    <Text style={styles.rowTitle}>{item.title}</Text>
+                    <Text
+                      style={[
+                        styles.rowAmount,
+                        signed > 0
+                          ? styles.pos
+                          : signed < 0
+                            ? styles.neg
+                            : null,
+                      ]}
+                    >
+                      {amountLabel}
+                    </Text>
+                  </View>
+                  <Text style={styles.rowSub}>{item.subtitle}</Text>
+                  <Text style={styles.rowMeta}>
+                    {statusLabel(item.status)}
+                    {` · ${formatWhen(item.createdAt)}`}
+                    {item.fiatAmount != null &&
+                    item.fiatCode &&
+                    !(depix != null && depix !== 0n)
+                      ? ` · ~${item.fiatAmount.toFixed(2)} ${item.fiatCode.toUpperCase()}`
+                      : ""}
+                  </Text>
+                </View>
+              </Pressable>
+            );
+          }}
         />
       )}
     </ScreenChrome>
@@ -238,7 +245,7 @@ const styles = StyleSheet.create({
   titleRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 8,
+    marginTop: 4,
   },
   titleSide: {
     width: 56,
@@ -248,64 +255,50 @@ const styles = StyleSheet.create({
   title: {
     flex: 1,
     fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 20,
+    fontSize: 22,
     color: colors.fg,
     textAlign: "center",
-  },
-  exportBtn: {
-    minHeight: 32,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
   },
   exportLabel: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 12,
-    color: colors.fg,
-  },
-  caption: {
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 13,
+    color: colors.fg,
+  },
+  exportBusy: { color: colors.hint },
+  sub: {
+    marginTop: 6,
+    marginBottom: 10,
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
     color: colors.caption,
     textAlign: "center",
-    marginTop: 6,
-    marginBottom: 8,
   },
-  searchWrap: {
+  searchRow: {
     flexDirection: "row",
     alignItems: "center",
+    marginBottom: 10,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 10,
-    marginBottom: 12,
-    paddingRight: 4,
+    paddingHorizontal: 12,
+    backgroundColor: "#0D0D0D",
   },
   search: {
     flex: 1,
     paddingVertical: 10,
-    paddingHorizontal: 12,
-    paddingRight: 8,
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 13,
     color: colors.fg,
   },
-  searchClear: {
-    width: 32,
-    height: 32,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  searchClear: { padding: 4 },
   searchClearLabel: {
     fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 22,
-    lineHeight: 24,
-    color: colors.caption,
+    fontSize: 18,
+    color: colors.hint,
   },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  list: { paddingBottom: 24 },
-  emptyWrap: { flexGrow: 1, justifyContent: "center", paddingHorizontal: 16 },
+  list: { paddingBottom: 40 },
+  emptyWrap: { flexGrow: 1, justifyContent: "center" },
   empty: {
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 14,
@@ -314,34 +307,39 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   row: {
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
     paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
   },
-  rowTop: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
+  rowTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+    gap: 12,
+  },
   rowTitle: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 14,
-    color: colors.fg,
     flex: 1,
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 15,
+    color: colors.fg,
   },
   rowAmount: {
     fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 14,
+    fontSize: 15,
     color: colors.fg,
   },
-  pos: { color: "#7DCEA0" },
-  neg: { color: "#E07070" },
+  pos: { color: "#2E7D32" },
+  neg: { color: "#B00020" },
   rowSub: {
+    marginTop: 4,
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 12,
     color: colors.caption,
-    marginTop: 4,
   },
   rowMeta: {
+    marginTop: 4,
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 11,
     color: colors.hint,
-    marginTop: 4,
   },
 });

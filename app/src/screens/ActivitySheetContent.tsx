@@ -21,6 +21,8 @@ import { shareActivityCsv } from "../account/activityCsv";
 import { syncLightningHistory } from "../account/lightningActivity";
 import { backfillMissingFiat } from "../account/fiatRate";
 import { getNetworkConfig } from "../config/network";
+import { filterFiatModeActivityRows } from "../fiat/fiatActivityFilter";
+import { useFiatMode } from "../fiat/FiatModeProvider";
 import { useWallet } from "../wallet/WalletProvider";
 import { activityDepixAtomic, formatActivityAmountSigned, formatWhen, statusLabel } from "../wallet/activity";
 import { colors } from "../theme/colors";
@@ -35,6 +37,7 @@ const REFRESH_ARM_MS = 700;
 
 export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
   const { selectedWallet, activityEpoch, refreshActivity, bumpActivity } = useWallet();
+  const { fiatMode, depixDisplay } = useFiatMode();
   const network = getNetworkConfig();
   const [rows, setRows] = useState<StoredActivity[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,13 +58,17 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
       const list = query.trim()
         ? searchActivity(network.id, query, { walletId: selectedWallet.id })
         : readActivityFromDb(network.id, { walletId: selectedWallet.id });
-      setRows(list);
+      setRows(
+        fiatMode
+          ? filterFiatModeActivityRows(list, network.id, depixDisplay)
+          : list,
+      );
       void backfillMissingFiat(network.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load activity");
       setRows([]);
     }
-  }, [selectedWallet, network.id, query]);
+  }, [selectedWallet, network.id, query, fiatMode, depixDisplay]);
 
   useEffect(() => {
     setLoading(true);
