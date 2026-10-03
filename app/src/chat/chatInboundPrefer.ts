@@ -272,6 +272,13 @@ export async function preferChatInboundOverClassic(
   const abs = Math.floor(amountSats);
   if (!(abs > 0)) return false;
 
+  // Receive/POS awaiting: never suppress classic (α78). Chat evidence must not
+  // swallow QR / classic inbound — match main Funds Received UX.
+  if (opts?.forceClassicOk) {
+    console.warn("[basic] fundsNotice classic OK (receive/POS awaiting)", abs);
+    return false;
+  }
+
   beginClassicChatDefer(abs);
 
   const open = findOpenPayRequestForAmount(abs);
@@ -284,9 +291,8 @@ export async function preferChatInboundOverClassic(
     });
   }
 
-  // Chat thread open: bubble on this contact — unless Receive/POS is waiting
-  // (classic inbound must not be swallowed into the open chat — α77).
-  if (isChatThreadFocused() && !opts?.forceClassicOk) {
+  // Chat thread open: bubble on this contact.
+  if (isChatThreadFocused()) {
     const focused = getFocusedChatContactId();
     if (focused) {
       ensureChatInboundBubble({
@@ -335,11 +341,7 @@ export async function preferChatInboundOverClassic(
     }
   }
 
-  // α77: no forever hold on hasChatPayContext. Unmatched → classic OK
-  // (Receive scene, POS, or Home toast).
-  if (opts?.forceClassicOk) {
-    console.warn("[basic] fundsNotice classic OK (receive/POS awaiting)", abs);
-  }
+  // α77: no forever hold on hasChatPayContext. Unmatched → classic OK.
   return false;
 }
 

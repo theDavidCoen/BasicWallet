@@ -21,7 +21,11 @@ import {
   type WalletRecord,
 } from "../account/walletRegistry";
 import { getNetworkConfig } from "../config/network";
-import { DEFAULT_MIN_VTXO_SATS, isDustCarrierAmount } from "./arkMultiSend";
+import {
+  DEFAULT_MIN_VTXO_SATS,
+  isDustCarrierAmount,
+  readSpendableAvailable,
+} from "./arkMultiSend";
 import { isFiatModeActiveGate, optimisticDepixReceive, shouldSuppressFiatEnterBrlNotice, shouldSuppressFiatExitSatsNotice } from "../fiat/fiatModeGate";
 import {
   depixAssetIdForNetwork,
@@ -753,26 +757,26 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       console.warn("[basic] fundsNotice suppressed (chat thread)", kind, amount);
       return "busy";
     }
-    // α71/α77: brief chat race when chat context or defer pending. Receive/POS
-    // (bypassSendSuppress) forces classic if no positive chat evidence.
+    // Receive / POS awaiting payment: classic overlay immediately (match main).
+    // Do not race chat prefer — open pay-requests / hints were swallowing real
+    // classic inbound (Samsung Receive stuck, α78).
+    const awaitingClassicReceive =
+      !!opts?.bypassSendSuppress ||
+      posUiHoldRef.current > 0 ||
+      incomingWatchBoostRef.current > 0;
+    // α71/α77: brief chat race when chat context or defer pending — only when
+    // NOT on classic Receive/POS.
     if (
       kind === "arkade" &&
       !opts?.afterChatPrefer &&
-      (isClassicChatDeferPending(amount) ||
-        hasChatPayContext() ||
-        !!opts?.bypassSendSuppress)
+      !awaitingClassicReceive &&
+      (isClassicChatDeferPending(amount) || hasChatPayContext())
     ) {
       beginClassicChatDefer(amount);
-      const forceClassicOk =
-        !!opts?.bypassSendSuppress ||
-        posUiHoldRef.current > 0 ||
-        incomingWatchBoostRef.current > 0;
       void (async () => {
         let chatOnly = false;
         try {
-          chatOnly = await preferChatInboundOverClassic(amount, {
-            forceClassicOk,
-          });
+          chatOnly = await preferChatInboundOverClassic(amount);
         } catch (e) {
           console.warn("[basic] preferChatInboundOverClassic failed", e);
         } finally {
@@ -783,7 +787,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           return;
         }
         emitFundsNotice(amount, kind, {
-          bypassSendSuppress: opts?.bypassSendSuppress || forceClassicOk,
+          bypassSendSuppress: opts?.bypassSendSuppress,
           afterChatPrefer: true,
         });
       })();
@@ -2586,8 +2590,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
               console.warn("[basic] notifyIncomingFunds", { amount });
               if (!openSyncQuietRef.current && !quietImportSyncRef.current) {
                 // After our own send, ASP often pushes change as newVtxos. That must
-                // not look like a receive on the sending wallet. Bypass suppress only
-                // when Receive/POS is actively waiting for payment (prior POS lag fix).
+                // not look like a receive on the sending wallet (match main).
+                // α78: Receive stays mounted under Send → incomingWatchBoost stays
+                // on, so "expectingReceive" used to bypass this skip and toast
+                // change as +Funds Received. Only treat as inbound when live
+                // balance shows a real net credit above post-send ack.
                 const postSend =
                   Date.now() < suppressIncomingUntilRef.current;
                 const expectingReceive =
@@ -2596,6 +2603,55 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   console.warn("[basic] notifyIncomingFunds skip post-send change", {
                     amount,
                   });
+                } else if (postSend && expectingReceive) {
+                  void (async () => {
+                    const live = await readSpendableAvailable(w, {
+                      timeoutMs: 3_000,
+                    });
+                    const ack = lastAckRef.current?.total ?? 0;
+                    if (live == null || live <= ack + 1) {
+                      console.warn(
+                        "[basic] notifyIncomingFunds skip post-send change (no net credit)",
+                        { amount, live, ack },
+                      );
+                      return;
+                    }
+                    const credit = live - ack;
+                    if (!(credit > 0) || isDustCarrierAmount(credit)) {
+                      console.warn(
+                        "[basic] notifyIncomingFunds skip post-send credit",
+                        { credit, live, ack },
+                      );
+                      if (credit > 0) acknowledgeIncomingAmount(credit);
+                      return;
+                    }
+                    console.warn(
+                      "[basic] notifyIncomingFunds inbound during post-send window",
+                      { credit, amount, live, ack },
+                    );
+                    beginClassicChatDefer(credit);
+                    acknowledgeIncomingAmount(credit);
+                    applyLocalReceive(credit);
+                    const wid = selectedIdRef.current;
+                    if (wid) {
+                      try {
+                        recordOptimisticArkadeReceive(
+                          getNetworkConfig().id,
+                          wid,
+                          { amountSats: credit },
+                        );
+                        setActivityEpoch((n) => n + 1);
+                      } catch (e) {
+                        console.warn(
+                          "[basic] optimistic receive activity failed",
+                          e,
+                        );
+                      }
+                    }
+                    emitFundsNotice(credit, "arkade", {
+                      bypassSendSuppress: true,
+                    });
+                  })();
                 } else if (shouldSuppressFiatExitSatsNotice()) {
                   console.warn("[basic] notifyIncomingFunds skip exit-swap sats", {
                     amount,

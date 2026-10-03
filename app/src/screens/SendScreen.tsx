@@ -363,14 +363,28 @@ export function SendScreen() {
     : formatSatsLabel(spendable, balanceHidden);
 
   // Fiat Mode: amount fields are BRL; stamp DePix asset id on lines.
+  // Leaving Fiat Mode must clear stale assetId so classic sats Send validates
+  // amountStr as sats (not a leftover asset leg).
   useEffect(() => {
-    if (!fiatMode || isLightning) return;
+    if (isLightning) return;
+    if (fiatMode) {
+      setLines((prev) => {
+        let changed = false;
+        const next = prev.map((l) => {
+          if (l.assetId) return l;
+          changed = true;
+          return { ...l, assetId: depixAssetId };
+        });
+        return changed ? next : prev;
+      });
+      return;
+    }
     setLines((prev) => {
       let changed = false;
       const next = prev.map((l) => {
-        if (l.assetId) return l;
+        if (!l.assetId) return l;
         changed = true;
-        return { ...l, assetId: depixAssetId };
+        return { ...l, assetId: null };
       });
       return changed ? next : prev;
     });
@@ -1039,11 +1053,29 @@ export function SendScreen() {
     let dust = DEFAULT_MIN_VTXO_SATS;
     try {
       dust = await readMinVtxoSats(wallet);
-      for (const r of recipients) {
+      // Re-read amounts from live UI after getInfo await — Xiaomi number-pad
+      // edits during the wait left recipients stuck on a partial value (e.g. 90)
+      // while the field already showed 900 → false "Amount too low" (α78).
+      let working = recipients.map((r) => ({ ...r }));
+      if (!wantsAsset) {
+        const liveByAddr = new Map<string, number>();
+        for (const line of lines) {
+          const addr = line.address.trim();
+          if (!addr || line.assetId) continue;
+          const a = parseAmountSats(line.amountStr);
+          if (a == null) continue;
+          liveByAddr.set(addr, (liveByAddr.get(addr) ?? 0) + a);
+        }
+        working = working.map((r) => {
+          const live = liveByAddr.get(r.address.trim());
+          return live != null ? { ...r, amount: live } : r;
+        });
+      }
+      for (const r of working) {
         // Asset-only recipients (amount 0 + assets) skip the sats dust floor —
         // matches arkade.money sendAssets / Network fees $0.00.
         if ((r.assets?.length ?? 0) > 0 && r.amount === 0) continue;
-        if (r.amount < dust) {
+        if (!(r.amount >= dust)) {
           Alert.alert(
             "Amount too low",
             `Minimum per recipient on this network is ${dust} sats (ASP dust / min vtxo).`,
@@ -1052,7 +1084,6 @@ export function SendScreen() {
         }
       }
 
-      let working = recipients.map((r) => ({ ...r }));
       let paymentSum = working.reduce((s, r) => s + r.amount, 0);
       if (wantsAsset) {
         const needBrl = lines.reduce((s, l) => {
@@ -1558,6 +1589,7 @@ export function SendScreen() {
               </View>
               <TextInput
                 value={primaryLine?.amountStr ?? ""}
+                editable={!busy && !sendBlocked}
                 onChangeText={(v) => {
                   setPickerTarget("primary");
                   if (primaryLine) {
