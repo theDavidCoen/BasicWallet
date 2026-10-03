@@ -240,7 +240,7 @@ const BALANCE_POLL_MS = 4_000;
 /** Idle poll when notify is subscribed (Expo safety net; official has no interval). */
 const BALANCE_POLL_FALLBACK_MS = 30_000;
 /** While Receive POS / QR is open — keep under ~0.5s so notices feel live. */
-const BALANCE_POLL_BOOST_MS = 1000;
+const BALANCE_POLL_BOOST_MS = 400;
 
 type InnerWallet = {
   getNewBoardingAddress?: () => Promise<string>;
@@ -1354,8 +1354,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       if (aspPollPausedRef.current > 0) return;
       if (posUiHoldRef.current > 0) return;
       clearTimeout(reloadTimerRef.current);
+      // Receive/POS awaiting: don't sit on the 1s event debounce (α81).
+      const boosted = incomingWatchBoostRef.current > 0;
       const ms = opts?.event
-        ? RELOAD_EVENT_MS
+        ? boosted
+          ? RELOAD_URGENT_MS
+          : RELOAD_EVENT_MS
         : opts?.urgent
           ? RELOAD_URGENT_MS
           : RELOAD_DEBOUNCE_MS;
@@ -2472,13 +2476,44 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
               if (k !== ":") seenVtxoKeysRef.current.add(k);
             }
             // First notify after subscribe usually replays existing VTXOs — seed only.
+            // α81: do NOT blind-skip every first push. Samsung classic Receive sat
+            // quiet until ASP delivered the real inbound as the first callback;
+            // seeding it swallowed Funds Received until a slow balance poll (~14s).
             if (!sawSubscribeReplay) {
               sawSubscribeReplay = true;
-              console.warn("[basic] notifyIncomingFunds seed seen vtxos", {
-                n: vtxoKeys.length,
-              });
-              scheduleReload(w, walletId, { event: true });
-              return;
+              const withinSeedWindow = Date.now() - subscribedAt < 2_500;
+              const ackAvail = lastAckRef.current?.available ?? 0;
+              const ackTotal = lastAckRef.current?.total ?? 0;
+              const displayed = prevBalanceRef.current;
+              const baselineReady = balanceBaselineReadyRef.current;
+              const looksLikeFullReplay =
+                !baselineReady ||
+                lastAckRef.current == null ||
+                Math.abs(amount - ackAvail) <= 2 ||
+                (ackTotal > 0 && amount >= ackTotal * 0.9) ||
+                (displayed != null &&
+                  (Math.abs(amount - (displayed.available ?? 0)) <= 2 ||
+                    Math.abs(amount - displayed.total) <= 2));
+              if (withinSeedWindow && (amount <= 0 || looksLikeFullReplay)) {
+                console.warn("[basic] notifyIncomingFunds seed seen vtxos", {
+                  n: vtxoKeys.length,
+                  amount,
+                  ackAvail,
+                });
+                scheduleReload(w, walletId, { event: true });
+                return;
+              }
+              console.warn(
+                "[basic] notifyIncomingFunds first push treated as inbound",
+                {
+                  n: vtxoKeys.length,
+                  amount,
+                  withinSeedWindow,
+                  looksLikeFullReplay,
+                  ackAvail,
+                },
+              );
+              // Fall through — novelKeys still valid (computed before seen add).
             }
             // Already-seen outpoints only (re-push / remount) — no toast.
             if (novelKeys.length === 0) {
