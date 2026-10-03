@@ -21,7 +21,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Alert } from "react-native";
+import { Alert, AppState, type AppStateStatus } from "react-native";
 import type { IWallet } from "@arkade-os/sdk";
 import { recordOptimisticArkadeReceive } from "../account/activityStore";
 import {
@@ -637,11 +637,23 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!state?.fiatMode || !wallet) return;
-    void refreshDepixBalance();
     // Pure asset receives may not change balanceSats (amount: 0 carrier).
     // Slow poll — α59–63 used 4s + VTXO fallback and saturated ASP on Xiaomi.
-    const timer = setInterval(() => void refreshDepixBalance(), 12_000);
-    return () => clearInterval(timer);
+    // α82: skip ticks while backgrounded; refresh once on resume.
+    const tick = () => {
+      if (AppState.currentState !== "active") return;
+      void refreshDepixBalance();
+    };
+    tick();
+    const timer = setInterval(tick, 12_000);
+    const onApp = (next: AppStateStatus) => {
+      if (next === "active") void refreshDepixBalance();
+    };
+    const sub = AppState.addEventListener("change", onApp);
+    return () => {
+      clearInterval(timer);
+      sub.remove();
+    };
   }, [state?.fiatMode, wallet, refreshDepixBalance]);
 
   /**
@@ -736,11 +748,20 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       const spot = await fetchFiatSpot(networkId);
       if (!cancelled && spot != null) setBtcBrl(spot);
     };
-    void pull();
-    const timer = setInterval(() => void pull(), 60_000);
+    const tick = () => {
+      if (AppState.currentState !== "active") return;
+      void pull();
+    };
+    tick();
+    const timer = setInterval(tick, 60_000);
+    const onApp = (next: AppStateStatus) => {
+      if (next === "active") void pull();
+    };
+    const sub = AppState.addEventListener("change", onApp);
     return () => {
       cancelled = true;
       clearInterval(timer);
+      sub.remove();
     };
   }, [state?.fiatMode, bitcoinMaxiMode, depixDisplay, networkId]);
 
@@ -1551,12 +1572,22 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    void tick();
+    const scheduleTick = () => {
+      if (AppState.currentState !== "active") return;
+      void tick();
+    };
+    scheduleTick();
     // 15s — 5s getBalance fought wallet.send / notify on Xiaomi (α69).
-    const timer = setInterval(() => void tick(), 15_000);
+    // α82: skip while backgrounded; one tick on resume.
+    const timer = setInterval(scheduleTick, 15_000);
+    const onApp = (next: AppStateStatus) => {
+      if (next === "active") void tick();
+    };
+    const sub = AppState.addEventListener("change", onApp);
     return () => {
       cancelled = true;
       clearInterval(timer);
+      sub.remove();
     };
   }, [
     wallet,

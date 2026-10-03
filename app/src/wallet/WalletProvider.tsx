@@ -4,7 +4,7 @@
  */
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { InteractionManager } from "react-native";
+import { AppState, type AppStateStatus, InteractionManager } from "react-native";
 import { Ramps } from "@arkade-os/sdk";
 import { materializeFromArkadeWallet, recordOptimisticArkadeReceive } from "../account/activityStore";
 import { backfillMissingFiat } from "../account/fiatRate";
@@ -2433,6 +2433,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const walletId = selectedIdRef.current;
     if (!w || !walletId || selectedWallet?.kind !== "arkade") return;
     // Expo notify is flaky — keep a safety poll. Slow when subscribed; 4s if dead; 1s under POS.
+    // α82: skip ticks while backgrounded (no stacked getBalance when JS still awake).
     const boosted = incomingWatchBoostRef.current > 0;
     const intervalMs = boosted
       ? BALANCE_POLL_BOOST_MS
@@ -2440,13 +2441,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         ? BALANCE_POLL_FALLBACK_MS
         : BALANCE_POLL_MS;
     console.warn("[basic] balancePoll", { intervalMs, boosted, notifySubscribed });
-    void loadBalance(w, walletId);
-    const t = setInterval(() => {
+    const tick = () => {
+      if (AppState.currentState !== "active") return;
       if (selectedIdRef.current !== walletId) return;
       if (posUiHoldRef.current > 0) return;
       void loadBalance(w, walletId);
-    }, intervalMs);
-    return () => clearInterval(t);
+    };
+    tick();
+    const t = setInterval(tick, intervalMs);
+    const onApp = (next: AppStateStatus) => {
+      if (next === "active") tick();
+    };
+    const sub = AppState.addEventListener("change", onApp);
+    return () => {
+      clearInterval(t);
+      sub.remove();
+    };
   }, [wallet, selectedWallet, loadBalance, incomingWatchBoostEpoch, notifySubscribed]);
 
   useEffect(() => {

@@ -16,6 +16,7 @@ import {
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   FlatList,
   InteractionManager,
   KeyboardAvoidingView,
@@ -174,6 +175,7 @@ export function ChatThreadScreen() {
     );
     if (!pending) return;
     const tick = () => {
+      if (AppState.currentState !== "active") return;
       try {
         const n = reconcileOutboundChatPayments({
           networkId: network.id,
@@ -188,6 +190,7 @@ export function ChatThreadScreen() {
       }
     };
     tick();
+    // α82: pause while backgrounded — SQLCipher reconcile is local but still burns JS.
     const t = setInterval(tick, 2_000);
     return () => clearInterval(t);
   }, [messages, selectedWallet?.id, network.id, contactId]);
