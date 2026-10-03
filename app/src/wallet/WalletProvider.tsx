@@ -240,13 +240,22 @@ const BALANCE_POLL_MS = 4_000;
 /** Idle poll when notify is subscribed (Expo safety net; official has no interval). */
 const BALANCE_POLL_FALLBACK_MS = 30_000;
 /**
- * While Receive POS / QR is open — poll often, but not so fast that Xiaomi ASP
- * starves (α83: 400ms + 1.2s vtxo timeouts stampeded getSpendableVtxos for ~100s).
+ * While Receive POS / QR is open and notify is *dead* — patient poll (α83).
+ * When notify is live, use BOOST_NOTIFY interval instead (α84).
  */
 const BALANCE_POLL_BOOST_MS = 1_200;
+/**
+ * Receive focused + notifyIncomingFunds subscribed: rely on push; rare safety
+ * poll only. Continuous 1.2s×8s reads delayed Xiaomi notify by ~14–18s (α84).
+ */
+const BALANCE_POLL_BOOST_NOTIFY_MS = 8_000;
 /** Boosted vtxo / balance read budget (Xiaomi often needs >2s — α73/α83). */
 const BALANCE_BOOST_READ_MS = 5_000;
 const BALANCE_BOOST_DEEP_MS = 8_000;
+/** Gentle boost read when notify owns inbound (α84) — no deep fallback. */
+const BALANCE_BOOST_GENTLE_MS = 3_000;
+/** Suppress duplicate Funds Received for same amount after notify/poll race. */
+const FUNDS_NOTICE_DEDUPE_MS = 60_000;
 
 type InnerWallet = {
   getNewBoardingAddress?: () => Promise<string>;
@@ -334,22 +343,29 @@ async function refreshBalanceFromSpendable(
 async function refreshBalance(
   w: BasicWallet,
   prev?: BalanceBreakdown | null,
-  opts?: { timeoutMs?: number; preferSpendable?: boolean },
+  opts?: {
+    timeoutMs?: number;
+    preferSpendable?: boolean;
+    /** Notify owns inbound — short race, no deep vtxo stampede (α84). */
+    gentleBoost?: boolean;
+  },
 ): Promise<BalanceBreakdown> {
   const prevAvail = prev?.available ?? 0;
   const prevTotal = prev?.total ?? 0;
   const prevBoarding = prev?.boarding ?? 0;
   const timeoutMs = opts?.timeoutMs ?? 12_000;
   const boosted = !!opts?.preferSpendable;
+  const gentle = !!opts?.gentleBoost;
 
   const isIncrease = (b: BalanceBreakdown) =>
     b.available > prevAvail || b.total > prevTotal || b.boarding > prevBoarding;
 
   if (boosted) {
-    // Race spendable + getBalance with Xiaomi-tolerant budgets (α83).
-    // α81 used 1.2s/2s — every tick timed out on Xiaomi Receive and the
-    // 400ms poll stampede delayed notifyIncomingFunds by >60s.
-    const readMs = Math.max(BALANCE_BOOST_READ_MS, Math.min(timeoutMs, BALANCE_BOOST_DEEP_MS));
+    // α84 gentle: notifyIncomingFunds is primary — one short race, no 8s deep.
+    // α83 deep path kept when notify is unavailable.
+    const readMs = gentle
+      ? Math.min(BALANCE_BOOST_GENTLE_MS, timeoutMs)
+      : Math.max(BALANCE_BOOST_READ_MS, Math.min(timeoutMs, BALANCE_BOOST_DEEP_MS));
     const spendableP = refreshBalanceFromSpendable(w, prev, readMs);
     const balanceP = (async (): Promise<BalanceBreakdown | null> => {
       try {
@@ -385,6 +401,7 @@ async function refreshBalance(
         total: increaseHit.total,
         available: increaseHit.available,
         prevTotal,
+        gentle,
       });
       return increaseHit;
     }
@@ -394,17 +411,19 @@ async function refreshBalance(
     if (fast && isIncrease(fast)) return fast;
     if (fromBal) return fromBal;
     if (fast) return fast;
-    // One deep vtxo read before giving up — ASP often answers after ~5–8s (α83).
-    const deep = await refreshBalanceFromSpendable(w, prev, BALANCE_BOOST_DEEP_MS);
-    if (deep) {
-      if (isIncrease(deep)) {
-        console.warn("[basic] boost balance increase (deep vtxos)", {
-          total: deep.total,
-          available: deep.available,
-          prevTotal,
-        });
+    if (!gentle) {
+      // Deep vtxo only when notify is dead — ASP often answers after ~5–8s (α83).
+      const deep = await refreshBalanceFromSpendable(w, prev, BALANCE_BOOST_DEEP_MS);
+      if (deep) {
+        if (isIncrease(deep)) {
+          console.warn("[basic] boost balance increase (deep vtxos)", {
+            total: deep.total,
+            available: deep.available,
+            prevTotal,
+          });
+        }
+        return deep;
       }
-      return deep;
     }
     if (prev) {
       console.warn("[basic] boost refresh failed; keeping previous", prev.total);
@@ -519,7 +538,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const posUiHoldRef = useRef(0);
   const [incomingWatchBoostEpoch, setIncomingWatchBoostEpoch] = useState(0);
   /** True while notifyIncomingFunds returned an unsub — idle poll can be slow. */
-  const [notifySubscribed, setNotifySubscribed] = useState(false);
+  const [notifySubscribed, setNotifySubscribedState] = useState(false);
+  const notifySubscribedRef = useRef(false);
+  const setNotifySubscribed = useCallback((on: boolean) => {
+    notifySubscribedRef.current = on;
+    setNotifySubscribedState(on);
+  }, []);
   /** Serialize balance pulls — stacked getBalance timeouts were delaying notices. */
   const balanceInFlightRef = useRef(false);
   const balancePullAgainRef = useRef(false);
@@ -529,6 +553,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   /** Extra balance polls after open so indexer catch-up can land. */
   const catchUpPollTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const noticeCooldownRef = useRef(0);
+  /** Last classic toast — block poll/notify double-fire for same inbound (α84). */
+  const lastFundsNoticeRef = useRef<{
+    amount: number;
+    kind: FundsNotice["kind"];
+    at: number;
+  } | null>(null);
   const prevBoardingRef = useRef(0);
   const prevBalanceRef = useRef<BalanceBreakdown | null>(null);
   const boardingAddressRef = useRef<string | null>(null);
@@ -823,7 +853,19 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       return "busy";
     }
     if (Date.now() < noticeCooldownRef.current) return "busy";
+    // α84: same amount from notify + late poll/deep vtxos must not multi-toast.
+    const prevNotice = lastFundsNoticeRef.current;
+    if (
+      prevNotice &&
+      prevNotice.kind === kind &&
+      Math.abs(prevNotice.amount - amount) <= 1 &&
+      Date.now() - prevNotice.at < FUNDS_NOTICE_DEDUPE_MS
+    ) {
+      console.warn("[basic] fundsNotice suppressed (duplicate inbound)", kind, amount);
+      return "busy";
+    }
     noticeCooldownRef.current = Date.now() + 4_000;
+    lastFundsNoticeRef.current = { amount, kind, at: Date.now() };
     console.warn("[basic] fundsNotice", kind, amount);
     setFundsNotice({ amount, kind, at: Date.now() });
     clearCatchUpPolls();
@@ -992,6 +1034,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         floor > DEFAULT_MIN_VTXO_SATS * 2 &&
         bal.total + DEFAULT_MIN_VTXO_SATS * 2 < floor
       ) {
+        // α84: after notify advanced ack, stale getBalance must not regress ack
+        // (that caused a second Funds Received when deep vtxos later caught up).
+        if (ack && bal.total + 1 < ack.total) {
+          console.warn("[basic] persistBalance ignore stale below ack", {
+            live: bal.total,
+            ackTotal: ack.total,
+            displayed: displayed?.total ?? null,
+          });
+          setBalanceStatus("ready");
+          return;
+        }
         // Ignore dust/partial ASP timeouts — but adopt live when it is a real
         // wallet total (α76: chat double-apply pinned Home at 2× vtxos → Max send fail).
         if (bal.total > DEFAULT_MIN_VTXO_SATS * 2) {
@@ -1203,9 +1256,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Never raise ack while send-suppress is active — that ate catch-up notices.
+      // α84: never lower ack from a stale ASP snapshot after notify advanced it.
       if (!suppressed || !ack || bal.total <= ack.total) {
-        lastAckRef.current = bal;
-        void writeLastAckBalance(networkId, walletId, bal);
+        if (ack && !suppressed && bal.total + 1 < ack.total) {
+          console.warn("[basic] persistBalance keep ack above stale live", {
+            live: bal.total,
+            ackTotal: ack.total,
+          });
+        } else {
+          lastAckRef.current = bal;
+          void writeLastAckBalance(networkId, walletId, bal);
+        }
       }
 
       // After local send, indexer may still report the pre-spend total — do not
@@ -1310,10 +1371,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       try {
         const prevBoarding = prevBoardingRef.current;
         const boosted = incomingWatchBoostRef.current > 0;
+        // α84: when notify owns inbound, gentle short race — no 8s deep stampede.
+        const gentleBoost = boosted && notifySubscribedRef.current;
         const bal = await refreshBalance(w, prevBalanceRef.current, {
-          // Receive/POS: patient vtxo race (see refreshBalance boosted path / α83).
           preferSpendable: boosted,
-          timeoutMs: boosted ? BALANCE_BOOST_DEEP_MS : 12_000,
+          gentleBoost,
+          timeoutMs: boosted
+            ? gentleBoost
+              ? BALANCE_BOOST_GENTLE_MS
+              : BALANCE_BOOST_DEEP_MS
+            : 12_000,
         });
         if (selectedIdRef.current !== walletId) return null;
         if (aspPollPausedRef.current > 0) return null;
@@ -2454,15 +2521,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const w = wallet;
     const walletId = selectedIdRef.current;
     if (!w || !walletId || selectedWallet?.kind !== "arkade") return;
-    // Expo notify is flaky — keep a safety poll. Slow when subscribed; 4s if dead; 1s under POS.
-    // α82: skip ticks while backgrounded (no stacked getBalance when JS still awake).
+    // Expo notify is flaky — keep a safety poll. Slow when subscribed; faster if dead.
+    // α82: skip ticks while backgrounded. α84: Receive+notify → rare gentle poll only.
     const boosted = incomingWatchBoostRef.current > 0;
     const intervalMs = boosted
-      ? BALANCE_POLL_BOOST_MS
+      ? notifySubscribed
+        ? BALANCE_POLL_BOOST_NOTIFY_MS
+        : BALANCE_POLL_BOOST_MS
       : notifySubscribed
         ? BALANCE_POLL_FALLBACK_MS
         : BALANCE_POLL_MS;
-    console.warn("[basic] balancePoll", { intervalMs, boosted, notifySubscribed });
+    console.warn("[basic] balancePoll", {
+      intervalMs,
+      boosted,
+      notifySubscribed,
+      gentle: boosted && notifySubscribed,
+    });
     const tick = () => {
       // α82/α83: pause only when truly backgrounded. OEM `inactive` flickers
       // must not stall classic Receive inbound watch while the scene is focused.
@@ -2471,6 +2545,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       if (posUiHoldRef.current > 0) return;
       void loadBalance(w, walletId);
     };
+    // One immediate pull on focus / effect start — then interval (notify-first).
     tick();
     const t = setInterval(tick, intervalMs);
     const onApp = (next: AppStateStatus) => {
@@ -2768,10 +2843,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                       );
                     }
                   }
-                  // emitFundsNotice suppress-first when chat context / defer pending.
+                  // Toast from subscription first (α84) — do not wait for boost poll.
                   emitFundsNotice(amount, "arkade", {
                     bypassSendSuppress: expectingReceive,
                   });
+                  // Drop stacked gentle polls so they cannot re-toast the same inbound.
+                  balancePullAgainRef.current = false;
                 }
               }
             }
