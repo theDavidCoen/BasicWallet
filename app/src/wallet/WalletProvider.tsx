@@ -238,21 +238,25 @@ const RELOAD_EVENT_MS = 1_000;
 /** Background balance poll when notifyIncomingFunds is unavailable. */
 const BALANCE_POLL_MS = 4_000;
 /**
- * Idle poll when notify is subscribed (Expo safety net; official has no interval).
- * α87: stretch 30s → 45s so healthy push owns inbound on Xiaomi.
+ * Idle poll when notify push is confirmed (callback seen). Official has no interval.
+ * α87/α88: 45s only after notifyPushAlive — not merely subscribed.
  */
 const BALANCE_POLL_FALLBACK_MS = 45_000;
+/** Subscribed but no callback yet — α86-rate backup (α88 silent-notify fix). */
+const BALANCE_POLL_FALLBACK_UNCONFIRMED_MS = 30_000;
 /**
  * While Receive POS / QR is open and notify is *dead* — patient poll (α83).
  * When notify is live, use BOOST_NOTIFY interval instead (α84).
  */
 const BALANCE_POLL_BOOST_MS = 1_200;
 /**
- * Receive focused + notifyIncomingFunds subscribed: rely on push; rare safety
- * poll only. Continuous 1.2s×8s reads delayed Xiaomi notify by ~14–18s (α84).
- * α87: 8s → 15s when subscription is healthy (less ASP contention).
+ * Receive focused + notify push confirmed: rely on push; rare safety poll.
+ * Continuous 1.2s×8s reads delayed Xiaomi notify by ~14–18s (α84).
+ * α87/α88: 15s only after notifyPushAlive.
  */
 const BALANCE_POLL_BOOST_NOTIFY_MS = 15_000;
+/** Receive + subscribed but silent — α86-rate backup (α88). */
+const BALANCE_POLL_BOOST_NOTIFY_UNCONFIRMED_MS = 8_000;
 /** Boosted vtxo / balance read budget (Xiaomi often needs >2s — α73/α83). */
 const BALANCE_BOOST_READ_MS = 5_000;
 const BALANCE_BOOST_DEEP_MS = 8_000;
@@ -568,6 +572,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const setNotifySubscribed = useCallback((on: boolean) => {
     notifySubscribedRef.current = on;
     setNotifySubscribedState(on);
+  }, []);
+  /**
+   * α88: subscription alone is not health (Xiaomi/Samsung cold start: unsub with
+   * zero callbacks). True after a notify callback handles novel inbound.
+   */
+  const notifyPushAliveRef = useRef(false);
+  const [notifyPushAlive, setNotifyPushAliveState] = useState(false);
+  const setNotifyPushAlive = useCallback((on: boolean) => {
+    notifyPushAliveRef.current = on;
+    setNotifyPushAliveState(on);
+  }, []);
+  const markNotifyPushAlive = useCallback(() => {
+    if (notifyPushAliveRef.current) return;
+    notifyPushAliveRef.current = true;
+    setNotifyPushAliveState(true);
+    console.warn("[basic] notifyPushAlive", true);
   }, []);
   /** Serialize balance pulls — stacked getBalance timeouts were delaying notices. */
   const balanceInFlightRef = useRef(false);
@@ -1301,10 +1321,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             });
           } else if (boardingDelta > 0 || totalDelta > 0) {
             const awaitingRecv = awaitingClassicReceive();
-            // α85: Home idle — notifyIncomingFunds owns classic toasts when live.
-            // Post-open poll bumps (fake +798 change) must not toast or raise ack.
+            // α85/α88: Home idle — notify owns toasts only after a real push
+            // (notifyPushAlive). Subscribed-but-silent must not block poll toast
+            // or leave Home stale (Xiaomi α87: 0 notifyIncomingFunds logs).
             const notifyOwnsHome =
-              notifySubscribedRef.current && !awaitingRecv;
+              notifySubscribedRef.current &&
+              notifyPushAliveRef.current &&
+              !awaitingRecv;
             const postOpenQuiet =
               Date.now() < openNoticeQuietUntilRef.current && !awaitingRecv;
             if (notifyOwnsHome || postOpenQuiet) {
@@ -1313,9 +1336,21 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 boardingDelta,
                 notifyOwnsHome,
                 postOpenQuiet,
+                notifyPushAlive: notifyPushAliveRef.current,
                 live: bal.total,
                 ackTotal: ack.total,
               });
+              if (notifyOwnsHome) {
+                // α88: adopt UI when notify owns toast. Prior early-return left
+                // Home stale if push never ack'd. Do not raise lastAck — notify
+                // path acknowledges; poll can still toast if push stays silent.
+                prevBoardingRef.current = bal.boarding;
+                prevBalanceRef.current = bal;
+                balanceBaselineReadyRef.current = true;
+                setBalance(bal);
+                await writeCachedBalance(networkId, walletId, bal);
+              }
+              // postOpenQuiet: no adopt (α85 fake +798); notifyOwnsHome adopted above.
               setBalanceStatus("ready");
               return;
             }
@@ -2672,20 +2707,28 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const w = wallet;
     const walletId = selectedIdRef.current;
     if (!w || !walletId || selectedWallet?.kind !== "arkade") return;
-    // Expo notify is flaky — keep a safety poll. Slow when subscribed; faster if dead.
+    // Expo notify is flaky — keep a safety poll. Slow when push confirmed; faster if silent/dead.
     // α82: skip ticks while backgrounded. α84: Receive+notify → rare gentle poll only.
+    // α88: subscribed-but-silent uses α86 rates (30s/8s), not 45s/15s.
     const boosted = incomingWatchBoostRef.current > 0;
+    const pushAlive = notifyPushAlive;
+    const notifyHealthy = notifySubscribed && pushAlive;
     const intervalMs = boosted
-      ? notifySubscribed
+      ? notifyHealthy
         ? BALANCE_POLL_BOOST_NOTIFY_MS
-        : BALANCE_POLL_BOOST_MS
-      : notifySubscribed
+        : notifySubscribed
+          ? BALANCE_POLL_BOOST_NOTIFY_UNCONFIRMED_MS
+          : BALANCE_POLL_BOOST_MS
+      : notifyHealthy
         ? BALANCE_POLL_FALLBACK_MS
-        : BALANCE_POLL_MS;
+        : notifySubscribed
+          ? BALANCE_POLL_FALLBACK_UNCONFIRMED_MS
+          : BALANCE_POLL_MS;
     console.warn("[basic] balancePoll", {
       intervalMs,
       boosted,
       notifySubscribed,
+      notifyPushAlive: pushAlive,
       gentle: boosted && notifySubscribed,
     });
     const tick = () => {
@@ -2709,7 +2752,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       clearInterval(t);
       sub.remove();
     };
-  }, [wallet, selectedWallet, loadBalance, incomingWatchBoostEpoch, notifySubscribed]);
+  }, [
+    wallet,
+    selectedWallet,
+    loadBalance,
+    incomingWatchBoostEpoch,
+    notifySubscribed,
+    notifyPushAlive,
+  ]);
 
   useEffect(() => {
     const w = wallet;
@@ -2719,6 +2769,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     let sawSubscribeReplay = false;
     setNotifySubscribed(false);
+    setNotifyPushAlive(false);
 
     void (async () => {
       try {
@@ -2803,6 +2854,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   const expectingReceive = awaitingClassicReceive();
                   if (!postSend || expectingReceive) {
                     classicReceiveMarkRef.current = Date.now();
+                    markNotifyPushAlive();
                     const shown = emitFundsNotice(display, "brl", {
                       bypassSendSuppress: expectingReceive,
                     });
@@ -2888,6 +2940,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
               }
               forcedArkAddressRef.current = null;
               classicReceiveMarkRef.current = Date.now();
+              markNotifyPushAlive();
               console.warn("[basic] notifyIncomingFunds", { amount });
               if (!openSyncQuietRef.current && !quietImportSyncRef.current) {
                 // After our own send, ASP often pushes change as newVtxos. That must
@@ -3038,7 +3091,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         setNotifySubscribed(true);
       } catch (e) {
         console.warn("[basic] notifyIncomingFunds unavailable", e);
-        if (!cancelled) setNotifySubscribed(false);
+        if (!cancelled) {
+          setNotifySubscribed(false);
+          setNotifyPushAlive(false);
+        }
       }
     })();
 
@@ -3047,6 +3103,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       clearTimeout(reloadTimerRef.current);
       stop?.();
       setNotifySubscribed(false);
+      setNotifyPushAlive(false);
     };
   }, [
     wallet,
@@ -3056,6 +3113,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     acknowledgeIncomingAmount,
     applyLocalReceive,
     ensureBalanceAtLeast,
+    setNotifyPushAlive,
+    markNotifyPushAlive,
   ]);
 
   const balanceSats = balance?.total ?? null;
