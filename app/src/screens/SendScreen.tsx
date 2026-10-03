@@ -1,4 +1,4 @@
-import { useRoute } from "@react-navigation/native";
+import { useFocusEffect, useRoute } from "@react-navigation/native";
 import type { RouteProp } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -94,8 +94,11 @@ function newSendLine(partial?: Partial<SendLine>): SendLine {
   };
 }
 
+/** Sats are integers — strip grouping dots/spaces so "1.000" / "1 000" → 1000. */
 function parseAmountSats(raw: string): number | null {
-  const n = Number.parseInt(raw.replace(/[,\s]/g, ""), 10);
+  const digits = String(raw ?? "").replace(/\D/g, "");
+  if (!digits) return null;
+  const n = Number.parseInt(digits, 10);
   if (!Number.isFinite(n) || n <= 0) return null;
   return n;
 }
@@ -242,6 +245,9 @@ export function SendScreen() {
   const [amountStr, setAmountStr] = useState("");
   /** Arkade multi-send lines (always ≥1). */
   const [lines, setLines] = useState<SendLine[]>(() => [newSendLine()]);
+  /** Live lines for post-await rebuild — onSend closure must not use stale amounts (α79). */
+  const linesRef = useRef(lines);
+  linesRef.current = lines;
   const [activeLineId, setActiveLineId] = useState("");
   const [busy, setBusy] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
@@ -363,8 +369,7 @@ export function SendScreen() {
     : formatSatsLabel(spendable, balanceHidden);
 
   // Fiat Mode: amount fields are BRL; stamp DePix asset id on lines.
-  // Leaving Fiat Mode must clear stale assetId so classic sats Send validates
-  // amountStr as sats (not a leftover asset leg).
+  // Classic sats: never keep a stale assetId (Send often stays mounted in the stack).
   useEffect(() => {
     if (isLightning) return;
     if (fiatMode) {
@@ -389,6 +394,22 @@ export function SendScreen() {
       return changed ? next : prev;
     });
   }, [fiatMode, isLightning, depixAssetId]);
+
+  // Every time Send is focused outside Fiat Mode, scrub leftover asset legs.
+  useFocusEffect(
+    useCallback(() => {
+      if (isLightning || fiatMode) return;
+      setLines((prev) => {
+        let changed = false;
+        const next = prev.map((l) => {
+          if (!l.assetId) return l;
+          changed = true;
+          return { ...l, assetId: null };
+        });
+        return changed ? next : prev;
+      });
+    }, [fiatMode, isLightning]),
+  );
 
   useEffect(() => {
     if (!isLightning || !selectedWallet?.id) {
@@ -927,20 +948,22 @@ export function SendScreen() {
     }
   }
 
-  async function onSend() {
-    if (isLightning) {
-      await onSendLightning();
-      return;
-    }
-
+  async function buildRecipientsFromLines(
+    source: SendLine[],
+  ): Promise<
+    | { ok: true; recipients: SendRecipient[]; wantsAsset: boolean }
+    | { ok: false }
+  > {
     const built: SendRecipient[] = [];
-    for (const line of lines) {
+    for (const line of source) {
       const trimmed = line.address.trim();
-      const assetIdForLine =
-        line.assetId ||
-        (fiatMode && trimmed && !isBtcAddress(trimmed) && isValidArkAddress(trimmed)
-          ? depixAssetId
-          : null);
+      // Classic sats: ignore leftover assetId (Fiat Mode stamps it; stack may keep Send mounted).
+      const assetIdForLine = fiatMode
+        ? line.assetId ||
+          (trimmed && !isBtcAddress(trimmed) && isValidArkAddress(trimmed)
+            ? depixAssetId
+            : null)
+        : null;
       if (assetIdForLine) {
         const display = parseBrlDisplay(line.amountStr);
         if (!trimmed || display == null) {
@@ -948,11 +971,11 @@ export function SendScreen() {
             "Incomplete recipient",
             "Each recipient needs an ark… address and a positive fiat amount.",
           );
-          return;
+          return { ok: false };
         }
         if (!isValidArkAddress(trimmed)) {
           Alert.alert("Invalid address", "Paste a valid Arkade (ark…) address.");
-          return;
+          return { ok: false };
         }
         const { depixDisplayToAtomic: toAtomic } = await import("../fiat/depixAssets");
         built.push({
@@ -976,31 +999,51 @@ export function SendScreen() {
           "Incomplete recipient",
           "Each recipient needs an ark… address and a positive amount.",
         );
-        return;
+        return { ok: false };
       }
       if (isBtcAddress(trimmed)) {
         Alert.alert(
           "On-chain not on soft path",
           "Direct bc1… sends are reserved for Lightning corridor, multisig, or hardware. Use an ark… address for L2.",
         );
-        return;
+        return { ok: false };
       }
       if (!isValidArkAddress(trimmed)) {
         Alert.alert("Invalid address", "Paste a valid Arkade (ark…) address.");
-        return;
+        return { ok: false };
       }
-      built.push({ address: trimmed, amount });
+      built.push({ address: trimmed, amount: Math.floor(amount) });
     }
 
     if (built.length === 0) {
       Alert.alert("Nothing to send", "Add at least one recipient with an amount.");
-      return;
+      return { ok: false };
     }
 
     const recipients = mergeRecipientsByAddress(built);
     const wantsAsset = recipients.some((r) => (r.assets?.length ?? 0) > 0);
-    if (fiatMode && !wantsAsset) {
-      try {
+    return { ok: true, recipients, wantsAsset };
+  }
+
+  async function onSend() {
+    if (isLightning) {
+      await onSendLightning();
+      return;
+    }
+    if (!wallet) {
+      Alert.alert("Wallet closed", "Re-open the wallet and try again.");
+      return;
+    }
+
+    // Lock UI before any await so amount edits cannot race validation (α79).
+    setBusy(true);
+    let dust = DEFAULT_MIN_VTXO_SATS;
+    try {
+      const first = await buildRecipientsFromLines(linesRef.current);
+      if (!first.ok) return;
+
+      let { recipients, wantsAsset } = first;
+      if (fiatMode && !wantsAsset) {
         const need = recipients.reduce((s, r) => s + r.amount, 0);
         const have = spendable ?? 0;
         // Only convert when sats are short (targeted). Enough sats → fall through.
@@ -1039,43 +1082,35 @@ export function SendScreen() {
           );
           return;
         }
-      } catch (e) {
-        Alert.alert("Conversion failed", e instanceof Error ? e.message : "Unknown error");
-        return;
       }
-    }
-    if (!wallet) {
-      Alert.alert("Wallet closed", "Re-open the wallet and try again.");
-      return;
-    }
 
-    setBusy(true);
-    let dust = DEFAULT_MIN_VTXO_SATS;
-    try {
-      dust = await readMinVtxoSats(wallet);
-      // Re-read amounts from live UI after getInfo await — Xiaomi number-pad
-      // edits during the wait left recipients stuck on a partial value (e.g. 90)
-      // while the field already showed 900 → false "Amount too low" (α78).
-      let working = recipients.map((r) => ({ ...r }));
-      if (!wantsAsset) {
-        const liveByAddr = new Map<string, number>();
-        for (const line of lines) {
-          const addr = line.address.trim();
-          if (!addr || line.assetId) continue;
-          const a = parseAmountSats(line.amountStr);
-          if (a == null) continue;
-          liveByAddr.set(addr, (liveByAddr.get(addr) ?? 0) + a);
-        }
-        working = working.map((r) => {
-          const live = liveByAddr.get(r.address.trim());
-          return live != null ? { ...r, amount: live } : r;
-        });
-      }
+      dust = Math.floor(Number(await readMinVtxoSats(wallet))) || DEFAULT_MIN_VTXO_SATS;
+      // Rebuild from live linesRef after getInfo — never trust pre-await snapshot (α79).
+      const rebuilt = await buildRecipientsFromLines(linesRef.current);
+      if (!rebuilt.ok) return;
+      recipients = rebuilt.recipients;
+      wantsAsset = rebuilt.wantsAsset;
+
+      let working = recipients.map((r) => ({
+        ...r,
+        amount: Math.floor(Number(r.amount)) || 0,
+      }));
       for (const r of working) {
         // Asset-only recipients (amount 0 + assets) skip the sats dust floor —
         // matches arkade.money sendAssets / Network fees $0.00.
         if ((r.assets?.length ?? 0) > 0 && r.amount === 0) continue;
-        if (!(r.amount >= dust)) {
+        if (r.amount < dust) {
+          console.warn("[basic] Amount too low", {
+            amount: r.amount,
+            dust,
+            addr: r.address.slice(0, 16),
+            assets: r.assets?.length ?? 0,
+            lines: linesRef.current.map((l) => ({
+              amountStr: l.amountStr,
+              assetId: l.assetId ? "y" : "n",
+              addr: l.address.trim().slice(0, 12),
+            })),
+          });
           Alert.alert(
             "Amount too low",
             `Minimum per recipient on this network is ${dust} sats (ASP dust / min vtxo).`,
@@ -1086,7 +1121,7 @@ export function SendScreen() {
 
       let paymentSum = working.reduce((s, r) => s + r.amount, 0);
       if (wantsAsset) {
-        const needBrl = lines.reduce((s, l) => {
+        const needBrl = linesRef.current.reduce((s, l) => {
           const d = parseBrlDisplay(l.amountStr);
           return s + (d ?? 0);
         }, 0);
@@ -1131,14 +1166,14 @@ export function SendScreen() {
 
       // Live vtxos win over inflated Home (α76 chat double-apply / stale Max).
       if (!wantsAsset && paymentSum > 0) {
-        const live = await readSpendableAvailable(wallet, { timeoutMs: 5_000 });
-        if (live != null && paymentSum > live) {
+        const liveSats = await readSpendableAvailable(wallet, { timeoutMs: 5_000 });
+        if (liveSats != null && paymentSum > liveSats) {
           void refreshBalanceOnly();
           Alert.alert(
             "Insufficient balance",
             fiatMode
-              ? `Available: ${live.toLocaleString("en-US")} sats. In Fiat Mode, Home shows stable balance — convert more or wait for sats to settle.`
-              : `Available: ${live.toLocaleString("en-US")} sats`,
+              ? `Available: ${liveSats.toLocaleString("en-US")} sats. In Fiat Mode, Home shows stable balance — convert more or wait for sats to settle.`
+              : `Available: ${liveSats.toLocaleString("en-US")} sats`,
           );
           return;
         }

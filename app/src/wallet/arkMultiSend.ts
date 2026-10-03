@@ -127,15 +127,19 @@ export async function readMinVtxoSats(w: {
   arkProvider?: { getInfo?: () => Promise<{ dust?: bigint | number | string }> };
   dustAmount?: bigint | number;
 }): Promise<number> {
-  const fromWallet = w.dustAmount;
-  if (fromWallet != null) {
-    const n = Number(fromWallet);
-    if (Number.isFinite(n) && n > 0) return n;
-  }
+  const coerce = (raw: unknown): number | null => {
+    if (raw == null) return null;
+    // bigint / number / numeric string → plain finite int (never leave bigint in callers)
+    const n = typeof raw === "bigint" ? Number(raw) : Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return Math.floor(n);
+  };
+  const fromWallet = coerce(w.dustAmount);
+  if (fromWallet != null) return fromWallet;
   try {
     const info = await withTimeout(w.arkProvider?.getInfo?.() ?? Promise.reject(), 1_500, "getInfo");
-    const n = Number(info?.dust);
-    if (Number.isFinite(n) && n > 0) return n;
+    const fromInfo = coerce(info?.dust);
+    if (fromInfo != null) return fromInfo;
   } catch {
     /* bundled default */
   }
