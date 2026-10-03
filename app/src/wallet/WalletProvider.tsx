@@ -256,6 +256,11 @@ const BALANCE_BOOST_DEEP_MS = 8_000;
 const BALANCE_BOOST_GENTLE_MS = 3_000;
 /** Suppress duplicate Funds Received for same amount after notify/poll race. */
 const FUNDS_NOTICE_DEDUPE_MS = 60_000;
+/**
+ * After open quiet settles, ignore Home poll bumps (ASP often flashes a fake
+ * +change total — α85 Xiaomi +798 with no send). Receive/POS awaiting still toasts.
+ */
+const POST_OPEN_NOTICE_QUIET_MS = 30_000;
 
 type InnerWallet = {
   getNewBoardingAddress?: () => Promise<string>;
@@ -524,6 +529,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const quietImportSyncRef = useRef(false);
   /** True from openWallet until first post-open live balance is adopted. */
   const openSyncQuietRef = useRef(false);
+  /** Until this time, Home poll must not toast (α85 cold-start ASP glitch). */
+  const openNoticeQuietUntilRef = useRef(0);
   /** Set when restore+reload finished; together with quiet, gates first-live adopt. */
   const openRestoreDoneRef = useRef(false);
   const openSyncQuietGenRef = useRef(0);
@@ -1034,9 +1041,26 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         floor > DEFAULT_MIN_VTXO_SATS * 2 &&
         bal.total + DEFAULT_MIN_VTXO_SATS * 2 < floor
       ) {
-        // α84: after notify advanced ack, stale getBalance must not regress ack
-        // (that caused a second Funds Received when deep vtxos later caught up).
+        // α84/α85: stale getBalance below ack — keep ack after real notify, but
+        // heal when a cold-open ASP glitch inflated ack (Home idle, post-open).
         if (ack && bal.total + 1 < ack.total) {
+          const awaitingRecv =
+            incomingWatchBoostRef.current > 0 || posUiHoldRef.current > 0;
+          const postOpen = Date.now() < openNoticeQuietUntilRef.current;
+          if (!awaitingRecv && postOpen) {
+            console.warn("[basic] persistBalance heal ack after post-open glitch", {
+              live: bal.total,
+              ackTotal: ack.total,
+            });
+            lastAckRef.current = bal;
+            void writeLastAckBalance(networkId, walletId, bal);
+            prevBoardingRef.current = bal.boarding;
+            prevBalanceRef.current = bal;
+            setBalance(bal);
+            setBalanceStatus("ready");
+            await writeCachedBalance(networkId, walletId, bal);
+            return;
+          }
           console.warn("[basic] persistBalance ignore stale below ack", {
             live: bal.total,
             ackTotal: ack.total,
@@ -1103,6 +1127,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
         if (catchUpWhileAway) {
           openSyncQuietRef.current = false;
+          // Real funds while away — allow this one persistBalance toast.
+          openNoticeQuietUntilRef.current = 0;
           console.warn("[basic] openSyncQuiet off (catch-up while away)", {
             catchUpSats,
             live: bal.total,
@@ -1126,9 +1152,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           // have a positive live balance (cache miss → full wallet).
           if (openSyncQuietRef.current && (bal.total > 0 || openRestoreDoneRef.current)) {
             openSyncQuietRef.current = false;
+            // α85: ASP often flashes a fake +delta right after first live (Xiaomi +798).
+            openNoticeQuietUntilRef.current = Date.now() + POST_OPEN_NOTICE_QUIET_MS;
             console.warn("[basic] openSyncQuiet off (first live)", {
               total: bal.total,
               restoreDone: openRestoreDoneRef.current,
+              noticeQuietMs: POST_OPEN_NOTICE_QUIET_MS,
             });
           }
           return;
@@ -1223,23 +1252,38 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
               totalDelta,
               live: bal.total,
             });
-          } else if (boardingDelta > 0) {
-            // Drop any UI-pinned ark receive so BIP21/Arkade pick up HD rotation.
-            forcedArkAddressRef.current = null;
-            if (emitFundsNotice(boardingDelta, "boarding") === "blocked") {
-              // Presence ate the notice — keep ack so we retry next pull.
-              setBalance(bal);
+          } else if (boardingDelta > 0 || totalDelta > 0) {
+            const awaitingRecv =
+              incomingWatchBoostRef.current > 0 || posUiHoldRef.current > 0;
+            // α85: Home idle — notifyIncomingFunds owns classic toasts when live.
+            // Post-open poll bumps (fake +798 change) must not toast or raise ack.
+            const notifyOwnsHome =
+              notifySubscribedRef.current && !awaitingRecv;
+            const postOpenQuiet =
+              Date.now() < openNoticeQuietUntilRef.current && !awaitingRecv;
+            if (notifyOwnsHome || postOpenQuiet) {
+              console.warn("[basic] persistBalance skip notice (home/notify)", {
+                totalDelta,
+                boardingDelta,
+                notifyOwnsHome,
+                postOpenQuiet,
+                live: bal.total,
+                ackTotal: ack.total,
+              });
               setBalanceStatus("ready");
-              await writeCachedBalance(networkId, walletId, bal);
-              prevBoardingRef.current = bal.boarding;
-              prevBalanceRef.current = bal;
               return;
             }
-          } else if (totalDelta > 0) {
-            // SDK ReceiveRotator advances on vtxo_received; clear pin so sync
-            // (loadBalance → ensureBoardingRotatedAfterClear) shows the next addr.
             forcedArkAddressRef.current = null;
-            if (shouldSuppressFiatExitSatsNotice()) {
+            if (boardingDelta > 0) {
+              if (emitFundsNotice(boardingDelta, "boarding") === "blocked") {
+                setBalance(bal);
+                setBalanceStatus("ready");
+                await writeCachedBalance(networkId, walletId, bal);
+                prevBoardingRef.current = bal.boarding;
+                prevBalanceRef.current = bal;
+                return;
+              }
+            } else if (shouldSuppressFiatExitSatsNotice()) {
               console.warn("[basic] persistBalance skip exit-swap sats", {
                 totalDelta,
               });
@@ -1259,10 +1303,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       // α84: never lower ack from a stale ASP snapshot after notify advanced it.
       if (!suppressed || !ack || bal.total <= ack.total) {
         if (ack && !suppressed && bal.total + 1 < ack.total) {
-          console.warn("[basic] persistBalance keep ack above stale live", {
-            live: bal.total,
-            ackTotal: ack.total,
-          });
+          const awaitingRecv =
+            incomingWatchBoostRef.current > 0 || posUiHoldRef.current > 0;
+          const postOpen = Date.now() < openNoticeQuietUntilRef.current;
+          if (!awaitingRecv && postOpen) {
+            console.warn("[basic] persistBalance heal ack above stale live", {
+              live: bal.total,
+              ackTotal: ack.total,
+            });
+            lastAckRef.current = bal;
+            void writeLastAckBalance(networkId, walletId, bal);
+          } else {
+            console.warn("[basic] persistBalance keep ack above stale live", {
+              live: bal.total,
+              ackTotal: ack.total,
+            });
+          }
         } else {
           lastAckRef.current = bal;
           void writeLastAckBalance(networkId, walletId, bal);
@@ -1577,8 +1633,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
               // the next persistBalance (poll/reload) will clear after adopting.
               if (openSyncQuietRef.current && (lastAckRef.current?.total ?? 0) > 0) {
                 openSyncQuietRef.current = false;
+                openNoticeQuietUntilRef.current =
+                  Date.now() + POST_OPEN_NOTICE_QUIET_MS;
                 console.warn("[basic] openSyncQuiet off (open settle done)", {
                   ackTotal: lastAckRef.current?.total ?? null,
+                  noticeQuietMs: POST_OPEN_NOTICE_QUIET_MS,
                 });
                 // Cache/ack already on screen — leave syncing even if live reload was
                 // skipped (POS hold) or persist early-returned.
