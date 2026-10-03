@@ -239,8 +239,14 @@ const RELOAD_EVENT_MS = 1_000;
 const BALANCE_POLL_MS = 4_000;
 /** Idle poll when notify is subscribed (Expo safety net; official has no interval). */
 const BALANCE_POLL_FALLBACK_MS = 30_000;
-/** While Receive POS / QR is open — keep under ~0.5s so notices feel live. */
-const BALANCE_POLL_BOOST_MS = 400;
+/**
+ * While Receive POS / QR is open — poll often, but not so fast that Xiaomi ASP
+ * starves (α83: 400ms + 1.2s vtxo timeouts stampeded getSpendableVtxos for ~100s).
+ */
+const BALANCE_POLL_BOOST_MS = 1_200;
+/** Boosted vtxo / balance read budget (Xiaomi often needs >2s — α73/α83). */
+const BALANCE_BOOST_READ_MS = 5_000;
+const BALANCE_BOOST_DEEP_MS = 8_000;
 
 type InnerWallet = {
   getNewBoardingAddress?: () => Promise<string>;
@@ -340,12 +346,14 @@ async function refreshBalance(
     b.available > prevAvail || b.total > prevTotal || b.boarding > prevBoarding;
 
   if (boosted) {
-    // POS: race spendable + getBalance in parallel. Sequential 1.5s+3s+3s
-    // timeouts stacked under balanceInFlight and delayed notices by minutes.
-    const spendableP = refreshBalanceFromSpendable(w, prev, 1_200);
+    // Race spendable + getBalance with Xiaomi-tolerant budgets (α83).
+    // α81 used 1.2s/2s — every tick timed out on Xiaomi Receive and the
+    // 400ms poll stampede delayed notifyIncomingFunds by >60s.
+    const readMs = Math.max(BALANCE_BOOST_READ_MS, Math.min(timeoutMs, BALANCE_BOOST_DEEP_MS));
+    const spendableP = refreshBalanceFromSpendable(w, prev, readMs);
     const balanceP = (async (): Promise<BalanceBreakdown | null> => {
       try {
-        const raw = await withTimeout(w.getBalance(), Math.min(2_000, timeoutMs), "getBalance");
+        const raw = await withTimeout(w.getBalance(), readMs, "getBalance");
         return balanceFromSdk(raw, prev);
       } catch (e) {
         console.warn("[basic] getBalance failed (boost)", e);
@@ -382,8 +390,22 @@ async function refreshBalance(
     }
 
     const [fast, fromBal] = await Promise.all([spendableP, balanceP]);
+    if (fromBal && isIncrease(fromBal)) return fromBal;
+    if (fast && isIncrease(fast)) return fast;
     if (fromBal) return fromBal;
     if (fast) return fast;
+    // One deep vtxo read before giving up — ASP often answers after ~5–8s (α83).
+    const deep = await refreshBalanceFromSpendable(w, prev, BALANCE_BOOST_DEEP_MS);
+    if (deep) {
+      if (isIncrease(deep)) {
+        console.warn("[basic] boost balance increase (deep vtxos)", {
+          total: deep.total,
+          available: deep.available,
+          prevTotal,
+        });
+      }
+      return deep;
+    }
     if (prev) {
       console.warn("[basic] boost refresh failed; keeping previous", prev.total);
       return prev;
@@ -1289,9 +1311,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         const prevBoarding = prevBoardingRef.current;
         const boosted = incomingWatchBoostRef.current > 0;
         const bal = await refreshBalance(w, prevBalanceRef.current, {
-          // POS: race spendable + getBalance (see refreshBalance boosted path).
+          // Receive/POS: patient vtxo race (see refreshBalance boosted path / α83).
           preferSpendable: boosted,
-          timeoutMs: boosted ? 2_000 : 12_000,
+          timeoutMs: boosted ? BALANCE_BOOST_DEEP_MS : 12_000,
         });
         if (selectedIdRef.current !== walletId) return null;
         if (aspPollPausedRef.current > 0) return null;
@@ -2442,7 +2464,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         : BALANCE_POLL_MS;
     console.warn("[basic] balancePoll", { intervalMs, boosted, notifySubscribed });
     const tick = () => {
-      if (AppState.currentState !== "active") return;
+      // α82/α83: pause only when truly backgrounded. OEM `inactive` flickers
+      // must not stall classic Receive inbound watch while the scene is focused.
+      if (AppState.currentState === "background") return;
       if (selectedIdRef.current !== walletId) return;
       if (posUiHoldRef.current > 0) return;
       void loadBalance(w, walletId);
@@ -2450,7 +2474,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     tick();
     const t = setInterval(tick, intervalMs);
     const onApp = (next: AppStateStatus) => {
-      if (next === "active") tick();
+      if (next === "active" || (next === "inactive" && incomingWatchBoostRef.current > 0)) {
+        tick();
+      }
     };
     const sub = AppState.addEventListener("change", onApp);
     return () => {
