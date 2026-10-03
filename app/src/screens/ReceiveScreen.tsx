@@ -1,5 +1,5 @@
 import * as Clipboard from "expo-clipboard";
-import { useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -88,10 +88,14 @@ export function ReceiveScreen() {
   }, [fiatMode]);
 
   // Whole Receive scene awaits inbound — chat prefer must not swallow classic (α77).
-  useEffect(() => {
-    setIncomingWatchBoost(true);
-    return () => setIncomingWatchBoost(false);
-  }, [setIncomingWatchBoost]);
+  // α87: useFocusEffect so boost clears when Send (or anything) covers Receive —
+  // mount-only useEffect left boost on under Send and toasted change (α78).
+  useFocusEffect(
+    useCallback(() => {
+      setIncomingWatchBoost(true);
+      return () => setIncomingWatchBoost(false);
+    }, [setIncomingWatchBoost]),
+  );
 
   useEffect(() => {
     const hold = fiatMode ? classicOpen : posOpen;

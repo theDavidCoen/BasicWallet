@@ -167,7 +167,7 @@ type WalletContextValue = {
    */
   setIncomingWatchBoost: (on: boolean) => void;
   /**
-   * Suppress FundsReceived after a local outbound (and for ~60s of catch-up).
+   * Suppress FundsReceived after a local outbound (and for ~5m of change catch-up, α86).
    * Does not pause ASP balance polls — use begin/endOutboundSend for that.
    */
   noteLocalSend: () => void;
@@ -237,8 +237,11 @@ const RELOAD_URGENT_MS = 150;
 const RELOAD_EVENT_MS = 1_000;
 /** Background balance poll when notifyIncomingFunds is unavailable. */
 const BALANCE_POLL_MS = 4_000;
-/** Idle poll when notify is subscribed (Expo safety net; official has no interval). */
-const BALANCE_POLL_FALLBACK_MS = 30_000;
+/**
+ * Idle poll when notify is subscribed (Expo safety net; official has no interval).
+ * α87: stretch 30s → 45s so healthy push owns inbound on Xiaomi.
+ */
+const BALANCE_POLL_FALLBACK_MS = 45_000;
 /**
  * While Receive POS / QR is open and notify is *dead* — patient poll (α83).
  * When notify is live, use BOOST_NOTIFY interval instead (α84).
@@ -247,8 +250,9 @@ const BALANCE_POLL_BOOST_MS = 1_200;
 /**
  * Receive focused + notifyIncomingFunds subscribed: rely on push; rare safety
  * poll only. Continuous 1.2s×8s reads delayed Xiaomi notify by ~14–18s (α84).
+ * α87: 8s → 15s when subscription is healthy (less ASP contention).
  */
-const BALANCE_POLL_BOOST_NOTIFY_MS = 8_000;
+const BALANCE_POLL_BOOST_NOTIFY_MS = 15_000;
 /** Boosted vtxo / balance read budget (Xiaomi often needs >2s — α73/α83). */
 const BALANCE_BOOST_READ_MS = 5_000;
 const BALANCE_BOOST_DEEP_MS = 8_000;
@@ -548,6 +552,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const incomingWatchBoostRef = useRef(0);
   /** >0 while POS sheet open — skip balance polls (keypad must stay responsive). */
   const posUiHoldRef = useRef(0);
+  /**
+   * α87: true classic inbound await (Receive/POS focused). Receive under Send used
+   * to keep incomingWatchBoost on and bypass change suppress — treat Send focus as
+   * not awaiting receive (ReceiveScreen now also clears boost on blur).
+   */
+  const awaitingClassicReceive = () =>
+    posUiHoldRef.current > 0 || incomingWatchBoostRef.current > 0;
+  /** Notify callback start → fundsNotice "shown" (classic A/B timing). */
+  const classicReceiveMarkRef = useRef<number | null>(null);
   const [incomingWatchBoostEpoch, setIncomingWatchBoostEpoch] = useState(0);
   /** True while notifyIncomingFunds returned an unsub — idle poll can be slow. */
   const [notifySubscribed, setNotifySubscribedState] = useState(false);
@@ -829,16 +842,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     // Receive / POS awaiting payment: classic overlay immediately (match main).
     // Do not race chat prefer — open pay-requests / hints were swallowing real
     // classic inbound (Samsung Receive stuck, α78).
-    const awaitingClassicReceive =
-      !!opts?.bypassSendSuppress ||
-      posUiHoldRef.current > 0 ||
-      incomingWatchBoostRef.current > 0;
+    const awaitingRecv =
+      !!opts?.bypassSendSuppress || awaitingClassicReceive();
     // α71/α77: brief chat race when chat context or defer pending — only when
     // NOT on classic Receive/POS.
     if (
       kind === "arkade" &&
       !opts?.afterChatPrefer &&
-      !awaitingClassicReceive &&
+      !awaitingRecv &&
       (isClassicChatDeferPending(amount) || hasChatPayContext())
     ) {
       beginClassicChatDefer(amount);
@@ -883,6 +894,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
     noticeCooldownRef.current = Date.now() + 4_000;
     lastFundsNoticeRef.current = { amount, kind, at: Date.now() };
+    const mark = classicReceiveMarkRef.current;
+    if (mark != null && (kind === "arkade" || kind === "boarding" || kind === "brl")) {
+      console.warn("[basic] classic_receive_ms", {
+        ms: Date.now() - mark,
+        kind,
+        amount,
+      });
+      classicReceiveMarkRef.current = null;
+    }
     console.warn("[basic] fundsNotice", kind, amount);
     setFundsNotice({ amount, kind, at: Date.now() });
     clearCatchUpPolls();
@@ -1280,8 +1300,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
               live: bal.total,
             });
           } else if (boardingDelta > 0 || totalDelta > 0) {
-            const awaitingRecv =
-              incomingWatchBoostRef.current > 0 || posUiHoldRef.current > 0;
+            const awaitingRecv = awaitingClassicReceive();
             // α85: Home idle — notifyIncomingFunds owns classic toasts when live.
             // Post-open poll bumps (fake +798 change) must not toast or raise ack.
             const notifyOwnsHome =
@@ -2781,12 +2800,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   });
                 } else {
                   const postSend = Date.now() < suppressIncomingUntilRef.current;
-                  const expectingReceive =
-                    posUiHoldRef.current > 0 || incomingWatchBoostRef.current > 0;
+                  const expectingReceive = awaitingClassicReceive();
                   if (!postSend || expectingReceive) {
+                    classicReceiveMarkRef.current = Date.now();
                     const shown = emitFundsNotice(display, "brl", {
                       bypassSendSuppress: expectingReceive,
                     });
+                    if (shown !== "shown") {
+                      classicReceiveMarkRef.current = null;
+                    }
                     if (shown === "shown") {
                       optimisticDepixReceive(display);
                       const assetVtxo = vtxos.find((c) =>
@@ -2865,19 +2887,18 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 }
               }
               forcedArkAddressRef.current = null;
+              classicReceiveMarkRef.current = Date.now();
               console.warn("[basic] notifyIncomingFunds", { amount });
               if (!openSyncQuietRef.current && !quietImportSyncRef.current) {
                 // After our own send, ASP often pushes change as newVtxos. That must
                 // not look like a receive on the sending wallet (match main).
-                // α78: Receive stays mounted under Send → incomingWatchBoost stays
-                // on, so "expectingReceive" used to bypass this skip and toast
-                // change as +Funds Received. Only treat as inbound when live
-                // balance shows a real net credit above post-send ack.
+                // α78/α87: Receive under Send used to keep boost on and toast change.
+                // ReceiveScreen now clears boost on blur; still require net credit
+                // when post-send + awaiting Receive.
                 // α86: change can arrive after 60s — guard 5m + shape match vs preSend.
                 const postSend =
                   Date.now() < suppressIncomingUntilRef.current;
-                const expectingReceive =
-                  posUiHoldRef.current > 0 || incomingWatchBoostRef.current > 0;
+                const expectingReceive = awaitingClassicReceive();
                 const preSend = preSendTotalRef.current;
                 const displayedTotal =
                   prevBalanceRef.current?.total ?? lastAckRef.current?.total ?? 0;
@@ -2889,6 +2910,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   Math.abs(displayedTotal + amount - preSend) <=
                     Math.max(2, DEFAULT_MIN_VTXO_SATS);
                 if ((postSend || looksLikeOwnChange) && !expectingReceive) {
+                  classicReceiveMarkRef.current = null;
                   console.warn("[basic] notifyIncomingFunds skip post-send change", {
                     amount,
                     postSend,
@@ -2903,6 +2925,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                     });
                     const ack = lastAckRef.current?.total ?? 0;
                     if (live == null || live <= ack + 1) {
+                      classicReceiveMarkRef.current = null;
                       console.warn(
                         "[basic] notifyIncomingFunds skip post-send change (no net credit)",
                         { amount, live, ack },
@@ -2911,6 +2934,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                     }
                     const credit = live - ack;
                     if (!(credit > 0) || isDustCarrierAmount(credit)) {
+                      classicReceiveMarkRef.current = null;
                       console.warn(
                         "[basic] notifyIncomingFunds skip post-send credit",
                         { credit, live, ack },
@@ -2946,6 +2970,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                     });
                   })();
                 } else if (shouldSuppressFiatExitSatsNotice()) {
+                  classicReceiveMarkRef.current = null;
                   console.warn("[basic] notifyIncomingFunds skip exit-swap sats", {
                     amount,
                   });
@@ -2957,12 +2982,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 } else if (isFiatModeActiveGate()) {
                   // Fiat Mode: sats pushes are carriers / swap dust — never toast;
                   // always ack so idle poll cannot replay +330/+660.
+                  classicReceiveMarkRef.current = null;
                   console.warn("[basic] notifyIncomingFunds skip fiat-mode sats", {
                     amount,
                   });
                   acknowledgeIncomingAmount(amount);
                 } else if (isDustCarrierAmount(amount)) {
                   // Exact 330/660 carriers only — real 500/501 chat pays must apply (α74).
+                  classicReceiveMarkRef.current = null;
                   console.warn("[basic] notifyIncomingFunds skip dust carrier", {
                     amount,
                   });
