@@ -261,6 +261,11 @@ const FUNDS_NOTICE_DEDUPE_MS = 60_000;
  * +change total — α85 Xiaomi +798 with no send). Receive/POS awaiting still toasts.
  */
 const POST_OPEN_NOTICE_QUIET_MS = 30_000;
+/**
+ * After own send, ASP may push change vtxos well after 60s (α86 Xiaomi +1009 at ~2m).
+ * Keep post-send change suppress / preSend floor for this window.
+ */
+const SEND_CHANGE_GUARD_MS = 300_000;
 
 type InnerWallet = {
   getNewBoardingAddress?: () => Promise<string>;
@@ -566,6 +571,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     kind: FundsNotice["kind"];
     at: number;
   } | null>(null);
+  /**
+   * Ack total right after notify applyLocalReceive / acknowledgeIncomingAmount.
+   * Boost/ASP may briefly report ~2× this (α86 Samsung 1002→2004).
+   */
+  const lastNotifyFloorRef = useRef<number | null>(null);
   const prevBoardingRef = useRef(0);
   const prevBalanceRef = useRef<BalanceBreakdown | null>(null);
   const boardingAddressRef = useRef<string | null>(null);
@@ -652,7 +662,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     if (preSendTotalRef.current == null && prevBalanceRef.current) {
       preSendTotalRef.current = prevBalanceRef.current.total;
     }
-    suppressIncomingUntilRef.current = Date.now() + 60_000;
+    suppressIncomingUntilRef.current = Date.now() + SEND_CHANGE_GUARD_MS;
     setFundsNotice(null);
   }, []);
 
@@ -900,12 +910,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       total: prev.total + add,
     };
     lastAckRef.current = next;
-    // Notify is authoritative — do not keep post-send optimistic 0 while live ≈ preSend.
-    preSendTotalRef.current = null;
+    // Keep preSend during change-guard so late change vtxos still match (α86).
+    if (Date.now() >= suppressIncomingUntilRef.current) {
+      preSendTotalRef.current = null;
+    }
     const walletId = selectedIdRef.current;
     if (walletId) {
       void writeLastAckBalance(getNetworkConfig().id, walletId, next);
     }
+    lastNotifyFloorRef.current = next.total;
     console.warn("[basic] ack after notifyIncoming", {
       add,
       ackTotal: next.total,
@@ -918,7 +931,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     if (!(add > 0)) return;
     const networkId = getNetworkConfig().id;
     const walletId = selectedIdRef.current;
-    preSendTotalRef.current = null;
+    if (Date.now() >= suppressIncomingUntilRef.current) {
+      preSendTotalRef.current = null;
+    }
     setBalance((prev) => {
       const base = prev ?? { available: 0, boarding: 0, total: 0 };
       const next = {
@@ -936,6 +951,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           void writeLastAckBalance(networkId, walletId, next);
         }
       }
+      lastNotifyFloorRef.current = next.total;
       if (walletId) {
         void writeCachedBalance(networkId, walletId, next);
       }
@@ -1041,18 +1057,29 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         floor > DEFAULT_MIN_VTXO_SATS * 2 &&
         bal.total + DEFAULT_MIN_VTXO_SATS * 2 < floor
       ) {
-        // α84/α85: stale getBalance below ack — keep ack after real notify, but
-        // heal when a cold-open ASP glitch inflated ack (Home idle, post-open).
+        // α84/α85/α86: stale getBalance below ack — keep ack after real notify, but
+        // heal post-open glitches and notify+boost double-apply (1002→2004).
         if (ack && bal.total + 1 < ack.total) {
           const awaitingRecv =
             incomingWatchBoostRef.current > 0 || posUiHoldRef.current > 0;
           const postOpen = Date.now() < openNoticeQuietUntilRef.current;
-          if (!awaitingRecv && postOpen) {
-            console.warn("[basic] persistBalance heal ack after post-open glitch", {
+          const floor = lastNotifyFloorRef.current;
+          const doubleInflated =
+            bal.total > 0 &&
+            floor != null &&
+            floor > 0 &&
+            Math.abs(bal.total - floor) <= 2 &&
+            Math.abs(ack.total - 2 * floor) <= 2;
+          if (doubleInflated || (!awaitingRecv && postOpen)) {
+            console.warn("[basic] persistBalance heal ack after inflation", {
               live: bal.total,
               ackTotal: ack.total,
+              notifyFloor: floor,
+              doubleInflated,
+              postOpen,
             });
             lastAckRef.current = bal;
+            lastNotifyFloorRef.current = bal.total;
             void writeLastAckBalance(networkId, walletId, bal);
             prevBoardingRef.current = bal.boarding;
             prevBalanceRef.current = bal;
@@ -1273,27 +1300,64 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
               setBalanceStatus("ready");
               return;
             }
+            // α86: notify already floored ack; boost briefly reports ~2× floor.
+            const notifyFloor = lastNotifyFloorRef.current;
+            if (
+              totalDelta > 0 &&
+              notifyFloor != null &&
+              notifyFloor > 0 &&
+              Math.abs(ack.total - notifyFloor) <= 2 &&
+              Math.abs(bal.total - 2 * notifyFloor) <= 2
+            ) {
+              console.warn("[basic] persistBalance skip double-apply inflation", {
+                totalDelta,
+                live: bal.total,
+                ackTotal: ack.total,
+                notifyFloor,
+              });
+              setBalanceStatus("ready");
+              return;
+            }
             forcedArkAddressRef.current = null;
             if (boardingDelta > 0) {
-              if (emitFundsNotice(boardingDelta, "boarding") === "blocked") {
-                setBalance(bal);
-                setBalanceStatus("ready");
-                await writeCachedBalance(networkId, walletId, bal);
-                prevBoardingRef.current = bal.boarding;
-                prevBalanceRef.current = bal;
+              const boardingShown = emitFundsNotice(boardingDelta, "boarding");
+              if (boardingShown !== "shown") {
+                // blocked → retry later; busy → do not adopt (α86).
+                if (boardingShown === "blocked") {
+                  setBalance(bal);
+                  setBalanceStatus("ready");
+                  await writeCachedBalance(networkId, walletId, bal);
+                  prevBoardingRef.current = bal.boarding;
+                  prevBalanceRef.current = bal;
+                } else {
+                  setBalanceStatus("ready");
+                }
                 return;
               }
             } else if (shouldSuppressFiatExitSatsNotice()) {
               console.warn("[basic] persistBalance skip exit-swap sats", {
                 totalDelta,
               });
-            } else if (emitFundsNotice(totalDelta, "arkade") === "blocked") {
-              setBalance(bal);
-              setBalanceStatus("ready");
-              await writeCachedBalance(networkId, walletId, bal);
-              prevBoardingRef.current = bal.boarding;
-              prevBalanceRef.current = bal;
-              return;
+            } else {
+              const arkShown = emitFundsNotice(totalDelta, "arkade");
+              if (arkShown !== "shown") {
+                if (arkShown === "blocked") {
+                  setBalance(bal);
+                  setBalanceStatus("ready");
+                  await writeCachedBalance(networkId, walletId, bal);
+                  prevBoardingRef.current = bal.boarding;
+                  prevBalanceRef.current = bal;
+                } else {
+                  // duplicate / busy — keep notify floor (α86 Samsung 2004 pin).
+                  console.warn("[basic] persistBalance skip adopt after busy notice", {
+                    totalDelta,
+                    live: bal.total,
+                    ackTotal: ack.total,
+                  });
+                  setBalanceStatus("ready");
+                }
+                return;
+              }
             }
           }
         }
@@ -1306,12 +1370,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           const awaitingRecv =
             incomingWatchBoostRef.current > 0 || posUiHoldRef.current > 0;
           const postOpen = Date.now() < openNoticeQuietUntilRef.current;
-          if (!awaitingRecv && postOpen) {
+          const floor = lastNotifyFloorRef.current;
+          const doubleInflated =
+            bal.total > 0 &&
+            floor != null &&
+            floor > 0 &&
+            Math.abs(bal.total - floor) <= 2 &&
+            Math.abs(ack.total - 2 * floor) <= 2;
+          if (doubleInflated || (!awaitingRecv && postOpen)) {
             console.warn("[basic] persistBalance heal ack above stale live", {
               live: bal.total,
               ackTotal: ack.total,
+              notifyFloor: floor,
+              doubleInflated,
             });
             lastAckRef.current = bal;
+            lastNotifyFloorRef.current = bal.total;
             void writeLastAckBalance(networkId, walletId, bal);
           } else {
             console.warn("[basic] persistBalance keep ack above stale live", {
@@ -1351,9 +1425,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         });
       }
 
+      // Only clear preSend after the change-guard — not while suppressed (α86).
       if (!suppressed) {
-        preSendTotalRef.current = null;
-      } else if (preSendTotalRef.current != null) {
         preSendTotalRef.current = null;
       }
 
@@ -2800,13 +2873,28 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 // on, so "expectingReceive" used to bypass this skip and toast
                 // change as +Funds Received. Only treat as inbound when live
                 // balance shows a real net credit above post-send ack.
+                // α86: change can arrive after 60s — guard 5m + shape match vs preSend.
                 const postSend =
                   Date.now() < suppressIncomingUntilRef.current;
                 const expectingReceive =
                   posUiHoldRef.current > 0 || incomingWatchBoostRef.current > 0;
-                if (postSend && !expectingReceive) {
+                const preSend = preSendTotalRef.current;
+                const displayedTotal =
+                  prevBalanceRef.current?.total ?? lastAckRef.current?.total ?? 0;
+                const looksLikeOwnChange =
+                  !expectingReceive &&
+                  preSend != null &&
+                  preSend > 0 &&
+                  amount > 0 &&
+                  Math.abs(displayedTotal + amount - preSend) <=
+                    Math.max(2, DEFAULT_MIN_VTXO_SATS);
+                if ((postSend || looksLikeOwnChange) && !expectingReceive) {
                   console.warn("[basic] notifyIncomingFunds skip post-send change", {
                     amount,
+                    postSend,
+                    looksLikeOwnChange,
+                    preSend,
+                    displayedTotal,
                   });
                 } else if (postSend && expectingReceive) {
                   void (async () => {
