@@ -51,7 +51,6 @@ import {
   mergeRecipientsByAddress,
   prepareDustSafeSend,
   readMinVtxoSats,
-  readSpendableAvailable,
   waitForSendOrSpendDrop,
   withTimeout,
   type SendRecipient,
@@ -1164,22 +1163,18 @@ export function SendScreen() {
         return;
       }
 
-      // Live vtxos win over inflated Home (α76 chat double-apply / stale Max).
-      if (!wantsAsset && paymentSum > 0) {
-        const liveSats = await readSpendableAvailable(wallet, { timeoutMs: 5_000 });
-        if (liveSats != null && paymentSum > liveSats) {
-          void refreshBalanceOnly();
-          Alert.alert(
-            "Insufficient balance",
-            fiatMode
-              ? `Available: ${liveSats.toLocaleString("en-US")} sats. In Fiat Mode, Home shows stable balance — convert more or wait for sats to settle.`
-              : `Available: ${liveSats.toLocaleString("en-US")} sats`,
-          );
-          return;
-        }
+      // α80: biometrics before ASP vtxo planning. Pre-α80 stacked
+      // readSpendableAvailable(5s) + prepareDustSafeSend(2.5s+8s retry) before bio,
+      // so Xiaomi spun many seconds on Confirm before the fingerprint sheet.
+      const auth = await requireUserPresence(
+        working.length > 1 ? "Confirm multi-send" : "Confirm send",
+      );
+      if (!auth.ok) {
+        Alert.alert("Authentication required", auth.reason);
+        return;
       }
 
-      // Pure asset multi-send: no sats dust bump / change planning.
+      // Post-bio: one vtxo plan (covers α76 live-balance check via totalAvailable).
       let plan: Awaited<ReturnType<typeof prepareDustSafeSend>> = {
         amount: paymentSum,
         amountBumped: false,
@@ -1187,7 +1182,23 @@ export function SendScreen() {
         selectedVtxos: undefined,
       };
       if (!wantsAsset || paymentSum > 0) {
-        plan = await prepareDustSafeSend(wallet, paymentSum, dust);
+        plan = await prepareDustSafeSend(wallet, paymentSum, dust, {
+          timeoutMs: 5_000,
+        });
+      }
+      if (
+        !wantsAsset &&
+        plan.totalAvailable != null &&
+        paymentSum > plan.totalAvailable
+      ) {
+        void refreshBalanceOnly();
+        Alert.alert(
+          "Insufficient balance",
+          fiatMode
+            ? `Available: ${plan.totalAvailable.toLocaleString("en-US")} sats. In Fiat Mode, Home shows stable balance — convert more or wait for sats to settle.`
+            : `Available: ${plan.totalAvailable.toLocaleString("en-US")} sats`,
+        );
+        return;
       }
       if (plan.amountBumped) {
         const last = working[working.length - 1]!;
@@ -1214,14 +1225,6 @@ export function SendScreen() {
         });
       }
 
-      const auth = await requireUserPresence(
-        working.length > 1 ? "Confirm multi-send" : "Confirm send",
-      );
-      if (!auth.ok) {
-        Alert.alert("Authentication required", auth.reason);
-        return;
-      }
-
       beginOutboundSend();
       try {
         const primaryAddr = working[0]!.address;
@@ -1232,13 +1235,25 @@ export function SendScreen() {
           primaryAddr,
           working,
         );
-        const prevAvailable = balance?.available ?? null;
+        // Prefer live vtxo sum from the plan — Home available can be stale (α76).
+        const prevAvailable =
+          plan.totalAvailable != null && plan.totalAvailable > 0
+            ? plan.totalAvailable
+            : (balance?.available ?? null);
         const walletId = selectedWallet?.id;
         const { txid, via } = await waitForSendOrSpendDrop(wallet, {
           recipients: working,
           selectedVtxos: plan.selectedVtxos,
           prevAvailable,
           timeoutMs: SEND_TIMEOUT_MS,
+          // Chat pacing: Xiaomi often hangs wallet.send while ASP already spent.
+          // Default classic wait (12s start / 1.2s reads / 2 hits) false-timed out
+          // at 45s with "send timed out" even when funds had left (α80).
+          spendDropStartMs: 0,
+          spendPollMs: 800,
+          spendHitsRequired: 1,
+          txidGraceMs: 400,
+          spendReadTimeoutMs: 5_000,
           onRealTxid: (real) => {
             if (!walletId || !real || real.startsWith("pending:")) return;
             recordSentFromThisDevice(network.id, walletId, real);

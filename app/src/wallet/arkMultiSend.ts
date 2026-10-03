@@ -508,24 +508,31 @@ export async function waitForSendOrSpendDrop(
     return await withTimeout(early, timeoutMs, "send");
   } catch (e) {
     // Soft timeout: funds often already left while SDK promise hung (α69).
+    // Xiaomi may also time out short vtxo reads — retry longer (α80).
     if (!settled && target != null) {
-      const avail = await readSpendableAvailable(w, {
-        timeoutMs: Math.max(spendReadTimeoutMs, 4_000),
-      });
-      if (avail != null && avail <= target + 1) {
-        const txid = await Promise.race([
-          sendP.catch(() => null),
-          sleep(txidGraceMs).then(() => `pending:${Date.now()}`),
-        ]);
-        if (txid != null) {
-          console.warn("[basic] send confirmed via spend after timeout", {
-            prev: opts.prevAvailable,
-            avail,
-            amount: total,
-          });
-          finish({ txid, via: "spend" });
-          return { txid, via: "spend" };
+      for (const ms of [
+        Math.max(spendReadTimeoutMs, 5_000),
+        10_000,
+      ]) {
+        const avail = await readSpendableAvailable(w, { timeoutMs: ms });
+        if (avail == null) continue;
+        if (avail <= target + 1) {
+          const txid = await Promise.race([
+            sendP.catch(() => null),
+            sleep(txidGraceMs).then(() => `pending:${Date.now()}`),
+          ]);
+          if (txid != null) {
+            console.warn("[basic] send confirmed via spend after timeout", {
+              prev: opts.prevAvailable,
+              avail,
+              amount: total,
+              readMs: ms,
+            });
+            finish({ txid, via: "spend" });
+            return { txid, via: "spend" };
+          }
         }
+        break;
       }
     }
     timedOut = true;
