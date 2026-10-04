@@ -132,12 +132,13 @@ export function shouldDropCatchUpLocalReceive(input: {
   now?: number;
   maxAgeMs?: number;
 }): boolean {
+  // Never age-out or drop on timed-out / empty history (keeps Fiat R$ + catch-up).
+  if (!input.historySucceeded) return false;
   const now = input.now ?? 0;
   const maxAge = input.maxAgeMs ?? CATCH_UP_LOCAL_MAX_AGE_MS;
   if (now > 0 && input.createdAt > 0 && now - input.createdAt > maxAge) {
     return true;
   }
-  if (!input.historySucceeded) return false;
   const started = input.historyFetchStartedAt;
   if (started == null) return false;
   return started > input.createdAt;
@@ -175,29 +176,30 @@ export function filterUnmatchedLocalReceives<
   const historySucceeded = opts?.historySucceeded === true;
   const now = opts?.now;
   return local.filter((p) => {
-    if (rowHasCatchUpTag(p.tags)) {
-      if (
-        shouldDropCatchUpLocalReceive({
-          createdAt: p.createdAt,
-          historySucceeded,
-          historyFetchStartedAt: opts?.historyFetchStartedAt,
-          now,
-        })
-      ) {
-        return false;
-      }
-    } else if (
-      now != null &&
-      now > 0 &&
-      p.createdAt > 0 &&
-      now - p.createdAt > CATCH_UP_LOCAL_MAX_AGE_MS &&
-      !hintHasRealTxid(p)
+    // Age / post-history drop applies only to catch-up-tagged placeholders.
+    // Untagged local-recv (Fiat/Pay-in-Chat R$ rows) stay until history dedupe.
+    if (
+      rowHasCatchUpTag(p.tags) &&
+      shouldDropCatchUpLocalReceive({
+        createdAt: p.createdAt,
+        historySucceeded,
+        historyFetchStartedAt: opts?.historyFetchStartedAt,
+        now,
+      })
     ) {
-      // Untagged α92 phantoms: age backstop only.
       return false;
     }
     return !localReceiveMatchedByHistory(p, history);
   });
+}
+
+/** Join only when the in-flight rematerialize is still the current gen. */
+export function shouldJoinActivityRefresh(input: {
+  inFlightGen: number | null | undefined;
+  currentGen: number;
+}): boolean {
+  if (input.inFlightGen == null) return false;
+  return input.inFlightGen === input.currentGen;
 }
 
 /** Join an in-flight rematerialize for the same wallet; start a new one otherwise. */

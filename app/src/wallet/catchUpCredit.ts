@@ -17,6 +17,11 @@ export type CatchUpCredit = {
   settledSats: number;
   /** Last adopt/add time (ms). Settled-inheritance TTL is measured from this. */
   at: number;
+  /**
+   * Poll-"shown" seed: consume only on exact amount match within this TTL.
+   * Prevents a catch-up/shown credit from swallowing a later different payment.
+   */
+  exactMatchTtlMs?: number;
 };
 
 /** Match tolerance for amount compare (same as funds-notice dedupe). */
@@ -28,15 +33,53 @@ export const CATCH_UP_CREDIT_EPS = 2;
  */
 export const CATCH_UP_SETTLED_TTL_MS = 15 * 60 * 1000;
 
+/** Default TTL for poll-shown exact-match credit (α92 B2). */
+export const CATCH_UP_EXACT_MATCH_TTL_MS = 120_000;
+
 export function addCatchUpCredit(
   prev: CatchUpCredit | null,
   deltaSats: number,
-  opts: { noticeSettled?: boolean; now?: number } = {},
+  opts: {
+    noticeSettled?: boolean;
+    now?: number;
+    /** Seed for poll-shown → notify same amount only (not a running budget). */
+    exactMatchOnly?: boolean;
+    exactMatchTtlMs?: number;
+  } = {},
 ): CatchUpCredit | null {
   const add = Math.floor(deltaSats);
   if (!(add > 0)) return prev;
   const now = opts.now ?? Date.now();
   const settleAdd = opts.noticeSettled ? add : 0;
+
+  if (opts.exactMatchOnly) {
+    // Do not convert an existing running (deferred) budget into exact-match-only.
+    if (prev && prev.sats > 0 && prev.exactMatchTtlMs == null) {
+      const sats = prev.sats + add;
+      return {
+        sats,
+        settledSats: Math.min(sats, prev.settledSats + settleAdd),
+        at: now,
+      };
+    }
+    const ttl = opts.exactMatchTtlMs ?? CATCH_UP_EXACT_MATCH_TTL_MS;
+    if (!prev || prev.sats <= 0) {
+      return {
+        sats: add,
+        settledSats: settleAdd,
+        at: now,
+        exactMatchTtlMs: ttl,
+      };
+    }
+    const sats = prev.sats + add;
+    return {
+      sats,
+      settledSats: Math.min(sats, prev.settledSats + settleAdd),
+      at: now,
+      exactMatchTtlMs: prev.exactMatchTtlMs ?? ttl,
+    };
+  }
+
   if (!prev || prev.sats <= 0) {
     return { sats: add, settledSats: settleAdd, at: now };
   }
@@ -79,8 +122,38 @@ export function consumeCatchUpCredit(
     };
   }
   const now = opts.now ?? Date.now();
-  const settledTtlMs = opts.settledTtlMs ?? CATCH_UP_SETTLED_TTL_MS;
   const exact = Math.abs(amt - credit.sats) <= CATCH_UP_CREDIT_EPS;
+
+  // Poll-shown seed: only an exact match within TTL consumes; else leave/apply full.
+  if (credit.exactMatchTtlMs != null) {
+    if (now - credit.at > credit.exactMatchTtlMs) {
+      return {
+        credit: null,
+        applyAmount: Math.max(0, amt),
+        noticeSettled: false,
+        consumed: 0,
+        exact: false,
+      };
+    }
+    if (!exact) {
+      return {
+        credit,
+        applyAmount: Math.max(0, amt),
+        noticeSettled: false,
+        consumed: 0,
+        exact: false,
+      };
+    }
+    return {
+      credit: null,
+      applyAmount: 0,
+      noticeSettled: credit.settledSats > 0,
+      consumed: amt,
+      exact: true,
+    };
+  }
+
+  const settledTtlMs = opts.settledTtlMs ?? CATCH_UP_SETTLED_TTL_MS;
   const settledFresh = now - credit.at <= settledTtlMs;
   const consumed = Math.min(amt, credit.sats);
   const applyAmount = amt - consumed;
@@ -120,6 +193,11 @@ export function settleCatchUpCredit(
     ...credit,
     settledSats: Math.min(credit.sats, credit.settledSats + amt),
   };
+}
+
+/** True when credit is a short-lived poll-shown exact-match seed. */
+export function isExactMatchCatchUpCredit(credit: CatchUpCredit | null): boolean {
+  return credit != null && credit.exactMatchTtlMs != null;
 }
 
 /** Per-wallet credit map — switch must not wipe another wallet's budget. */

@@ -10,13 +10,13 @@ import { commitArkadeActivityRows, recordOptimisticArkadeReceive } from "../acco
 import { loadActivityRows } from "./activity";
 import {
   ACTIVITY_REMATERIALIZE_COOL_MS,
-  coalesceActivityRefresh,
   isWalletCoolingDown,
   outboundSpendTarget,
   persistSpendBreakdown,
   previousBalanceForWallet,
   shouldBumpMaterializeGenOnFailure,
   shouldCommitWalletWork,
+  shouldJoinActivityRefresh,
   shouldRecordOptimisticReceive,
   switchHomeBalance,
   type OptimisticReceiveSource,
@@ -98,6 +98,7 @@ import { balanceFromSdk, type BalanceBreakdown } from "./balance";
 import {
   addCatchUpCredit,
   CATCH_UP_CREDIT_EPS,
+  CATCH_UP_EXACT_MATCH_TTL_MS,
   consumeCatchUpCredit,
   getCatchUpCreditForWallet,
   setCatchUpCreditForWallet,
@@ -697,8 +698,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     walletId: string;
     preSend: BalanceBreakdown | null;
   } | null>(null);
-  /** One rematerialize promise per wallet (search/Fiat ticks join, do not stack). */
-  const activityRefreshInFlightRef = useRef<Record<string, Promise<void>>>({});
+  /**
+   * One rematerialize promise per wallet (search/Fiat ticks join, do not stack).
+   * Store gen so A→B→A does not join a stale in-flight from before the switch.
+   */
+  const activityRefreshInFlightRef = useRef<
+    Record<string, { promise: Promise<void>; gen: number }>
+  >({});
+  /** Skip seeding credit after a catch-up-while-away toast (funds predate subscribe). */
+  const skipShownCatchUpCreditRef = useRef(false);
   /** Boost-on debounce delivered an epoch bump — only then remount on boost-off. */
   const boostEpochOnDeliveredRef = useRef(false);
   const prevBoardingRef = useRef(0);
@@ -1456,6 +1464,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           openSyncQuietRef.current = false;
           // Real funds while away — allow this one persistBalance toast.
           openNoticeQuietUntilRef.current = 0;
+          // Those funds predate this subscription — do not seed a credit that
+          // would swallow a later different notify (α92 B2).
+          skipShownCatchUpCreditRef.current = true;
           console.warn("[basic] openSyncQuiet off (catch-up while away)", {
             catchUpSats,
             live: bal.total,
@@ -1671,19 +1682,30 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   "funds-notice",
                   false,
                 );
-                setCatchUpCreditForWallet(
-                  catchUpCreditByWalletRef.current,
-                  walletId,
-                  addCatchUpCredit(
-                    getCatchUpCreditForWallet(
-                      catchUpCreditByWalletRef.current,
-                      walletId,
+                const skipCredit = skipShownCatchUpCreditRef.current;
+                skipShownCatchUpCreditRef.current = false;
+                if (!skipCredit) {
+                  // Poll beat notify: exact-match credit only, short TTL.
+                  // Row dedupe (60s catch-up tag) still covers the Activity row.
+                  setCatchUpCreditForWallet(
+                    catchUpCreditByWalletRef.current,
+                    walletId,
+                    addCatchUpCredit(
+                      getCatchUpCreditForWallet(
+                        catchUpCreditByWalletRef.current,
+                        walletId,
+                      ),
+                      totalDelta,
+                      {
+                        noticeSettled: true,
+                        exactMatchOnly: true,
+                        exactMatchTtlMs: CATCH_UP_EXACT_MATCH_TTL_MS,
+                      },
                     ),
-                    totalDelta,
-                    { noticeSettled: true },
-                  ),
-                );
+                  );
+                }
               } else if (arkShown === "blocked") {
+                skipShownCatchUpCreditRef.current = false;
                 setBalance(bal);
                 setBalanceStatus("ready");
                 await writeCachedBalance(networkId, walletId, bal);
@@ -1691,6 +1713,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 prevBalanceRef.current = bal;
                 return;
               } else if (arkShown === "deferred") {
+                skipShownCatchUpCreditRef.current = false;
                 // Chat-prefer / chat-thread only (α89.1). Never adopt on
                 // duplicate/cooldown "busy" — that reopened α86 2004 pin (B2).
                 const displayedTotal = prevBalanceRef.current?.total ?? 0;
@@ -1765,6 +1788,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 return;
               } else {
                 // busy (duplicate / cooldown / dust / suppress) — α86 pin.
+                skipShownCatchUpCreditRef.current = false;
                 console.warn(
                   "[basic] persistBalance skip adopt after busy notice",
                   {
@@ -2239,6 +2263,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       selectedVtxoTotalRef.current = null;
       changeHoldUntilRef.current = 0;
       aspPollPausedRef.current = 0;
+      skipShownCatchUpCreditRef.current = false;
       activityMaterializeGenRef.current += 1;
       balanceFetchGenRef.current += 1;
       prevBalanceRef.current = null;
@@ -2450,18 +2475,19 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const inFlight = activityRefreshInFlightRef.current[walletId];
     if (
       inFlight &&
-      coalesceActivityRefresh({
-        inFlightWalletId: walletId,
-        requestedWalletId: walletId,
-      }) === "join"
+      shouldJoinActivityRefresh({
+        inFlightGen: inFlight.gen,
+        currentGen: activityMaterializeGenRef.current,
+      })
     ) {
-      return inFlight;
+      return inFlight.promise;
     }
     const networkId = getNetworkConfig().id;
+    const historyFetchStartedAt = Date.now();
+    const startedGen = ++activityMaterializeGenRef.current;
     const slot: { promise: Promise<void> | null } = { promise: null };
     const promise = (async () => {
       try {
-        await Promise.resolve();
         if (selectedWallet?.kind === "lightning") {
           try {
             await withTimeout(
@@ -2481,8 +2507,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         if (selectedWallet?.kind !== "arkade") return;
         const w = getOpenWallet() ?? wallet;
         if (!w) return;
-        const historyFetchStartedAt = Date.now();
-        const startedGen = ++activityMaterializeGenRef.current;
         try {
           const rows = await withTimeout(
             loadActivityRows(w),
@@ -2523,13 +2547,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           setActivityEpoch((n) => n + 1);
         }
       } finally {
-        if (activityRefreshInFlightRef.current[walletId] === slot.promise) {
+        if (activityRefreshInFlightRef.current[walletId]?.promise === slot.promise) {
           delete activityRefreshInFlightRef.current[walletId];
         }
       }
     })();
     slot.promise = promise;
-    activityRefreshInFlightRef.current[walletId] = promise;
+    activityRefreshInFlightRef.current[walletId] = { promise, gen: startedGen };
     return promise;
   }, [wallet, selectedWallet]);
   refreshActivityRef.current = refreshActivity;

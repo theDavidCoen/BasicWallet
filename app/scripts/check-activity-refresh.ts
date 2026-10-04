@@ -19,6 +19,7 @@ import {
   shouldCommitWalletWork,
   shouldDropCatchUpLocalReceive,
   shouldFetchVtxoFallback,
+  shouldJoinActivityRefresh,
   shouldRecordOptimisticReceive,
   switchHomeBalance,
 } from "../src/wallet/activityRefresh";
@@ -282,12 +283,20 @@ console.log("activityRefresh scenarios\n");
   });
   assert("ack-0 whole-balance catch-up drops", kept.length === 0);
   assert(
-    "age backstop drops catch-up",
+    "age backstop drops catch-up after successful history",
+    shouldDropCatchUpLocalReceive({
+      createdAt: 1_000,
+      historySucceeded: true,
+      now: 1_000 + CATCH_UP_LOCAL_MAX_AGE_MS + 1,
+    }) === true,
+  );
+  assert(
+    "age backstop keeps catch-up when history failed",
     shouldDropCatchUpLocalReceive({
       createdAt: 1_000,
       historySucceeded: false,
       now: 1_000 + CATCH_UP_LOCAL_MAX_AGE_MS + 1,
-    }) === true,
+    }) === false,
   );
 }
 
@@ -345,6 +354,47 @@ console.log("activityRefresh scenarios\n");
     "older timeout does not bump newer gen",
     shouldBumpMaterializeGenOnFailure({ startedGen: 3, currentGen: 4 }) === false,
   );
+  assert(
+    "join only when in-flight gen is current",
+    shouldJoinActivityRefresh({ inFlightGen: 2, currentGen: 2 }) === true,
+  );
+  assert(
+    "A→B→A does not join stale in-flight",
+    shouldJoinActivityRefresh({ inFlightGen: 2, currentGen: 4 }) === false,
+  );
+}
+
+{
+  console.log("\n15) Fiat R$ local-recv survives 30+ min; catch-up survives timeout");
+  const fiatRow = [
+    {
+      id: "local-recv:brl",
+      amount: 0,
+      createdAt: 1_000,
+      arkTxid: "",
+      tags: ["offchain", "brl"],
+    },
+  ];
+  const fiatKept = filterUnmatchedLocalReceives(fiatRow, [], {
+    historySucceeded: true,
+    historyFetchStartedAt: 1_000 + CATCH_UP_LOCAL_MAX_AGE_MS + 5_000,
+    now: 1_000 + CATCH_UP_LOCAL_MAX_AGE_MS + 5_000,
+  });
+  assert("R$ row survives 30+ min", fiatKept.length === 1);
+  const catchUp = [
+    {
+      id: "local-recv:cu",
+      amount: 1900,
+      createdAt: 1_000,
+      arkTxid: "",
+      tags: [CATCH_UP_RECEIVE_TAG],
+    },
+  ];
+  const afterTimeout = filterUnmatchedLocalReceives(catchUp, [], {
+    historySucceeded: false,
+    now: 1_000 + CATCH_UP_LOCAL_MAX_AGE_MS + 5_000,
+  });
+  assert("catch-up survives timed-out/empty history", afterTimeout.length === 1);
 }
 
 {

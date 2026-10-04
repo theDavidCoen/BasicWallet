@@ -680,18 +680,8 @@ export function replaceActivityRows(
   const localReceives = readLocalPendingReceiveRows(networkId, walletId);
   const skipEmpty = rows.length === 0 && existingCount > 0;
   if (skipEmpty) {
-    const agedOut = filterUnmatchedLocalReceives(
-      localReceives.map((p) => ({
-        ...p,
-        arkTxid: p.txs[0]?.arkTxid || "",
-      })),
-      [],
-      { historySucceeded: false, now },
-    );
-    const keepIds = new Set(agedOut.map((r) => r.id));
-    for (const r of localReceives) {
-      if (!keepIds.has(r.id)) deleteActivityIdxRow(db, walletId, r.id);
-    }
+    // Timed-out / empty history is not authoritative — keep all local rows
+    // (catch-up placeholders and Fiat R$ local-recv).
     console.warn("[basic] skip empty activity rematerialize (keeping local rows)");
     return;
   }

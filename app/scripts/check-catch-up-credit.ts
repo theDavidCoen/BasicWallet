@@ -8,6 +8,7 @@ import {
   settleCatchUpCredit,
   getCatchUpCreditForWallet,
   setCatchUpCreditForWallet,
+  CATCH_UP_EXACT_MATCH_TTL_MS,
   CATCH_UP_SETTLED_TTL_MS,
   type CatchUpCredit,
   type CatchUpCreditByWallet,
@@ -201,6 +202,44 @@ console.log("catchUpCredit scenarios\n");
   setCatchUpCreditForWallet(byWallet, "w_b", null);
   assert("clearing B leaves A", eq(getCatchUpCreditForWallet(byWallet, "w_a")?.sats ?? -1, 800));
   assert("B gone", getCatchUpCreditForWallet(byWallet, "w_b") === null);
+}
+
+{
+  console.log("\n12) shown exact-match: same amount within TTL → one toast path");
+  const c = addCatchUpCredit(null, 800, {
+    now: 0,
+    noticeSettled: true,
+    exactMatchOnly: true,
+    exactMatchTtlMs: CATCH_UP_EXACT_MATCH_TTL_MS,
+  });
+  const same = consumeCatchUpCredit(c, 800, { now: 60_000 });
+  assert("exact 800 apply 0", eq(same.applyAmount, 0));
+  assert("exact 800 skip toast", same.noticeSettled === true);
+  assert("exact 800 cleared", same.credit === null);
+}
+
+{
+  console.log("\n13) catch-up 1900 must not swallow later notify 800");
+  // Catch-up-while-away no longer seeds; if a stale exact 1900 were present,
+  // a different amount must still apply fully.
+  const stale = addCatchUpCredit(null, 1900, {
+    now: 0,
+    noticeSettled: true,
+    exactMatchOnly: true,
+    exactMatchTtlMs: CATCH_UP_EXACT_MATCH_TTL_MS,
+  });
+  const later = consumeCatchUpCredit(stale, 800, { now: 60_000 });
+  assert("different amount apply full 800", eq(later.applyAmount, 800));
+  assert("different amount toast", later.noticeSettled === false);
+  assert("different amount leaves exact credit", eq(later.credit?.sats ?? -1, 1900));
+  const expired = consumeCatchUpCredit(stale, 800, {
+    now: CATCH_UP_EXACT_MATCH_TTL_MS + 1,
+  });
+  assert("expired exact apply full", eq(expired.applyAmount, 800));
+  assert("expired exact cleared", expired.credit === null);
+  // No seed at all (catch-up-while-away):
+  const none = consumeCatchUpCredit(null, 800, { now: 0 });
+  assert("no credit apply full 800", eq(none.applyAmount, 800));
 }
 
 console.log(failed === 0 ? "\nAll scenarios passed." : `\n${failed} scenario(s) failed.`);
