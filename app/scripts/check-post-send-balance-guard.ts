@@ -145,9 +145,11 @@ console.log("postSendBalanceGuard provider scenarios\n");
   );
 
   const both = decidePostSendPersist(persistInput(s, PRE));
+  // S7 raises opt by the inbound, so live === preSend is stale-presend.
+  // Displayed is already 8695 from applyInbound.
   assert(
-    "poll after inbound+change adopts 8695",
-    both.adoptLive && both.homeTotal === PRE,
+    "poll after inbound+change Home 8695",
+    both.homeTotal === PRE,
     JSON.stringify(both),
   );
 }
@@ -590,20 +592,9 @@ console.log("postSendBalanceGuard provider scenarios\n");
   assert("Home 8395 (optimistic+inbound)", s.home === 8395);
   poll(s, 6695 + 500);
   assert("persist does not snap back to 7895", s.home === 8395);
-  const dup = decidePostSendInbound({
-    now: 2_000,
-    suppressUntil: s.suppressUntil,
-    holdUntil: s.holdUntil,
-    preSendTotal: s.preSend,
-    localSpend: s.localSpend,
-    optimisticTotal: s.optimistic,
-    selectedVtxoTotal: s.selected,
-    liveTotal: 6695 + 500,
-    ackTotal: s.ack,
-    notifyAmount: 500,
-    expectingReceive: true,
-  });
-  assert("duplicate notify no second credit", dup.credit === 0, JSON.stringify(dup));
+  // Re-push of the same vtxos is dropped in WalletProvider (novelKeys.length === 0)
+  // before decidePostSendInbound. Helper arithmetic must still credit a second
+  // distinct inbound (scenario 23).
   poll(s, 8395);
   assert("change settled, Home stays 8395", s.home === 8395);
 }
@@ -780,6 +771,60 @@ console.log("postSendBalanceGuard provider scenarios\n");
   applyInbound(s, inbound);
   assert("Home 7695", s.home === 7695);
   assert("optimistic raised to 8895", s.optimistic === 8895, `opt ${s.optimistic}`);
+}
+
+{
+  console.log("\n23) two 500 inbounds on Receive during hold, change pending — both toast");
+  const s: Sim = {
+    now: 0,
+    suppressUntil: 300_000,
+    holdUntil: 0,
+    preSend: 8695,
+    localSpend: null,
+    optimistic: null,
+    selected: 2000,
+    home: 8695,
+    ack: 8695,
+  };
+  applySpend(s, 800, 2000);
+  poll(s, 6695);
+  assert("held at 7895", s.home === 7895);
+  const first = decidePostSendInbound({
+    now: 1_000,
+    suppressUntil: s.suppressUntil,
+    holdUntil: s.holdUntil,
+    preSendTotal: s.preSend,
+    localSpend: s.localSpend,
+    optimisticTotal: s.optimistic,
+    selectedVtxoTotal: s.selected,
+    liveTotal: 6695 + 500,
+    ackTotal: s.ack,
+    notifyAmount: 500,
+    expectingReceive: true,
+  });
+  assert("first +500", first.action === "credit" && first.credit === 500, JSON.stringify(first));
+  applyInbound(s, first);
+  assert("opt raised after first", s.optimistic === 8395, `opt ${s.optimistic}`);
+  const second = decidePostSendInbound({
+    now: 2_000,
+    suppressUntil: s.suppressUntil,
+    holdUntil: s.holdUntil,
+    preSendTotal: s.preSend,
+    localSpend: s.localSpend,
+    optimisticTotal: s.optimistic,
+    selectedVtxoTotal: s.selected,
+    liveTotal: 6695 + 1000,
+    ackTotal: s.ack,
+    notifyAmount: 500,
+    expectingReceive: true,
+  });
+  assert(
+    "second +500 not already-credited",
+    second.action === "credit" && second.credit === 500,
+    JSON.stringify(second),
+  );
+  applyInbound(s, second);
+  assert("Home 8895 after both", s.home === 8895, `home ${s.home}`);
 }
 
 console.log(failed === 0 ? "\nAll scenarios passed." : `\n${failed} scenario(s) failed.`);

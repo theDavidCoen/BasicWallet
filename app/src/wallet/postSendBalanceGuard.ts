@@ -25,11 +25,13 @@
  * N6. The first poll after the 5m suppress uses hold-expired + skipFloorPin;
  *     a dust/partial read on that poll can ack dust and the next good read
  *     toasts a whole-balance delta. Narrow: that one poll.
+ * N9. Receive: if readSpendableAvailable times out (3s), live is null and a
+ *     chat-pay change push (no selected vtxos) is credited as an inbound.
+ *     Skipping when live is null && selected is null could hide a real inbound.
  * S6 leftover: after expiry, if live is already ≥ optimistic and a return is
  *     larger than leftover change, Receive may toast R minus that leftover
  *     (inbound-after-change). Typical same-size return stays below optimistic
- *     and credits the notify amount. Duplicate notify after that credit still
- *     sees ack < opt; Funds Received 60s dedupe covers it.
+ *     and credits the notify amount.
  */
 
 export const CHANGE_HOLD_MAX_MS = 75_000;
@@ -391,14 +393,14 @@ export function decidePostSendInbound(
         return inboundResult("skip-no-credit", 0, "no-amount");
       }
       // S6: when expiry lowered ack below optimistic, credit the inbound
-      // only (not opt − ack + amount). Duplicate after raiseOptimistic is 0.
+      // only (not opt − ack + amount). S7: always raise opt so a second
+      // distinct inbound still credits in full. Re-pushed vtxos are dropped
+      // upstream (novelKeys.length === 0), not here.
       const credit = Math.max(0, amount - Math.max(0, ack - opt));
       if (!(credit > 0)) {
         return inboundResult("skip-no-credit", 0, "already-credited");
       }
-      // Raise opt only when expiry already lowered ack; during the hold
-      // ack sits at opt and amount − (ack − opt) already zeros duplicates.
-      const raise = ack + POST_SEND_EPS < opt ? credit : 0;
+      const raise = credit;
       return inboundResult(
         "credit",
         credit,

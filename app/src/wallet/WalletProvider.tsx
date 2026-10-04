@@ -3094,6 +3094,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
               // Fall through — novelKeys still valid (computed before seen add).
             }
             // Already-seen outpoints only (re-push / remount) — no toast.
+            // S7 inbound math credits every distinct notify; this is the
+            // duplicate-vtxo gate (not ack − opt).
             if (novelKeys.length === 0) {
               scheduleReload(w, walletId, { event: true });
               return;
