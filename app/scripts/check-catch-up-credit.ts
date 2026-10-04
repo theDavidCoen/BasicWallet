@@ -1,5 +1,5 @@
 /**
- * Scenario checks for catchUpCredit (α89.1 re-review a322376).
+ * Scenario checks for catchUpCredit (α89.1).
  * Run: npx tsx scripts/check-catch-up-credit.ts
  */
 import {
@@ -33,16 +33,17 @@ console.log("catchUpCredit scenarios\n");
   let c: CatchUpCredit | null = null;
   c = addCatchUpCredit(c, 800, { now: 0, noticeSettled: false });
   c = settleCatchUpCredit(c, 800);
+  assert("settledSats 800", eq(c?.settledSats ?? -1, 800));
   const r = consumeCatchUpCredit(c, 800, { now: 109_000 });
   assert("applyAmount 0", eq(r.applyAmount, 0));
   assert("consume 800", eq(r.consumed, 800));
-  assert("skip toast (settled exact)", r.noticeSettled === true);
+  assert("skip toast (settled covers)", r.noticeSettled === true);
   assert("credit cleared", r.credit === null);
 }
 
-// --- B4: two payments in one poll ---
+// --- B4 / S8: split no-repeat toast ---
 {
-  console.log("\n2) two payments in one poll (1300 → notify 800 then 500)");
+  console.log("\n2) split no-repeat (1300 settled → notify 800 then 500)");
   let c: CatchUpCredit | null = addCatchUpCredit(null, 1300, {
     now: 0,
     noticeSettled: false,
@@ -50,30 +51,33 @@ console.log("catchUpCredit scenarios\n");
   c = settleCatchUpCredit(c, 1300);
   const r1 = consumeCatchUpCredit(c, 800, { now: 1_000 });
   assert("first apply 0", eq(r1.applyAmount, 0), `got ${r1.applyAmount}`);
-  assert("first no settled inherit (not exact)", r1.noticeSettled === false);
+  assert("first skip toast (settled covers)", r1.noticeSettled === true);
   assert("left 500", eq(r1.credit?.sats ?? -1, 500));
+  assert("settled left 500", eq(r1.credit?.settledSats ?? -1, 500));
   const r2 = consumeCatchUpCredit(r1.credit, 500, { now: 2_000 });
   assert("second apply 0", eq(r2.applyAmount, 0));
-  assert("second settled exact", r2.noticeSettled === true);
+  assert("second skip toast", r2.noticeSettled === true);
   assert("cleared", r2.credit === null);
 }
 
-// --- B4: overwrite before notify ---
+// --- B4 / S8: overwrite — A's notify must not re-toast ---
 {
-  console.log("\n3) overwrite before notify (800 then +500, notify 800 then 500)");
+  console.log("\n3) overwrite before notify (A settled, B added)");
   let c: CatchUpCredit | null = addCatchUpCredit(null, 800, {
     now: 0,
     noticeSettled: true,
   });
+  assert("A settledSats 800", eq(c?.settledSats ?? -1, 800));
   c = addCatchUpCredit(c, 500, { now: 10_000, noticeSettled: false });
   assert("budget 1300", eq(c?.sats ?? -1, 1300));
-  assert("settled kept", c?.noticeSettled === true);
-  const r1 = consumeCatchUpCredit(c, 800, { now: 20_000 });
+  assert("settledSats still 800", eq(c?.settledSats ?? -1, 800));
+  const r1 = consumeCatchUpCredit(c, 800, { now: 109_000 });
   assert("notify 800 apply 0", eq(r1.applyAmount, 0));
-  assert("notify 800 toast (not exact)", r1.noticeSettled === false);
-  const r2 = consumeCatchUpCredit(r1.credit, 500, { now: 21_000 });
+  assert("notify 800 skip toast (A settled)", r1.noticeSettled === true);
+  assert("left 500", eq(r1.credit?.sats ?? -1, 500));
+  const r2 = consumeCatchUpCredit(r1.credit, 500, { now: 110_000 });
   assert("notify 500 apply 0", eq(r2.applyAmount, 0));
-  assert("notify 500 skip toast", r2.noticeSettled === true);
+  assert("notify 500 toast (B not settled)", r2.noticeSettled === false);
 }
 
 // --- late notify 109s and >120s ---
@@ -100,16 +104,16 @@ console.log("catchUpCredit scenarios\n");
   assert("no settled", r.noticeSettled === false);
 }
 
-// --- different-amount payment ---
+// --- different-amount payment (min-consume; settled covers → skip toast) ---
 {
-  console.log("\n6) different-amount payment (credit 800, notify 500)");
+  console.log("\n6) different-amount payment (credit 800 settled, notify 500)");
   let c: CatchUpCredit | null = addCatchUpCredit(null, 800, {
     now: 0,
     noticeSettled: true,
   });
   const r = consumeCatchUpCredit(c, 500, { now: 1_000 });
   assert("apply 0 (min consume)", eq(r.applyAmount, 0));
-  assert("toast (not exact)", r.noticeSettled === false);
+  assert("skip toast (settled covers consume)", r.noticeSettled === true);
   assert("left 300", eq(r.credit?.sats ?? -1, 300));
 }
 
@@ -144,8 +148,23 @@ console.log("catchUpCredit scenarios\n");
   });
   const r = consumeCatchUpCredit(c, 800, { now: 1_000 });
   assert("apply remainder 300", eq(r.applyAmount, 300));
-  assert("no settled inherit", r.noticeSettled === false);
+  assert("skip toast (500 settled covers consume)", r.noticeSettled === true);
   assert("credit cleared", r.credit === null);
+}
+
+// --- both chat races settle partial amounts against combined budget ---
+{
+  console.log("\n10) settle(800)+settle(500) on budget 1300 — both notifies skip toast");
+  let c: CatchUpCredit | null = addCatchUpCredit(null, 800, { now: 0 });
+  c = addCatchUpCredit(c, 500, { now: 1_000 });
+  c = settleCatchUpCredit(c, 800);
+  c = settleCatchUpCredit(c, 500);
+  assert("settledSats 1300", eq(c?.settledSats ?? -1, 1300));
+  const r1 = consumeCatchUpCredit(c, 800, { now: 109_000 });
+  assert("800 skip toast", r1.noticeSettled === true);
+  const r2 = consumeCatchUpCredit(r1.credit, 500, { now: 110_000 });
+  assert("500 skip toast", r2.noticeSettled === true);
+  assert("cleared", r2.credit === null);
 }
 
 console.log(failed === 0 ? "\nAll scenarios passed." : `\n${failed} scenario(s) failed.`);

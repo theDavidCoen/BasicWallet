@@ -2943,8 +2943,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     let sawSubscribeReplay = false;
     setNotifySubscribed(false);
     setNotifyPushAlive(false);
-    // Resubscribe — drop stale catch-up credit (re-review S6).
-    catchUpCreditRef.current = null;
+    // Do not clear catch-up credit on resubscribe — a late first push (~109s)
+    // must still consume the poll-adopted budget (re-review S7).
 
     void (async () => {
       try {
@@ -2988,8 +2988,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   amount,
                   ackAvail,
                 });
-                // Seed/replay is not a novel inbound — drop catch-up credit (S6).
-                catchUpCreditRef.current = null;
+                // Clear credit only on a real full replay — not zero/asset-only
+                // DePix pushes in the seed window (re-review N9).
+                if (looksLikeFullReplay) {
+                  catchUpCreditRef.current = null;
+                }
                 scheduleReload(w, walletId, { event: true });
                 return;
               }
@@ -3148,6 +3151,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                     preSend,
                     displayedTotal,
                   });
+                  // Consume any leftover catch-up budget (no ack) so it cannot
+                  // swallow a later inbound (re-review N8).
+                  const taken = consumeCatchUpCredit(
+                    catchUpCreditRef.current,
+                    amount,
+                  );
+                  catchUpCreditRef.current = taken.credit;
                 } else if (postSend && expectingReceive) {
                   void (async () => {
                     const live = await readSpendableAvailable(w, {
@@ -3251,7 +3261,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   // delta as classic Funds Received while chat race runs (α71).
                   beginClassicChatDefer(amount);
                   // Running budget: consume min(amount, credit); apply remainder.
-                  // Inherit noticeSettled only on exact match within settled TTL.
+                  // Skip toast when consumed fits in settledSats (within TTL).
                   const taken = consumeCatchUpCredit(
                     catchUpCreditRef.current,
                     amount,
