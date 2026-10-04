@@ -11,6 +11,15 @@
  * (Lightning already includes feeSats). Leftover fee is not added into the
  * spend — expiry adopt + lower-ack heals ack; a fee ≤ EPS is treated as
  * aligned. Do not invent a fee for chat/classic.
+ *
+ * Nits left documented (not fixed this ship):
+ * N4. Two sends inside 75s with the first change still pending can briefly
+ *     show Home too low (selectedVtxoTotal is replaced, not accumulated).
+ * N5. A stale-presend indexer lagging past 75s briefly shows pre-send funds
+ *     again, then drops when the indexer catches up (no toast).
+ * N6. The first poll after the 5m suppress uses hold-expired + skipFloorPin;
+ *     a dust/partial read on that poll can ack dust and the next good read
+ *     toasts a whole-balance delta. Narrow: that one poll.
  */
 
 export const CHANGE_HOLD_MAX_MS = 75_000;
@@ -212,6 +221,18 @@ export function decidePostSendPersist(
         ackTotal: ack,
       };
     }
+    let nextAck: number | null = ack;
+    if (opts.writeAck) {
+      nextAck = live;
+      if (suppressed && applied && input.optimisticTotal != null) {
+        // S5: absorb change up to optimistic; never raise ack to live above it.
+        const cap = Math.max(ack ?? 0, input.optimisticTotal);
+        nextAck = Math.min(live, cap);
+      } else if (suppressed && !applied && ack != null) {
+        // No local spend: lower only (never raise while suppressed).
+        nextAck = Math.min(live, ack);
+      }
+    }
     return {
       adoptLive: opts.adoptLive,
       writeAck: opts.writeAck,
@@ -219,7 +240,7 @@ export function decidePostSendPersist(
       floorPinned: false,
       reason,
       homeTotal: opts.adoptLive ? live : displayed,
-      ackTotal: opts.writeAck ? live : ack,
+      ackTotal: nextAck,
     };
   };
 
@@ -319,12 +340,14 @@ export function decidePostSendInbound(
     return { action: "skip-change", credit: 0, reason: "home-post-send" };
   }
 
-  const active = holdActive(input);
-  if (active && looksLikeChangeAmount(amount, input)) {
+  // S4: change-shape / inbound-vs-optimistic for the whole 5m suppress, not
+  // only the 75s display hold. Change arriving at 90s must not toast.
+  const applied = hasAppliedLocalSpend(input);
+  if (applied && looksLikeChangeAmount(amount, input)) {
     return { action: "skip-change", credit: 0, reason: "pending-change-vtxo" };
   }
 
-  if (active && input.optimisticTotal != null) {
+  if (applied && input.optimisticTotal != null) {
     const opt = input.optimisticTotal;
     const live = input.liveTotal;
     if (live == null || live + POST_SEND_EPS < opt) {

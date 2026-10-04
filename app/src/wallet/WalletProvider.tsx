@@ -1662,20 +1662,31 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
       // Never raise ack while send-suppress is active — that ate catch-up notices.
       // α84: never lower ack from a stale ASP snapshot after notify advanced it.
-      // α90: writeAck from decidePostSendPersist — hold-expiry / no-local-spend
-      // lower ack so the floor cannot pin; change-pending already returned.
+      // α90 S5: writeAck uses helper ackTotal (capped at optimistic while
+      // suppressed+applied) so a Home inbound isn't absorbed without a toast.
       if (postSend.writeAck) {
-        lastAckRef.current = bal;
-        void writeLastAckBalance(networkId, walletId, bal);
+        const ackTotal = postSend.ackTotal ?? bal.total;
+        const nextAck =
+          ackTotal === bal.total
+            ? bal
+            : {
+                available: Math.max(0, ackTotal - bal.boarding),
+                boarding: bal.boarding,
+                total: ackTotal,
+              };
+        lastAckRef.current = nextAck;
+        void writeLastAckBalance(networkId, walletId, nextAck);
         if (postSend.reason === "notify-ack-advanced") {
           console.warn("[basic] persistBalance adopt after notify ack", {
             live: bal.total,
             ackTotal: ack?.total,
+            nextAck: ackTotal,
             preSend: preSendTotalRef.current,
           });
         } else if (postSend.reason === "hold-expired" || postSend.reason === "no-local-spend") {
           console.warn("[basic] persistBalance adopt post-send live", {
             live: bal.total,
+            ackWritten: ackTotal,
             reason: postSend.reason,
             preSend: preSendTotalRef.current,
             optimistic: optimisticSpendTotalRef.current,

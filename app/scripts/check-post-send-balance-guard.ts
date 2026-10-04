@@ -60,7 +60,7 @@ function applySpend(s: Sim, spend: number, selected?: number | null) {
 function poll(s: Sim, live: number, extra?: Partial<PostSendPersistInput>) {
   const d = decidePostSendPersist(persistInput(s, live, extra));
   if (d.adoptLive) s.home = live;
-  if (d.writeAck) s.ack = live;
+  if (d.writeAck && d.ackTotal != null) s.ack = d.ackTotal;
   return d;
 }
 
@@ -404,6 +404,87 @@ console.log("postSendBalanceGuard provider scenarios\n");
   applySpend(s, AMOUNT, s.selected);
   const d = poll(s, 7358);
   assert("change-pending 7358", d.reason === "change-pending" && s.home === OPT, d.reason);
+}
+
+{
+  console.log("\n14) S4 change at 90s alone on Receive — no +1126 toast");
+  const inbound = decidePostSendInbound({
+    now: 90_000,
+    suppressUntil: 300_000,
+    holdUntil: CHANGE_HOLD_MAX_MS,
+    preSendTotal: PRE,
+    localSpend: AMOUNT,
+    optimisticTotal: OPT,
+    selectedVtxoTotal: SELECTED,
+    liveTotal: OPT,
+    ackTotal: LIVE_NO_CHANGE,
+    notifyAmount: 1126,
+    expectingReceive: true,
+  });
+  assert(
+    "skip change after 75s hold",
+    inbound.action === "skip-change" && inbound.credit === 0,
+    JSON.stringify(inbound),
+  );
+}
+
+{
+  console.log("\n15) S4 change at 90s + 1000 return on Receive — toast +1000 not +2126");
+  const inbound = decidePostSendInbound({
+    now: 90_000,
+    suppressUntil: 300_000,
+    holdUntil: CHANGE_HOLD_MAX_MS,
+    preSendTotal: PRE,
+    localSpend: AMOUNT,
+    optimisticTotal: OPT,
+    selectedVtxoTotal: SELECTED,
+    liveTotal: PRE,
+    ackTotal: LIVE_NO_CHANGE,
+    notifyAmount: 2126,
+    expectingReceive: true,
+  });
+  assert(
+    "credits inbound only vs optimistic",
+    inbound.action === "credit" && inbound.credit === 1000,
+    JSON.stringify(inbound),
+  );
+}
+
+{
+  console.log("\n16) S5 inbound on Home inside the 5m guard — ack capped at optimistic");
+  const s: Sim = {
+    now: 0,
+    suppressUntil: 300_000,
+    holdUntil: 0,
+    preSend: PRE,
+    localSpend: null,
+    optimistic: null,
+    selected: SELECTED,
+    home: PRE,
+    ack: PRE,
+  };
+  applySpend(s, AMOUNT, SELECTED);
+  const homeNotify = decidePostSendInbound({
+    now: 10_000,
+    suppressUntil: s.suppressUntil,
+    holdUntil: s.holdUntil,
+    preSendTotal: s.preSend,
+    localSpend: s.localSpend,
+    optimisticTotal: s.optimistic,
+    selectedVtxoTotal: s.selected,
+    liveTotal: PRE,
+    ackTotal: s.ack,
+    notifyAmount: 1000,
+    expectingReceive: false,
+  });
+  assert("Home notify skipped as post-send", homeNotify.action === "skip-change");
+  s.now = CHANGE_HOLD_MAX_MS + 15_000;
+  const d = poll(s, PRE);
+  assert("Home adopts live 8695", s.home === PRE, `home ${s.home}`);
+  assert("ack capped at optimistic 7695 (not 8695)", s.ack === OPT, `ack ${s.ack}`);
+  assert("writeAck true", d.writeAck);
+  const leftover = s.home - s.ack;
+  assert("after-guard toast leftover is +1000", leftover === 1000, `got ${leftover}`);
 }
 
 console.log(failed === 0 ? "\nAll scenarios passed." : `\n${failed} scenario(s) failed.`);
