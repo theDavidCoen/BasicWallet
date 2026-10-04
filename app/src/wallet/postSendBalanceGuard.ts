@@ -1,11 +1,12 @@
 /**
  * Narrow post-send change hold (H2 / α90).
  *
- * Hold Home/ack only when this guard window ran applyLocalSpend, and only for
- * the pending-change shape (spent vtxos visible, change not yet indexed).
- * Failed sends, Fiat Enter, other-device spends and unilateral exits do not
- * hold. At max-hold expiry, adopt live and lower ack so the 660-sats floor
- * cannot pin a stale optimistic total.
+ * Hold Home/ack only when this guard window ran applyLocalSpend.
+ * Keep optimistic while live is still the pre-send snapshot, below optimistic
+ * (change pending), or strictly between optimistic and preSend (indexer
+ * transient; Xiaomi α90 7895 → 8232 → 7895). Failed sends, Fiat Enter,
+ * other-device spends and unilateral exits do not hold. At max-hold expiry,
+ * adopt live and lower ack so the 660-sats floor cannot pin.
  *
  * Fees: classic Arkade / chat pay applyLocalSpend the payment amount only
  * (Lightning already includes feeSats). Leftover fee is not added into the
@@ -31,6 +32,7 @@ export type PostSendPersistReason =
   | "stale-presend"
   | "notify-ack-advanced"
   | "aligned-or-above"
+  | "between-optimistic-and-presend"
   | "below-change-bound"
   | "hold-expired"
   | "no-local-spend"
@@ -270,6 +272,14 @@ export function decidePostSendPersist(
       }
       return finish("change-pending", { adoptLive: false, writeAck: false });
     }
+    // Xiaomi α90: live 8232 sat in this gap (optimistic 7895 + 337) and Home
+    // jumped then corrected. Hold until ≈optimistic, ≥preSend, or 75s expiry.
+    if (pre != null && live > optimistic + POST_SEND_EPS && live + 1 < pre) {
+      return finish("between-optimistic-and-presend", {
+        adoptLive: false,
+        writeAck: false,
+      });
+    }
     return finish("aligned-or-above", { adoptLive: true, writeAck: true });
   }
 
@@ -336,9 +346,6 @@ export function decidePostSendInbound(
   if (!suppressed) {
     return { action: "credit", credit: amount, reason: "not-suppressed" };
   }
-  if (!input.expectingReceive) {
-    return { action: "skip-change", credit: 0, reason: "home-post-send" };
-  }
 
   // S4: change-shape / inbound-vs-optimistic for the whole 5m suppress, not
   // only the 75s display hold. Change arriving at 90s must not toast.
@@ -349,18 +356,24 @@ export function decidePostSendInbound(
 
   if (applied && input.optimisticTotal != null) {
     const opt = input.optimisticTotal;
+    const ack = input.ackTotal;
     const live = input.liveTotal;
     if (live == null || live + POST_SEND_EPS < opt) {
       if (!(amount > 0)) {
         return { action: "skip-no-credit", credit: 0, reason: "no-amount" };
       }
+      const credit = Math.max(0, opt + amount - ack);
+      if (!(credit > 0)) {
+        return { action: "skip-no-credit", credit: 0, reason: "already-credited" };
+      }
       return {
         action: "credit",
-        credit: amount,
+        credit,
         reason: "inbound-while-change-pending",
       };
     }
-    const net = live - opt;
+    const floor = Math.max(ack, opt);
+    const net = live - floor;
     if (net <= POST_SEND_EPS) {
       return { action: "skip-change", credit: 0, reason: "change-settled" };
     }
@@ -369,6 +382,10 @@ export function decidePostSendInbound(
       credit: net,
       reason: "inbound-after-change",
     };
+  }
+
+  if (!input.expectingReceive) {
+    return { action: "skip-change", credit: 0, reason: "home-post-send" };
   }
 
   const live = input.liveTotal;

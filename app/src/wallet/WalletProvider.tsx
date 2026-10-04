@@ -3227,30 +3227,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   amount > 0 &&
                   Math.abs(displayedTotal + amount - preSend) <=
                     Math.max(2, DEFAULT_MIN_VTXO_SATS);
-                if ((postSend || looksLikeOwnChange) && !expectingReceive) {
-                  classicReceiveMarkRef.current = null;
-                  console.warn("[basic] notifyIncomingFunds skip post-send change", {
-                    amount,
-                    postSend,
-                    looksLikeOwnChange,
-                    preSend,
-                    displayedTotal,
-                  });
-                  // Exact match only: poll adopted this change as the credit.
-                  // Broad consume would eat a pending inbound's budget (N10).
-                  const pending = catchUpCreditRef.current;
-                  if (
-                    pending &&
-                    Math.abs(amount - pending.sats) <= CATCH_UP_CREDIT_EPS
-                  ) {
-                    const taken = consumeCatchUpCredit(pending, amount);
-                    catchUpCreditRef.current = taken.credit;
-                  }
-                } else if (postSend && expectingReceive) {
-                  void (async () => {
-                    const live = await readSpendableAvailable(w, {
-                      timeoutMs: 3_000,
-                    });
+                if (postSend || looksLikeOwnChange) {
+                  const applyPostSendInbound = (live: number | null) => {
                     const ack = lastAckRef.current?.total ?? 0;
                     const inbound = decidePostSendInbound({
                       now: Date.now(),
@@ -3263,7 +3241,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                       liveTotal: live,
                       ackTotal: ack,
                       notifyAmount: amount,
-                      expectingReceive: true,
+                      expectingReceive,
                     });
                     if (inbound.action !== "credit" || !(inbound.credit > 0)) {
                       classicReceiveMarkRef.current = null;
@@ -3275,8 +3253,19 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                           ack,
                           action: inbound.action,
                           reason: inbound.reason,
+                          expectingReceive,
                         },
                       );
+                      if (inbound.action === "skip-change") {
+                        const pending = catchUpCreditRef.current;
+                        if (
+                          pending &&
+                          Math.abs(amount - pending.sats) <= CATCH_UP_CREDIT_EPS
+                        ) {
+                          const taken = consumeCatchUpCredit(pending, amount);
+                          catchUpCreditRef.current = taken.credit;
+                        }
+                      }
                       return;
                     }
                     const credit = inbound.credit;
@@ -3315,7 +3304,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                     emitFundsNotice(credit, "arkade", {
                       bypassSendSuppress: true,
                     });
-                  })();
+                  };
+                  if (expectingReceive) {
+                    void (async () => {
+                      const live = await readSpendableAvailable(w, {
+                        timeoutMs: 3_000,
+                      });
+                      applyPostSendInbound(live);
+                    })();
+                  } else {
+                    applyPostSendInbound(null);
+                  }
                 } else if (shouldSuppressFiatExitSatsNotice()) {
                   classicReceiveMarkRef.current = null;
                   console.warn("[basic] notifyIncomingFunds skip exit-swap sats", {

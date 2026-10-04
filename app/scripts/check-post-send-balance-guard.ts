@@ -226,7 +226,7 @@ console.log("postSendBalanceGuard provider scenarios\n");
   assert("does not skip with no-net-credit", inbound.action === "credit");
   assert("credit is +1000 not −126", inbound.credit === 1000, JSON.stringify(inbound));
 
-  const homeSkip = decidePostSendInbound({
+  const homeIn = decidePostSendInbound({
     now: 1_000,
     suppressUntil: 300_000,
     holdUntil: 1_000 + CHANGE_HOLD_MAX_MS,
@@ -239,7 +239,11 @@ console.log("postSendBalanceGuard provider scenarios\n");
     notifyAmount: 1000,
     expectingReceive: false,
   });
-  assert("Home still skips as post-send change window", homeSkip.action === "skip-change");
+  assert(
+    "Home inbound during hold still credits +1000",
+    homeIn.action === "credit" && homeIn.credit === 1000,
+    JSON.stringify(homeIn),
+  );
 }
 
 {
@@ -477,14 +481,186 @@ console.log("postSendBalanceGuard provider scenarios\n");
     notifyAmount: 1000,
     expectingReceive: false,
   });
-  assert("Home notify skipped as post-send", homeNotify.action === "skip-change");
+  assert(
+    "Home inbound credits +1000 not skipped",
+    homeNotify.action === "credit" && homeNotify.credit === 1000,
+    JSON.stringify(homeNotify),
+  );
+  s.home += homeNotify.credit;
+  s.ack += homeNotify.credit;
   s.now = CHANGE_HOLD_MAX_MS + 15_000;
   const d = poll(s, PRE);
-  assert("Home adopts live 8695", s.home === PRE, `home ${s.home}`);
-  assert("ack capped at optimistic 7695 (not 8695)", s.ack === OPT, `ack ${s.ack}`);
-  assert("writeAck true", d.writeAck);
-  const leftover = s.home - s.ack;
-  assert("after-guard toast leftover is +1000", leftover === 1000, `got ${leftover}`);
+  assert("Home stays 8695 after credit", s.home === PRE, `home ${s.home}`);
+  assert("ack already 8695 — no leftover toast", s.ack === PRE, `ack ${s.ack}`);
+  assert("duplicate persist does not re-raise", d.ackTotal === PRE || d.ackTotal === OPT);
+}
+
+{
+  console.log("\n16b) S5 persist without notify — ack capped, leftover +1000");
+  const s: Sim = {
+    now: 0,
+    suppressUntil: 300_000,
+    holdUntil: 0,
+    preSend: PRE,
+    localSpend: null,
+    optimistic: null,
+    selected: SELECTED,
+    home: PRE,
+    ack: PRE,
+  };
+  applySpend(s, AMOUNT, SELECTED);
+  s.now = CHANGE_HOLD_MAX_MS + 15_000;
+  const d = poll(s, PRE);
+  assert("Home adopts 8695", s.home === PRE);
+  assert("ack capped at 7695", s.ack === OPT, `ack ${s.ack}`);
+  assert("leftover +1000", s.home - s.ack === 1000);
+  assert("writeAck", d.writeAck);
+}
+
+{
+  console.log("\n17) Xiaomi 8695/800/selected 2000 / live 8232 — do not adopt the gap");
+  // Capture 19:09:12 persistBalance live 8232 = optimistic 7895 + 337.
+  // This wallet's earlier 1000 send had spend-drop pending change 337
+  // (avail 7358 = 8695 − 1000 − 337). This log only proves +337 above
+  // optimistic, not that 337 is leftover from that send.
+  const s: Sim = {
+    now: 0,
+    suppressUntil: 300_000,
+    holdUntil: 0,
+    preSend: 8695,
+    localSpend: null,
+    optimistic: null,
+    selected: 2000,
+    home: 8695,
+    ack: 8695,
+  };
+  applySpend(s, 800, 2000);
+  assert("optimistic 7895", s.home === 7895);
+  const before = decidePostSendPersist(
+    persistInput(s, 8232),
+  );
+  // Pre-fix this was aligned-or-above (live > optimistic). Must hold now.
+  assert(
+    "holds 8232 as between-optimistic-and-presend",
+    before.adoptLive === false &&
+      before.reason === "between-optimistic-and-presend",
+    JSON.stringify(before),
+  );
+  const d = poll(s, 8232);
+  assert("Home stays 7895", s.home === 7895, `home ${s.home} reason ${d.reason}`);
+  assert("ack stays 7895", s.ack === 7895);
+  const settled = poll(s, 7895);
+  assert("then aligned 7895", settled.reason === "aligned-or-above" && s.home === 7895);
+}
+
+{
+  console.log("\n18) inbound 500 during hold, change still pending");
+  const s: Sim = {
+    now: 0,
+    suppressUntil: 300_000,
+    holdUntil: 0,
+    preSend: 8695,
+    localSpend: null,
+    optimistic: null,
+    selected: 2000,
+    home: 8695,
+    ack: 8695,
+  };
+  applySpend(s, 800, 2000);
+  poll(s, 6695);
+  assert("held at 7895 pending change", s.home === 7895);
+  const inbound = decidePostSendInbound({
+    now: 1_000,
+    suppressUntil: s.suppressUntil,
+    holdUntil: s.holdUntil,
+    preSendTotal: s.preSend,
+    localSpend: s.localSpend,
+    optimisticTotal: s.optimistic,
+    selectedVtxoTotal: s.selected,
+    liveTotal: 6695 + 500,
+    ackTotal: s.ack,
+    notifyAmount: 500,
+    expectingReceive: true,
+  });
+  assert("credits +500", inbound.action === "credit" && inbound.credit === 500, JSON.stringify(inbound));
+  s.home += inbound.credit;
+  s.ack += inbound.credit;
+  assert("Home 8395 (optimistic+inbound)", s.home === 8395);
+  poll(s, 6695 + 500);
+  assert("persist does not snap back to 7895", s.home === 8395);
+  const dup = decidePostSendInbound({
+    now: 2_000,
+    suppressUntil: s.suppressUntil,
+    holdUntil: s.holdUntil,
+    preSendTotal: s.preSend,
+    localSpend: s.localSpend,
+    optimisticTotal: s.optimistic,
+    selectedVtxoTotal: s.selected,
+    liveTotal: 6695 + 500,
+    ackTotal: s.ack,
+    notifyAmount: 500,
+    expectingReceive: true,
+  });
+  assert("duplicate notify no second credit", dup.credit === 0, JSON.stringify(dup));
+  poll(s, 8395);
+  assert("change settled, Home stays 8395", s.home === 8395);
+}
+
+{
+  console.log("\n19) inbound 500 during hold, change already settled");
+  const s: Sim = {
+    now: 0,
+    suppressUntil: 300_000,
+    holdUntil: 0,
+    preSend: 8695,
+    localSpend: null,
+    optimistic: null,
+    selected: 2000,
+    home: 8695,
+    ack: 8695,
+  };
+  applySpend(s, 800, 2000);
+  poll(s, 7895);
+  assert("aligned 7895", s.home === 7895);
+  const gap = poll(s, 8395);
+  assert(
+    "persist holds 8395 in the gap",
+    gap.reason === "between-optimistic-and-presend" && s.home === 7895,
+    gap.reason,
+  );
+  const inbound = decidePostSendInbound({
+    now: 1_000,
+    suppressUntil: s.suppressUntil,
+    holdUntil: s.holdUntil,
+    preSendTotal: s.preSend,
+    localSpend: s.localSpend,
+    optimisticTotal: s.optimistic,
+    selectedVtxoTotal: s.selected,
+    liveTotal: 8395,
+    ackTotal: s.ack,
+    notifyAmount: 500,
+    expectingReceive: true,
+  });
+  assert("credits +500", inbound.action === "credit" && inbound.credit === 500, JSON.stringify(inbound));
+  s.home += inbound.credit;
+  s.ack += inbound.credit;
+  assert("Home 8395", s.home === 8395);
+  const dup = decidePostSendInbound({
+    now: 2_000,
+    suppressUntil: s.suppressUntil,
+    holdUntil: s.holdUntil,
+    preSendTotal: s.preSend,
+    localSpend: s.localSpend,
+    optimisticTotal: s.optimistic,
+    selectedVtxoTotal: s.selected,
+    liveTotal: 8395,
+    ackTotal: s.ack,
+    notifyAmount: 500,
+    expectingReceive: true,
+  });
+  assert("no double credit", dup.credit === 0, JSON.stringify(dup));
+  poll(s, 8395);
+  assert("persist leaves 8395", s.home === 8395);
 }
 
 console.log(failed === 0 ? "\nAll scenarios passed." : `\n${failed} scenario(s) failed.`);
