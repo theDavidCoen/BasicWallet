@@ -379,11 +379,37 @@ async function refreshBalance(
     b.available > prevAvail || b.total > prevTotal || b.boarding > prevBoarding;
 
   if (boosted) {
-    // α84 gentle: notifyIncomingFunds is primary — one short race, no 8s deep.
-    // α83 deep path kept when notify is unavailable.
+    // α84 gentle: notifyIncomingFunds is primary — short read, no 8s deep.
+    // α89: gentle = single getBalance only (no parallel vtxos). Dual 3s race
+    // stampeded Xiaomi on brief Receive focus (tap-scene lag evidence).
+    // α83 deep path kept when notify is unavailable (!gentle).
     const readMs = gentle
       ? Math.min(BALANCE_BOOST_GENTLE_MS, timeoutMs)
       : Math.max(BALANCE_BOOST_READ_MS, Math.min(timeoutMs, BALANCE_BOOST_DEEP_MS));
+
+    if (gentle) {
+      try {
+        const raw = await withTimeout(w.getBalance(), readMs, "getBalance");
+        const fromBal = balanceFromSdk(raw, prev);
+        if (isIncrease(fromBal)) {
+          console.warn("[basic] boost balance increase", {
+            total: fromBal.total,
+            available: fromBal.available,
+            prevTotal,
+            gentle: true,
+          });
+        }
+        return fromBal;
+      } catch (e) {
+        console.warn("[basic] getBalance failed (boost)", e);
+        if (prev) {
+          console.warn("[basic] boost refresh failed; keeping previous", prev.total);
+          return prev;
+        }
+        throw e;
+      }
+    }
+
     const spendableP = refreshBalanceFromSpendable(w, prev, readMs);
     const balanceP = (async (): Promise<BalanceBreakdown | null> => {
       try {
@@ -429,19 +455,17 @@ async function refreshBalance(
     if (fast && isIncrease(fast)) return fast;
     if (fromBal) return fromBal;
     if (fast) return fast;
-    if (!gentle) {
-      // Deep vtxo only when notify is dead — ASP often answers after ~5–8s (α83).
-      const deep = await refreshBalanceFromSpendable(w, prev, BALANCE_BOOST_DEEP_MS);
-      if (deep) {
-        if (isIncrease(deep)) {
-          console.warn("[basic] boost balance increase (deep vtxos)", {
-            total: deep.total,
-            available: deep.available,
-            prevTotal,
-          });
-        }
-        return deep;
+    // Deep vtxo only when notify is dead — ASP often answers after ~5–8s (α83).
+    const deep = await refreshBalanceFromSpendable(w, prev, BALANCE_BOOST_DEEP_MS);
+    if (deep) {
+      if (isIncrease(deep)) {
+        console.warn("[basic] boost balance increase (deep vtxos)", {
+          total: deep.total,
+          available: deep.available,
+          prevTotal,
+        });
       }
+      return deep;
     }
     if (prev) {
       console.warn("[basic] boost refresh failed; keeping previous", prev.total);
@@ -554,6 +578,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const reloadTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   /** Nested boosts from POS / Receive QR — poll balance more often while > 0. */
   const incomingWatchBoostRef = useRef(0);
+  /** Debounce immediate pull on boost — brief Receive focus was thrashing ASP (α89). */
+  const boostPullTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
   /** >0 while POS sheet open — skip balance polls (keypad must stay responsive). */
   const posUiHoldRef = useRef(0);
   /**
@@ -609,6 +637,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
    * Boost/ASP may briefly report ~2× this (α86 Samsung 1002→2004).
    */
   const lastNotifyFloorRef = useRef<number | null>(null);
+  /**
+   * α89: absolute live total adopted by poll while emitFundsNotice returned
+   * "busy" (chat-prefer / duplicate). One-shot so notifyIncomingFunds does not
+   * applyLocalReceive(+amount) on top (Samsung toast +0 Home → later double).
+   */
+  const catchUpAdoptTotalRef = useRef<number | null>(null);
   const prevBoardingRef = useRef(0);
   const prevBalanceRef = useRef<BalanceBreakdown | null>(null);
   const boardingAddressRef = useRef<string | null>(null);
@@ -684,10 +718,24 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const next = Math.max(0, prev + (on ? 1 : -1));
     if (next === prev) return;
     incomingWatchBoostRef.current = next;
-    setIncomingWatchBoostEpoch((n) => n + 1);
     console.warn("[basic] incomingWatchBoost", { prev, next, on });
-    if (on && next > 0 && posUiHoldRef.current === 0) {
-      pullBalanceNowRef.current();
+    if (boostPullTimerRef.current != null) {
+      clearTimeout(boostPullTimerRef.current);
+      boostPullTimerRef.current = undefined;
+    }
+    // α89: debounce boost-on so brief Receive focus does not remount the poll
+    // effect + fire an immediate ASP read (tap-scene lag evidence ~870ms flash).
+    if (on && next > 0) {
+      boostPullTimerRef.current = setTimeout(() => {
+        boostPullTimerRef.current = undefined;
+        if (incomingWatchBoostRef.current <= 0) return;
+        setIncomingWatchBoostEpoch((n) => n + 1);
+        if (posUiHoldRef.current === 0) {
+          pullBalanceNowRef.current();
+        }
+      }, 500);
+    } else {
+      setIncomingWatchBoostEpoch((n) => n + 1);
     }
   }, []);
 
@@ -1376,7 +1424,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             if (boardingDelta > 0) {
               const boardingShown = emitFundsNotice(boardingDelta, "boarding");
               if (boardingShown !== "shown") {
-                // blocked → retry later; busy → do not adopt (α86).
+                // blocked → adopt UI, retry toast later.
+                // busy → adopt when Home is behind live (α89 Samsung stale).
                 if (boardingShown === "blocked") {
                   setBalance(bal);
                   setBalanceStatus("ready");
@@ -1384,6 +1433,38 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   prevBoardingRef.current = bal.boarding;
                   prevBalanceRef.current = bal;
                 } else {
+                  const displayedTotal = prevBalanceRef.current?.total ?? 0;
+                  if (bal.total > displayedTotal + 1) {
+                    console.warn(
+                      "[basic] persistBalance adopt UI after busy notice",
+                      {
+                        totalDelta,
+                        live: bal.total,
+                        displayed: displayedTotal,
+                        ackTotal: ack.total,
+                        kind: "boarding",
+                      },
+                    );
+                    catchUpAdoptTotalRef.current = bal.total;
+                    prevBoardingRef.current = bal.boarding;
+                    prevBalanceRef.current = bal;
+                    balanceBaselineReadyRef.current = true;
+                    lastAckRef.current = bal;
+                    lastNotifyFloorRef.current = bal.total;
+                    setBalance(bal);
+                    await writeCachedBalance(networkId, walletId, bal);
+                    void writeLastAckBalance(networkId, walletId, bal);
+                  } else {
+                    // displayed already matches — α86 Samsung 2004 pin.
+                    console.warn(
+                      "[basic] persistBalance skip adopt after busy notice",
+                      {
+                        totalDelta,
+                        live: bal.total,
+                        ackTotal: ack.total,
+                      },
+                    );
+                  }
                   setBalanceStatus("ready");
                 }
                 return;
@@ -1402,12 +1483,41 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   prevBoardingRef.current = bal.boarding;
                   prevBalanceRef.current = bal;
                 } else {
-                  // duplicate / busy — keep notify floor (α86 Samsung 2004 pin).
-                  console.warn("[basic] persistBalance skip adopt after busy notice", {
-                    totalDelta,
-                    live: bal.total,
-                    ackTotal: ack.total,
-                  });
+                  // busy (chat-prefer defer / duplicate / cooldown).
+                  // α86: when Home already matches live, skip (2004 pin).
+                  // α89: when Home is behind, adopt absolute live + ack so toast
+                  // / afterChatPrefer cannot leave displayed at 0 with ackTotal 0.
+                  const displayedTotal = prevBalanceRef.current?.total ?? 0;
+                  if (bal.total > displayedTotal + 1) {
+                    console.warn(
+                      "[basic] persistBalance adopt UI after busy notice",
+                      {
+                        totalDelta,
+                        live: bal.total,
+                        displayed: displayedTotal,
+                        ackTotal: ack.total,
+                        kind: "arkade",
+                      },
+                    );
+                    catchUpAdoptTotalRef.current = bal.total;
+                    prevBoardingRef.current = bal.boarding;
+                    prevBalanceRef.current = bal;
+                    balanceBaselineReadyRef.current = true;
+                    lastAckRef.current = bal;
+                    lastNotifyFloorRef.current = bal.total;
+                    setBalance(bal);
+                    await writeCachedBalance(networkId, walletId, bal);
+                    void writeLastAckBalance(networkId, walletId, bal);
+                  } else {
+                    console.warn(
+                      "[basic] persistBalance skip adopt after busy notice",
+                      {
+                        totalDelta,
+                        live: bal.total,
+                        ackTotal: ack.total,
+                      },
+                    );
+                  }
                   setBalanceStatus("ready");
                 }
                 return;
@@ -1847,6 +1957,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       seenVtxoKeysRef.current = new Set();
       preSendTotalRef.current = null;
       aspPollPausedRef.current = 0;
+      catchUpAdoptTotalRef.current = null;
       setSelectedWalletId(networkId, walletId);
       setSelectedWallet(record);
       selectedIdRef.current = walletId;
@@ -3051,31 +3162,53 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   // Ack + Home update FIRST so persistBalance cannot toast the same
                   // delta as classic Funds Received while chat race runs (α71).
                   beginClassicChatDefer(amount);
-                  acknowledgeIncomingAmount(amount);
-                  // ASP notify owns Maxi Home balance (receipt must not also add — α76).
-                  applyLocalReceive(amount);
-                  const wid = selectedIdRef.current;
-                  if (wid) {
-                    try {
-                      recordOptimisticArkadeReceive(
-                        getNetworkConfig().id,
-                        wid,
-                        { amountSats: amount },
-                      );
-                      setActivityEpoch((n) => n + 1);
-                    } catch (e) {
-                      console.warn(
-                        "[basic] optimistic receive activity failed",
-                        e,
-                      );
+                  // α89: poll may already have floored Home+ack to live while
+                  // chat-prefer returned busy (Samsung +800 toast / 0 Home). One-shot
+                  // skip applyLocalReceive so notify cannot double the balance.
+                  const catchUpAdopt = catchUpAdoptTotalRef.current;
+                  if (
+                    catchUpAdopt != null &&
+                    Math.abs(amount - catchUpAdopt) <= 2
+                  ) {
+                    catchUpAdoptTotalRef.current = null;
+                    console.warn(
+                      "[basic] notifyIncomingFunds skip apply (poll catch-up adopted)",
+                      { amount, catchUpAdopt },
+                    );
+                    emitFundsNotice(amount, "arkade", {
+                      bypassSendSuppress: expectingReceive,
+                    });
+                    balancePullAgainRef.current = false;
+                  } else {
+                    if (catchUpAdopt != null) {
+                      catchUpAdoptTotalRef.current = null;
                     }
+                    acknowledgeIncomingAmount(amount);
+                    // ASP notify owns Maxi Home balance (receipt must not also add — α76).
+                    applyLocalReceive(amount);
+                    const wid = selectedIdRef.current;
+                    if (wid) {
+                      try {
+                        recordOptimisticArkadeReceive(
+                          getNetworkConfig().id,
+                          wid,
+                          { amountSats: amount },
+                        );
+                        setActivityEpoch((n) => n + 1);
+                      } catch (e) {
+                        console.warn(
+                          "[basic] optimistic receive activity failed",
+                          e,
+                        );
+                      }
+                    }
+                    // Toast from subscription first (α84) — do not wait for boost poll.
+                    emitFundsNotice(amount, "arkade", {
+                      bypassSendSuppress: expectingReceive,
+                    });
+                    // Drop stacked gentle polls so they cannot re-toast the same inbound.
+                    balancePullAgainRef.current = false;
                   }
-                  // Toast from subscription first (α84) — do not wait for boost poll.
-                  emitFundsNotice(amount, "arkade", {
-                    bypassSendSuppress: expectingReceive,
-                  });
-                  // Drop stacked gentle polls so they cannot re-toast the same inbound.
-                  balancePullAgainRef.current = false;
                 }
               }
             }
