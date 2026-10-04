@@ -703,7 +703,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
    * Store gen so A→B→A does not join a stale in-flight from before the switch.
    */
   const activityRefreshInFlightRef = useRef<
-    Record<string, { promise: Promise<void>; gen: number }>
+    Record<string, { promise: Promise<void>; gen: number; settled: boolean }>
   >({});
   /** Skip seeding credit after a catch-up-while-away toast (funds predate subscribe). */
   const skipShownCatchUpCreditRef = useRef(false);
@@ -1293,6 +1293,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const persistBalance = useCallback(
     async (walletId: string, bal: BalanceBreakdown) => {
+      try {
       // Stale reload after switch: never poison that wallet's display cache / ack.
       if (selectedIdRef.current !== walletId) {
         return;
@@ -1884,6 +1885,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setBalance(bal);
       setBalanceStatus("ready");
       await writeCachedBalance(networkId, walletId, bal);
+      } finally {
+        skipShownCatchUpCreditRef.current = false;
+      }
     },
     [emitFundsNotice, maybeRecordOptimisticReceive],
   );
@@ -2478,6 +2482,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       shouldJoinActivityRefresh({
         inFlightGen: inFlight.gen,
         currentGen: activityMaterializeGenRef.current,
+        inFlightSettled: inFlight.settled,
       })
     ) {
       return inFlight.promise;
@@ -2485,9 +2490,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const networkId = getNetworkConfig().id;
     const historyFetchStartedAt = Date.now();
     const startedGen = ++activityMaterializeGenRef.current;
-    const slot: { promise: Promise<void> | null } = { promise: null };
+    const entry: { promise: Promise<void>; gen: number; settled: boolean } = {
+      promise: Promise.resolve(),
+      gen: startedGen,
+      settled: false,
+    };
+    activityRefreshInFlightRef.current[walletId] = entry;
     const promise = (async () => {
       try {
+        await Promise.resolve();
         if (selectedWallet?.kind === "lightning") {
           try {
             await withTimeout(
@@ -2547,13 +2558,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           setActivityEpoch((n) => n + 1);
         }
       } finally {
-        if (activityRefreshInFlightRef.current[walletId]?.promise === slot.promise) {
+        entry.settled = true;
+        const cur = activityRefreshInFlightRef.current[walletId];
+        if (cur && cur.gen === startedGen) {
           delete activityRefreshInFlightRef.current[walletId];
         }
       }
     })();
-    slot.promise = promise;
-    activityRefreshInFlightRef.current[walletId] = { promise, gen: startedGen };
+    entry.promise = promise;
     return promise;
   }, [wallet, selectedWallet]);
   refreshActivityRef.current = refreshActivity;

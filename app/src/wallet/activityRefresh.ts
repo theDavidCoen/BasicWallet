@@ -193,13 +193,53 @@ export function filterUnmatchedLocalReceives<
   });
 }
 
-/** Join only when the in-flight rematerialize is still the current gen. */
+/** Join only when the in-flight rematerialize is still current and not already done. */
 export function shouldJoinActivityRefresh(input: {
   inFlightGen: number | null | undefined;
   currentGen: number;
+  inFlightSettled?: boolean;
 }): boolean {
+  if (input.inFlightSettled) return false;
   if (input.inFlightGen == null) return false;
   return input.inFlightGen === input.currentGen;
+}
+
+/**
+ * Register-then-run model: a sync no-op (wallet not open) must not leave a
+ * joinable flight. A later attempt with the wallet open must `ran`, not `join`.
+ */
+export function activityRefreshFlightAfterAttempt(input: {
+  walletOpen: boolean;
+  currentGen: number;
+  inFlight: { gen: number; settled: boolean } | null;
+}): {
+  action: "join" | "ran" | "empty";
+  currentGen: number;
+  inFlight: { gen: number; settled: boolean } | null;
+} {
+  if (
+    input.inFlight &&
+    shouldJoinActivityRefresh({
+      inFlightGen: input.inFlight.gen,
+      currentGen: input.currentGen,
+      inFlightSettled: input.inFlight.settled,
+    })
+  ) {
+    return {
+      action: "join",
+      currentGen: input.currentGen,
+      inFlight: input.inFlight,
+    };
+  }
+  const startedGen = input.currentGen + 1;
+  if (!input.walletOpen) {
+    return { action: "empty", currentGen: startedGen, inFlight: null };
+  }
+  return {
+    action: "ran",
+    currentGen: startedGen,
+    inFlight: { gen: startedGen, settled: false },
+  };
 }
 
 /** Join an in-flight rematerialize for the same wallet; start a new one otherwise. */

@@ -20,6 +20,7 @@ import {
   shouldDropCatchUpLocalReceive,
   shouldFetchVtxoFallback,
   shouldJoinActivityRefresh,
+  activityRefreshFlightAfterAttempt,
   shouldRecordOptimisticReceive,
   switchHomeBalance,
 } from "../src/wallet/activityRefresh";
@@ -362,6 +363,37 @@ console.log("activityRefresh scenarios\n");
     "A→B→A does not join stale in-flight",
     shouldJoinActivityRefresh({ inFlightGen: 2, currentGen: 4 }) === false,
   );
+  assert(
+    "never join a settled no-op",
+    shouldJoinActivityRefresh({
+      inFlightGen: 5,
+      currentGen: 5,
+      inFlightSettled: true,
+    }) === false,
+  );
+}
+
+{
+  console.log("\n16) wallet not open then later refresh actually runs");
+  const closed = activityRefreshFlightAfterAttempt({
+    walletOpen: false,
+    currentGen: 0,
+    inFlight: null,
+  });
+  assert("first open before wallet is empty (not leftover)", closed.action === "empty");
+  assert("no joinable flight after empty", closed.inFlight === null);
+  const opened = activityRefreshFlightAfterAttempt({
+    walletOpen: true,
+    currentGen: closed.currentGen,
+    inFlight: closed.inFlight,
+  });
+  assert("later refresh with wallet open runs", opened.action === "ran");
+  const joinOpen = activityRefreshFlightAfterAttempt({
+    walletOpen: true,
+    currentGen: opened.currentGen,
+    inFlight: opened.inFlight,
+  });
+  assert("in-flight real refresh still joins", joinOpen.action === "join");
 }
 
 {
