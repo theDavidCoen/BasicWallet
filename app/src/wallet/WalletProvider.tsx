@@ -270,8 +270,6 @@ const BALANCE_BOOST_DEEP_MS = 8_000;
 const BALANCE_BOOST_GENTLE_MS = 3_000;
 /** Suppress duplicate Funds Received for same amount after notify/poll race. */
 const FUNDS_NOTICE_DEDUPE_MS = 60_000;
-/** Poll catch-up credit budget TTL — notify must consume before this (skeptic S2). */
-const CATCH_UP_CREDIT_TTL_MS = 120_000;
 /**
  * After open quiet settles, ignore Home poll bumps (ASP often flashes a fake
  * +change total — α85 Xiaomi +798 with no send). Receive/POS awaiting still toasts.
@@ -646,10 +644,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
    */
   const lastNotifyFloorRef = useRef<number | null>(null);
   /**
-   * α89/α89.1: poll-adopted inbound *credit* (delta) while classic notice was
-   * deferred for chat-prefer. Notify consumes this budget so applyLocalReceive
-   * only runs for the remainder — never compare against absolute live total
-   * (skeptic B1: 5000+800 → ref 5800 vs amount 800 → double to 6600).
+   * α89.1: poll-adopted inbound *credit* (delta) while classic notice was
+   * deferred for chat-prefer. Notify consumes only on exact amount match
+   * (skeptic B1/S5). No TTL — late notify can be >120s (Samsung ~109s); cleared
+   * on send/spend/receive/wallet switch instead (re-review B3).
    */
   const catchUpCreditRef = useRef<{
     sats: number;
@@ -1066,8 +1064,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     if (!(add > 0)) return;
     const networkId = getNetworkConfig().id;
     const walletId = selectedIdRef.current;
-    // Notify applied this inbound — drop any poll catch-up credit (skeptic S2).
-    catchUpCreditRef.current = null;
+    // Do not clear catchUpCreditRef here: a different inbound can apply while a
+    // deferred credit for another amount is still waiting for its notify (S5).
     if (Date.now() >= suppressIncomingUntilRef.current) {
       preSendTotalRef.current = null;
     }
@@ -1512,13 +1510,26 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   // Chat-prefer / chat-thread only (α89.1). Never adopt on
                   // duplicate/cooldown "busy" — that reopened α86 2004 pin (B2).
                   const displayedTotal = prevBalanceRef.current?.total ?? 0;
-                  if (bal.total > displayedTotal + 1) {
-                    const priorNotice = lastFundsNoticeRef.current;
-                    const noticeAlready =
-                      !!priorNotice &&
-                      priorNotice.kind === "arkade" &&
-                      Math.abs(priorNotice.amount - totalDelta) <= 1 &&
-                      Date.now() - priorNotice.at < FUNDS_NOTICE_DEDUPE_MS;
+                  const priorNotice = lastFundsNoticeRef.current;
+                  // Chat-prefer runs before dedupe, so duplicates still return
+                  // "deferred". noticeAlready ⇒ toast already shown; adopting an
+                  // inflated live would pin Home (re-review S4 / B2 remainder).
+                  const noticeAlready =
+                    !!priorNotice &&
+                    priorNotice.kind === "arkade" &&
+                    Math.abs(priorNotice.amount - totalDelta) <= 1 &&
+                    Date.now() - priorNotice.at < FUNDS_NOTICE_DEDUPE_MS;
+                  if (noticeAlready) {
+                    console.warn(
+                      "[basic] persistBalance skip adopt after deferred notice (already shown)",
+                      {
+                        totalDelta,
+                        live: bal.total,
+                        displayed: displayedTotal,
+                        ackTotal: ack.total,
+                      },
+                    );
+                  } else if (bal.total > displayedTotal + 1) {
                     console.warn(
                       "[basic] persistBalance adopt UI after deferred notice",
                       {
@@ -1526,7 +1537,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                         live: bal.total,
                         displayed: displayedTotal,
                         ackTotal: ack.total,
-                        noticeAlready,
                       },
                     );
                     // Credit = delta (not live total) so notify can consume (B1).
@@ -1534,7 +1544,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                     catchUpCreditRef.current = {
                       sats: totalDelta,
                       at: Date.now(),
-                      noticeSettled: noticeAlready || isChatThreadFocused(),
+                      noticeSettled: isChatThreadFocused(),
                     };
                     prevBoardingRef.current = bal.boarding;
                     prevBalanceRef.current = bal;
@@ -3190,7 +3200,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   console.warn("[basic] notifyIncomingFunds skip exit-swap sats", {
                     amount,
                   });
-                  acknowledgeIncomingAmount(amount);
+                  // Exact catch-up credit already raised ack — don't inflate (N5).
+                  const credit = catchUpCreditRef.current;
+                  if (
+                    credit &&
+                    Math.abs(amount - credit.sats) <= 2
+                  ) {
+                    catchUpCreditRef.current = null;
+                  } else {
+                    acknowledgeIncomingAmount(amount);
+                  }
                   // Floor Home at ack — getBalance often times out after Exit.
                   // ensure (not add) so Exit estimate + notify do not double.
                   const floor = lastAckRef.current?.total ?? amount;
@@ -3202,51 +3221,52 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   console.warn("[basic] notifyIncomingFunds skip fiat-mode sats", {
                     amount,
                   });
-                  acknowledgeIncomingAmount(amount);
+                  const credit = catchUpCreditRef.current;
+                  if (
+                    credit &&
+                    Math.abs(amount - credit.sats) <= 2
+                  ) {
+                    catchUpCreditRef.current = null;
+                  } else {
+                    acknowledgeIncomingAmount(amount);
+                  }
                 } else if (isDustCarrierAmount(amount)) {
                   // Exact 330/660 carriers only — real 500/501 chat pays must apply (α74).
                   classicReceiveMarkRef.current = null;
                   console.warn("[basic] notifyIncomingFunds skip dust carrier", {
                     amount,
                   });
-                  acknowledgeIncomingAmount(amount);
+                  const credit = catchUpCreditRef.current;
+                  if (
+                    credit &&
+                    Math.abs(amount - credit.sats) <= 2
+                  ) {
+                    catchUpCreditRef.current = null;
+                  } else {
+                    acknowledgeIncomingAmount(amount);
+                  }
                 } else {
                   // Ack + Home update FIRST so persistBalance cannot toast the same
                   // delta as classic Funds Received while chat race runs (α71).
                   beginClassicChatDefer(amount);
-                  // α89.1: consume poll catch-up *credit* (delta), not live total.
-                  let credit = catchUpCreditRef.current;
-                  if (
-                    credit &&
-                    Date.now() - credit.at > CATCH_UP_CREDIT_TTL_MS
-                  ) {
-                    catchUpCreditRef.current = null;
-                    credit = null;
-                  }
+                  // α89.1: consume catch-up credit only on exact amount match
+                  // (re-review S5). Different inbound applies normally.
+                  const credit = catchUpCreditRef.current;
+                  const creditExact =
+                    !!credit &&
+                    credit.sats > 0 &&
+                    Math.abs(amount - credit.sats) <= 2;
                   let applyAmount = amount;
                   let noticeSettled = false;
-                  if (credit && credit.sats > 0) {
-                    const consumed = Math.min(amount, credit.sats);
-                    applyAmount = amount - consumed;
+                  if (creditExact && credit) {
+                    applyAmount = 0;
                     noticeSettled = credit.noticeSettled;
-                    const left = credit.sats - consumed;
-                    if (left <= 2) {
-                      catchUpCreditRef.current = null;
-                    } else {
-                      catchUpCreditRef.current = {
-                        sats: left,
-                        at: credit.at,
-                        noticeSettled: credit.noticeSettled,
-                      };
-                    }
+                    catchUpCreditRef.current = null;
                     console.warn(
                       "[basic] notifyIncomingFunds consume catch-up credit",
                       {
                         amount,
-                        consumed,
-                        applyAmount,
                         noticeSettled,
-                        left: left > 2 ? left : 0,
                       },
                     );
                   }
