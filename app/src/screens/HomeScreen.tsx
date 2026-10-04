@@ -252,34 +252,8 @@ export function HomeScreen() {
 
   const mutinynetColor = mutinynetOnline ? MUTINYNET_OK : MUTINYNET_DOWN;
 
-  useFocusEffect(
-    useCallback(() => {
-      let cancelled = false;
-      void (async () => {
-        await refreshPendingSweep();
-        if (cancelled || !selectedWallet || selectedWallet.kind !== "arkade") {
-          return;
-        }
-        const rec = await readRecoveryAddress(network.id);
-        if (!rec || cancelled) return;
-        const added = await syncRecoveryExitActivities({
-          networkId: network.id,
-          walletId: selectedWallet.id,
-          sweepAddress: rec,
-        });
-        if (!cancelled && added > 0) bumpActivity();
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }, [
-      refreshPendingSweep,
-      selectedWallet,
-      network.id,
-      bumpActivity,
-    ]),
-  );
-
+  // Recovery / pending-sweep sync once per Home focus (duplicate useFocusEffect
+  // removed α89 — tap-scene lag evidence: double work on every Home focus).
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
