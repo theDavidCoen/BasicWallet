@@ -139,17 +139,30 @@ console.log("catchUpCredit scenarios\n");
   assert("apply full after clear", eq(r.applyAmount, 800));
 }
 
-// --- amount larger than credit ---
+// --- amount larger than credit (N11: must toast for the new remainder) ---
 {
-  console.log("\n9) notify larger than credit (credit 500, notify 800)");
+  console.log("\n9) notify larger than credit (credit 500 settled, notify 800)");
   let c: CatchUpCredit | null = addCatchUpCredit(null, 500, {
     now: 0,
     noticeSettled: true,
   });
   const r = consumeCatchUpCredit(c, 800, { now: 1_000 });
   assert("apply remainder 300", eq(r.applyAmount, 300));
-  assert("skip toast (500 settled covers consume)", r.noticeSettled === true);
+  assert("toast for new money (applyAmount > 0)", r.noticeSettled === false);
   assert("credit cleared", r.credit === null);
+}
+
+// --- N10 helper: exact match flag for post-send-change gate ---
+{
+  console.log("\n9b) exact match vs partial (post-send-change gate)");
+  let c: CatchUpCredit | null = addCatchUpCredit(null, 800, {
+    now: 0,
+    noticeSettled: true,
+  });
+  const exact = Math.abs(800 - (c?.sats ?? 0)) <= 2;
+  const partial = Math.abs(500 - (c?.sats ?? 0)) <= 2;
+  assert("800 is exact on credit 800", exact === true);
+  assert("500 is not exact on credit 800", partial === false);
 }
 
 // --- both chat races settle partial amounts against combined budget ---

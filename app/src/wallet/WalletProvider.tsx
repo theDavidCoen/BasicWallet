@@ -83,6 +83,7 @@ import { markWarmupSeen, clearWarmupSeen } from "./warmupSeen";
 import { balanceFromSdk, type BalanceBreakdown } from "./balance";
 import {
   addCatchUpCredit,
+  CATCH_UP_CREDIT_EPS,
   consumeCatchUpCredit,
   settleCatchUpCredit,
   type CatchUpCredit,
@@ -3151,13 +3152,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                     preSend,
                     displayedTotal,
                   });
-                  // Consume any leftover catch-up budget (no ack) so it cannot
-                  // swallow a later inbound (re-review N8).
-                  const taken = consumeCatchUpCredit(
-                    catchUpCreditRef.current,
-                    amount,
-                  );
-                  catchUpCreditRef.current = taken.credit;
+                  // Exact match only: poll adopted this change as the credit.
+                  // Broad consume would eat a pending inbound's budget (N10).
+                  const pending = catchUpCreditRef.current;
+                  if (
+                    pending &&
+                    Math.abs(amount - pending.sats) <= CATCH_UP_CREDIT_EPS
+                  ) {
+                    const taken = consumeCatchUpCredit(pending, amount);
+                    catchUpCreditRef.current = taken.credit;
+                  }
                 } else if (postSend && expectingReceive) {
                   void (async () => {
                     const live = await readSpendableAvailable(w, {

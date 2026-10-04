@@ -60,7 +60,8 @@ export type ConsumeCatchUpResult = {
 
 /**
  * Consume up to `amount` from the budget. Applies only the leftover.
- * Skips toast when consumed sats fit inside settledSats (and TTL is fresh).
+ * Skips toast when consumed fits in settledSats, TTL is fresh, and nothing
+ * new remains to apply (final check N11).
  */
 export function consumeCatchUpCredit(
   credit: CatchUpCredit | null,
@@ -86,6 +87,7 @@ export function consumeCatchUpCredit(
   const skipToast =
     settledFresh &&
     consumed > 0 &&
+    applyAmount <= CATCH_UP_CREDIT_EPS &&
     consumed <= credit.settledSats + CATCH_UP_CREDIT_EPS;
   const left = credit.sats - consumed;
   const settledLeft = Math.max(0, credit.settledSats - consumed);
