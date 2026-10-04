@@ -64,6 +64,18 @@ function poll(s: Sim, live: number, extra?: Partial<PostSendPersistInput>) {
   return d;
 }
 
+function applyInbound(
+  s: Sim,
+  inbound: { action: string; credit: number; raiseOptimisticBy: number },
+) {
+  if (inbound.action !== "credit" || !(inbound.credit > 0)) return;
+  s.home += inbound.credit;
+  s.ack += inbound.credit;
+  if (inbound.raiseOptimisticBy > 0 && s.optimistic != null) {
+    s.optimistic += inbound.raiseOptimisticBy;
+  }
+}
+
 const PRE = 8695;
 const AMOUNT = 1000;
 const SELECTED = 2126;
@@ -110,8 +122,7 @@ console.log("postSendBalanceGuard provider scenarios\n");
     inbound.action === "credit" && inbound.credit === 1000,
     JSON.stringify(inbound),
   );
-  s.home += inbound.credit;
-  s.ack += inbound.credit;
+  applyInbound(s, inbound);
   assert("Home after inbound 8695", s.home === PRE);
 
   const changeNotify = decidePostSendInbound({
@@ -226,7 +237,7 @@ console.log("postSendBalanceGuard provider scenarios\n");
   assert("does not skip with no-net-credit", inbound.action === "credit");
   assert("credit is +1000 not −126", inbound.credit === 1000, JSON.stringify(inbound));
 
-  const homeIn = decidePostSendInbound({
+  const homeSkip = decidePostSendInbound({
     now: 1_000,
     suppressUntil: 300_000,
     holdUntil: 1_000 + CHANGE_HOLD_MAX_MS,
@@ -239,11 +250,7 @@ console.log("postSendBalanceGuard provider scenarios\n");
     notifyAmount: 1000,
     expectingReceive: false,
   });
-  assert(
-    "Home inbound during hold still credits +1000",
-    homeIn.action === "credit" && homeIn.credit === 1000,
-    JSON.stringify(homeIn),
-  );
+  assert("Home still skips as post-send change window", homeSkip.action === "skip-change");
 }
 
 {
@@ -481,18 +488,14 @@ console.log("postSendBalanceGuard provider scenarios\n");
     notifyAmount: 1000,
     expectingReceive: false,
   });
-  assert(
-    "Home inbound credits +1000 not skipped",
-    homeNotify.action === "credit" && homeNotify.credit === 1000,
-    JSON.stringify(homeNotify),
-  );
-  s.home += homeNotify.credit;
-  s.ack += homeNotify.credit;
+  assert("Home notify skipped as post-send", homeNotify.action === "skip-change");
   s.now = CHANGE_HOLD_MAX_MS + 15_000;
   const d = poll(s, PRE);
-  assert("Home stays 8695 after credit", s.home === PRE, `home ${s.home}`);
-  assert("ack already 8695 — no leftover toast", s.ack === PRE, `ack ${s.ack}`);
-  assert("duplicate persist does not re-raise", d.ackTotal === PRE || d.ackTotal === OPT);
+  assert("Home adopts live 8695", s.home === PRE, `home ${s.home}`);
+  assert("ack capped at optimistic 7695 (not 8695)", s.ack === OPT, `ack ${s.ack}`);
+  assert("writeAck true", d.writeAck);
+  const leftover = s.home - s.ack;
+  assert("after-guard toast leftover is +1000", leftover === 1000, `got ${leftover}`);
 }
 
 {
@@ -583,8 +586,7 @@ console.log("postSendBalanceGuard provider scenarios\n");
     expectingReceive: true,
   });
   assert("credits +500", inbound.action === "credit" && inbound.credit === 500, JSON.stringify(inbound));
-  s.home += inbound.credit;
-  s.ack += inbound.credit;
+  applyInbound(s, inbound);
   assert("Home 8395 (optimistic+inbound)", s.home === 8395);
   poll(s, 6695 + 500);
   assert("persist does not snap back to 7895", s.home === 8395);
@@ -642,8 +644,7 @@ console.log("postSendBalanceGuard provider scenarios\n");
     expectingReceive: true,
   });
   assert("credits +500", inbound.action === "credit" && inbound.credit === 500, JSON.stringify(inbound));
-  s.home += inbound.credit;
-  s.ack += inbound.credit;
+  applyInbound(s, inbound);
   assert("Home 8395", s.home === 8395);
   const dup = decidePostSendInbound({
     now: 2_000,
@@ -663,5 +664,124 @@ console.log("postSendBalanceGuard provider scenarios\n");
   assert("persist leaves 8395", s.home === 8395);
 }
 
+{
+  console.log("\n20) chat-pay change push on Home — no toast, no inflation");
+  // Pay in Chat never records selected vtxos. Amount 1200 cannot match
+  // selected − spend. α90 skipped Home; 384a50a credited +1200 (B2).
+  const s: Sim = {
+    now: 0,
+    suppressUntil: 300_000,
+    holdUntil: 0,
+    preSend: 8695,
+    localSpend: null,
+    optimistic: null,
+    selected: null,
+    home: 8695,
+    ack: 8695,
+  };
+  applySpend(s, 800, null);
+  assert("optimistic 7895", s.home === 7895 && s.selected == null);
+  const change = decidePostSendInbound({
+    now: 5_000,
+    suppressUntil: s.suppressUntil,
+    holdUntil: s.holdUntil,
+    preSendTotal: s.preSend,
+    localSpend: s.localSpend,
+    optimisticTotal: s.optimistic,
+    selectedVtxoTotal: null,
+    liveTotal: null,
+    ackTotal: s.ack,
+    notifyAmount: 1200,
+    expectingReceive: false,
+  });
+  assert(
+    "Home skips chat-pay change",
+    change.action === "skip-change" && change.credit === 0,
+    JSON.stringify(change),
+  );
+  assert("Home stays 7895", s.home === 7895);
+  assert("ack stays 7895", s.ack === 7895);
+}
+
+{
+  console.log("\n21) classic change ≠ selected − amount (fee) on Home — skip");
+  // selected 2000, spend 800, expected change 1200; actual change 1195 (fee 5).
+  const s: Sim = {
+    now: 0,
+    suppressUntil: 300_000,
+    holdUntil: 0,
+    preSend: 8695,
+    localSpend: null,
+    optimistic: null,
+    selected: 2000,
+    home: 8695,
+    ack: 8695,
+  };
+  applySpend(s, 800, 2000);
+  const feeChange = decidePostSendInbound({
+    now: 5_000,
+    suppressUntil: s.suppressUntil,
+    holdUntil: s.holdUntil,
+    preSendTotal: s.preSend,
+    localSpend: s.localSpend,
+    optimisticTotal: s.optimistic,
+    selectedVtxoTotal: s.selected,
+    liveTotal: null,
+    ackTotal: s.ack,
+    notifyAmount: 1195,
+    expectingReceive: false,
+  });
+  assert(
+    "Home skips fee-mismatched change",
+    feeChange.action === "skip-change" && feeChange.credit === 0,
+    JSON.stringify(feeChange),
+  );
+  assert("Home stays 7895", s.home === 7895);
+  assert("ack stays 7895", s.ack === 7895);
+}
+
+{
+  console.log("\n22) +1000 after expiry with change still pending — credit 1000 not 2200");
+  const s: Sim = {
+    now: 0,
+    suppressUntil: 300_000,
+    holdUntil: 0,
+    preSend: 8695,
+    localSpend: null,
+    optimistic: null,
+    selected: 2000,
+    home: 8695,
+    ack: 8695,
+  };
+  applySpend(s, 800, 2000);
+  poll(s, 6695);
+  s.now = CHANGE_HOLD_MAX_MS + 1;
+  const expired = poll(s, 6695);
+  assert("expiry adopts 6695", expired.reason === "hold-expired" && s.home === 6695);
+  assert("ack below optimistic", s.ack === 6695 && s.optimistic === 7895);
+  const inbound = decidePostSendInbound({
+    now: s.now,
+    suppressUntil: s.suppressUntil,
+    holdUntil: s.holdUntil,
+    preSendTotal: s.preSend,
+    localSpend: s.localSpend,
+    optimisticTotal: s.optimistic,
+    selectedVtxoTotal: s.selected,
+    liveTotal: 6695 + 1000,
+    ackTotal: s.ack,
+    notifyAmount: 1000,
+    expectingReceive: true,
+  });
+  assert(
+    "credits +1000 not +2200",
+    inbound.action === "credit" && inbound.credit === 1000,
+    JSON.stringify(inbound),
+  );
+  applyInbound(s, inbound);
+  assert("Home 7695", s.home === 7695);
+  assert("optimistic raised to 8895", s.optimistic === 8895, `opt ${s.optimistic}`);
+}
+
 console.log(failed === 0 ? "\nAll scenarios passed." : `\n${failed} scenario(s) failed.`);
 process.exit(failed === 0 ? 0 : 1);
+

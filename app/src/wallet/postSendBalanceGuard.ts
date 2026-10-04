@@ -13,6 +13,10 @@
  * spend — expiry adopt + lower-ack heals ack; a fee ≤ EPS is treated as
  * aligned. Do not invent a fee for chat/classic.
  *
+ * Home notify: skip the whole 5m local-spend window (α90). Chat pay does not
+ * record selected vtxos, so a change push cannot be identified and must not
+ * credit. Persist still holds the optimistic–preSend gap (Xiaomi 8232).
+ *
  * Nits left documented (not fixed this ship):
  * N4. Two sends inside 75s with the first change still pending can briefly
  *     show Home too low (selectedVtxoTotal is replaced, not accumulated).
@@ -21,6 +25,11 @@
  * N6. The first poll after the 5m suppress uses hold-expired + skipFloorPin;
  *     a dust/partial read on that poll can ack dust and the next good read
  *     toasts a whole-balance delta. Narrow: that one poll.
+ * S6 leftover: after expiry, if live is already ≥ optimistic and a return is
+ *     larger than leftover change, Receive may toast R minus that leftover
+ *     (inbound-after-change). Typical same-size return stays below optimistic
+ *     and credits the notify amount. Duplicate notify after that credit still
+ *     sees ack < opt; Funds Received 60s dedupe covers it.
  */
 
 export const CHANGE_HOLD_MAX_MS = 75_000;
@@ -89,6 +98,8 @@ export type PostSendInboundResult = {
   action: "skip-change" | "credit" | "skip-no-credit";
   credit: number;
   reason: string;
+  /** Add to optimistic after a credit so later S5 / inbound math includes it. */
+  raiseOptimisticBy: number;
 };
 
 function hasAppliedLocalSpend(input: {
@@ -333,8 +344,18 @@ export function decidePostSendPersist(
   return finish("not-suppressed", { adoptLive: true, writeAck: true });
 }
 
+function inboundResult(
+  action: PostSendInboundResult["action"],
+  credit: number,
+  reason: string,
+  raiseOptimisticBy = 0,
+): PostSendInboundResult {
+  return { action, credit, reason, raiseOptimisticBy };
+}
+
 /**
  * Receive-screen notify while the 5m post-send suppress is on.
+ * Home is skipped for the whole window (chat-pay change has no selected vtxos).
  * Never returns a negative credit. Change does not toast as a receive;
  * a real inbound uses notify amount (or live − optimistic once change is in).
  */
@@ -344,14 +365,21 @@ export function decidePostSendInbound(
   const suppressed = input.now < input.suppressUntil;
   const amount = Math.max(0, Math.floor(input.notifyAmount));
   if (!suppressed) {
-    return { action: "credit", credit: amount, reason: "not-suppressed" };
+    return inboundResult("credit", amount, "not-suppressed");
+  }
+
+  // α90 / B2: never credit Home from notify while suppressed. Chat pay does
+  // not record selected vtxos, so change cannot be identified; live is not
+  // read on Home. Persist + S5 ack cap handle a real Home inbound.
+  if (!input.expectingReceive) {
+    return inboundResult("skip-change", 0, "home-post-send");
   }
 
   // S4: change-shape / inbound-vs-optimistic for the whole 5m suppress, not
   // only the 75s display hold. Change arriving at 90s must not toast.
   const applied = hasAppliedLocalSpend(input);
   if (applied && looksLikeChangeAmount(amount, input)) {
-    return { action: "skip-change", credit: 0, reason: "pending-change-vtxo" };
+    return inboundResult("skip-change", 0, "pending-change-vtxo");
   }
 
   if (applied && input.optimisticTotal != null) {
@@ -360,44 +388,42 @@ export function decidePostSendInbound(
     const live = input.liveTotal;
     if (live == null || live + POST_SEND_EPS < opt) {
       if (!(amount > 0)) {
-        return { action: "skip-no-credit", credit: 0, reason: "no-amount" };
+        return inboundResult("skip-no-credit", 0, "no-amount");
       }
-      const credit = Math.max(0, opt + amount - ack);
+      // S6: when expiry lowered ack below optimistic, credit the inbound
+      // only (not opt − ack + amount). Duplicate after raiseOptimistic is 0.
+      const credit = Math.max(0, amount - Math.max(0, ack - opt));
       if (!(credit > 0)) {
-        return { action: "skip-no-credit", credit: 0, reason: "already-credited" };
+        return inboundResult("skip-no-credit", 0, "already-credited");
       }
-      return {
-        action: "credit",
+      // Raise opt only when expiry already lowered ack; during the hold
+      // ack sits at opt and amount − (ack − opt) already zeros duplicates.
+      const raise = ack + POST_SEND_EPS < opt ? credit : 0;
+      return inboundResult(
+        "credit",
         credit,
-        reason: "inbound-while-change-pending",
-      };
+        "inbound-while-change-pending",
+        raise,
+      );
     }
     const floor = Math.max(ack, opt);
     const net = live - floor;
     if (net <= POST_SEND_EPS) {
-      return { action: "skip-change", credit: 0, reason: "change-settled" };
+      return inboundResult("skip-change", 0, "change-settled");
     }
-    return {
-      action: "credit",
-      credit: net,
-      reason: "inbound-after-change",
-    };
-  }
-
-  if (!input.expectingReceive) {
-    return { action: "skip-change", credit: 0, reason: "home-post-send" };
+    return inboundResult("credit", net, "inbound-after-change", net);
   }
 
   const live = input.liveTotal;
   const ack = input.ackTotal;
   if (live == null || live <= ack + 1) {
-    return { action: "skip-no-credit", credit: 0, reason: "no-net-credit" };
+    return inboundResult("skip-no-credit", 0, "no-net-credit");
   }
   const credit = live - ack;
   if (!(credit > 0)) {
-    return { action: "skip-no-credit", credit: 0, reason: "non-positive-credit" };
+    return inboundResult("skip-no-credit", 0, "non-positive-credit");
   }
-  return { action: "credit", credit, reason: "live-minus-ack" };
+  return inboundResult("credit", credit, "live-minus-ack");
 }
 
 /** Sum of plan selected vtxos; null when the plan had none. */
