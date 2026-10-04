@@ -104,6 +104,7 @@ export function ChatThreadScreen() {
     applyLocalSpend,
     rotateReceiveAddress,
     bumpActivity,
+    refreshActivity,
   } = useWallet();
   const {
     fiatMode,
@@ -467,6 +468,7 @@ export function ChatThreadScreen() {
           applyLocalSpend,
           getFreshArkAddress: async () => rotateReceiveAddress(),
           bumpActivity,
+          refreshActivity,
         },
       });
     } catch (e) {

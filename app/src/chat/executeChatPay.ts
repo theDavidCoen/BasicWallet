@@ -24,6 +24,10 @@ import {
   notePendingSendFromThisDevice,
   recordSentFromThisDevice,
 } from "../account/txMeta";
+import {
+  recordOptimisticArkadeSend,
+  upgradeLatestPendingSendTxid,
+} from "../account/activityStore";
 import { contactArkAddress, silentlyUpsertContactArkFromChat } from "./contactPeer";
 import {
   insertChatMessage,
@@ -34,6 +38,7 @@ import {
 import { publishPaymentReceipt, replyPayRequestWithAddress } from "./chatActions";
 import { newChatId } from "./types";
 import { findAlreadySettledOutbound } from "./reconcileOutboundChat";
+import { shouldRecordChatPayOptimisticActivity } from "./chatPaySettle";
 
 export type ChatPayWalletHooks = {
   wallet: BasicWallet;
@@ -45,6 +50,8 @@ export type ChatPayWalletHooks = {
   applyLocalSpend: (sats: number) => void;
   getFreshArkAddress: () => Promise<string>;
   bumpActivity?: () => void;
+  /** Optional: rematerialize history after ASP pause clears (classic Send parity). */
+  refreshActivity?: () => Promise<void>;
 };
 
 function parsePayTo(json: string | null | undefined): string | null {
@@ -116,6 +123,7 @@ function finalizeChatPayPaid(opts: {
   localMessageId?: string | null;
   paymentId: string;
   txid: string;
+  address?: string;
   applyLocalSpend?: (sats: number) => void;
   bumpActivity?: () => void;
   networkId: ArkadeNetworkId;
@@ -128,6 +136,42 @@ function finalizeChatPayPaid(opts: {
   }
   if (opts.txid && !opts.txid.startsWith("pending:")) {
     recordSentFromThisDevice(opts.networkId, opts.walletId, opts.txid);
+  }
+
+  // Classic SendScreen parity: instant wallet-scoped Activity row after a real
+  // spend. skipLocalSpend gates already-settled / prior-bubble hang recovery.
+  if (
+    shouldRecordChatPayOptimisticActivity({
+      skipLocalSpend: opts.skipLocalSpend,
+    })
+  ) {
+    try {
+      const activityId = recordOptimisticArkadeSend(
+        opts.networkId,
+        opts.walletId,
+        {
+          amountSats: opts.amountSats,
+          txid: opts.txid,
+          address: opts.address,
+          recipients: opts.address
+            ? [{ address: opts.address, amount: opts.amountSats }]
+            : undefined,
+        },
+      );
+      if (
+        (activityId.startsWith("pending:") ||
+          activityId.startsWith("local-send:")) &&
+        /^[0-9a-fA-F]{64}$/.test(opts.txid)
+      ) {
+        upgradeLatestPendingSendTxid(
+          opts.networkId,
+          opts.walletId,
+          opts.txid,
+        );
+      }
+    } catch (e) {
+      console.warn("[basic] chat optimistic send activity failed", e);
+    }
   }
 
   if (opts.localMessageId) {
@@ -244,6 +288,7 @@ export async function executeChatPay(opts: {
       localMessageId: opts.localMessageId ?? already.messageId,
       paymentId: already.paymentId ?? paymentId,
       txid: already.txid,
+      address: dest.address,
       applyLocalSpend: opts.hooks.applyLocalSpend,
       bumpActivity: opts.hooks.bumpActivity,
       networkId,
@@ -266,6 +311,7 @@ export async function executeChatPay(opts: {
   let prevAvailable: number | null = opts.hooks.spendable;
   let sendStarted = false;
   let settledTxid: string | null = null;
+  let recordedOptimistic = false;
   try {
     const dust = await readMinVtxoSats(wallet);
     if (amount < dust) {
@@ -308,15 +354,27 @@ export async function executeChatPay(opts: {
     sendStarted = true;
     const markPaid = (txid: string, skipReceipt?: boolean) => {
       if (settledTxid) {
-        if (txid && !txid.startsWith("pending:") && opts.localMessageId) {
-          // Upgrade pending → real txid without a second receipt.
-          if (txid !== settledTxid) {
-            recordSentFromThisDevice(networkId, walletId, txid);
+        if (txid && !txid.startsWith("pending:") && txid !== settledTxid) {
+          recordSentFromThisDevice(networkId, walletId, txid);
+          if (
+            settledTxid.startsWith("pending:") ||
+            settledTxid.startsWith("local-send:")
+          ) {
+            const upgraded = upgradeLatestPendingSendTxid(
+              networkId,
+              walletId,
+              txid,
+            );
+            if (upgraded) {
+              settledTxid = upgraded;
+              opts.hooks.bumpActivity?.();
+            }
           }
         }
         return;
       }
       settledTxid = txid;
+      recordedOptimistic = shouldRecordChatPayOptimisticActivity({});
       finalizeChatPayPaid({
         contactId: opts.contactId,
         amountSats: payAmount,
@@ -326,6 +384,7 @@ export async function executeChatPay(opts: {
         localMessageId: opts.localMessageId,
         paymentId,
         txid,
+        address: dest.address,
         applyLocalSpend: opts.hooks.applyLocalSpend,
         bumpActivity: opts.hooks.bumpActivity,
         networkId,
@@ -345,8 +404,18 @@ export async function executeChatPay(opts: {
       txidGraceMs: 400,
       spendReadTimeoutMs: 5_000,
       onRealTxid: (real) => {
-        if (real && !real.startsWith("pending:")) {
-          recordSentFromThisDevice(networkId, walletId, real);
+        if (!real || real.startsWith("pending:")) return;
+        recordSentFromThisDevice(networkId, walletId, real);
+        const upgraded = upgradeLatestPendingSendTxid(
+          networkId,
+          walletId,
+          real,
+        );
+        if (upgraded) {
+          settledTxid = settledTxid?.startsWith("pending:")
+            ? upgraded
+            : settledTxid ?? upgraded;
+          opts.hooks.bumpActivity?.();
         }
       },
       onLateSuccess: (r) => {
@@ -388,6 +457,9 @@ export async function executeChatPay(opts: {
       // bubble match: spend was probably already applied — do not double.
       const thisBubble =
         !!opts.localMessageId && recovered.messageId === opts.localMessageId;
+      recordedOptimistic = shouldRecordChatPayOptimisticActivity({
+        skipLocalSpend: !thisBubble,
+      });
       finalizeChatPayPaid({
         contactId: opts.contactId,
         amountSats: payAmount,
@@ -397,12 +469,14 @@ export async function executeChatPay(opts: {
         localMessageId: opts.localMessageId ?? recovered.messageId,
         paymentId: recovered.paymentId ?? paymentId,
         txid: recovered.txid,
+        address: dest.address,
         applyLocalSpend: opts.hooks.applyLocalSpend,
         bumpActivity: opts.hooks.bumpActivity,
         networkId,
         walletId,
         skipLocalSpend: !thisBubble,
       });
+      settledTxid = recovered.txid;
       return {
         txid: recovered.txid,
         paymentId: recovered.paymentId ?? paymentId,
@@ -417,6 +491,7 @@ export async function executeChatPay(opts: {
         amount: payAmount,
         err: e instanceof Error ? e.message : String(e),
       });
+      recordedOptimistic = true;
       finalizeChatPayPaid({
         contactId: opts.contactId,
         amountSats: payAmount,
@@ -426,11 +501,13 @@ export async function executeChatPay(opts: {
         localMessageId: opts.localMessageId,
         paymentId,
         txid,
+        address: dest.address,
         applyLocalSpend: opts.hooks.applyLocalSpend,
         bumpActivity: opts.hooks.bumpActivity,
         networkId,
         walletId,
       });
+      settledTxid = txid;
       return { txid, paymentId, address: dest.address };
     }
 
@@ -443,5 +520,14 @@ export async function executeChatPay(opts: {
     throw new Error(formatSendError(e, DEFAULT_MIN_VTXO_SATS));
   } finally {
     opts.hooks.endOutboundSend();
+    // ChatThread/ChatAmount may still hold the outer ASP pause; delay past it.
+    // α93 Xiaomi: chat send waited ~2m for merge upsert because history never
+    // rematerialized immediately after Pay in Chat.
+    if (recordedOptimistic && opts.hooks.refreshActivity) {
+      const refresh = opts.hooks.refreshActivity;
+      setTimeout(() => {
+        void refresh().catch(() => {});
+      }, 300);
+    }
   }
 }

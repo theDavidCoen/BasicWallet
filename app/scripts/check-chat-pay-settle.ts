@@ -4,6 +4,7 @@
 import {
   activityRowMatchesOutboundBubble,
   pickAlreadySettledOutbound,
+  shouldRecordChatPayOptimisticActivity,
 } from "../src/chat/chatPaySettle";
 
 let failed = 0;
@@ -203,6 +204,22 @@ console.log("chatPaySettle scenarios\n");
     pendingStampAt: now - 4_000,
   });
   assert("converting + pending only → no skip", picked === null);
+}
+
+{
+  console.log("\n6) α94: optimistic Activity only when spend applied");
+  assert(
+    "real chat send → record optimistic",
+    shouldRecordChatPayOptimisticActivity({}) === true,
+  );
+  assert(
+    "skipLocalSpend undefined → record",
+    shouldRecordChatPayOptimisticActivity({ skipLocalSpend: false }) === true,
+  );
+  assert(
+    "already-settled / prior hang → no optimistic",
+    shouldRecordChatPayOptimisticActivity({ skipLocalSpend: true }) === false,
+  );
 }
 
 if (failed > 0) {

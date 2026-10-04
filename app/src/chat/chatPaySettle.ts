@@ -25,6 +25,16 @@ export type ChatSettleBubble = {
   status: string;
 };
 
+/**
+ * Instant Activity local-send row (SendScreen parity) only after a real spend
+ * was applied. already-settled / prior-bubble hang recovery set skipLocalSpend.
+ */
+export function shouldRecordChatPayOptimisticActivity(opts: {
+  skipLocalSpend?: boolean;
+}): boolean {
+  return !opts.skipLocalSpend;
+}
+
 /** True when an outbound activity row is evidence for this bubble (not history). */
 export function activityRowMatchesOutboundBubble(input: {
   amountSats: number;

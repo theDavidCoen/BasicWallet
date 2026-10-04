@@ -64,6 +64,7 @@ export function ChatAmountScreen() {
     arkAddress,
     rotateReceiveAddress,
     bumpActivity,
+    refreshActivity,
   } = useWallet();
   const network = getNetworkConfig();
 
@@ -273,6 +274,7 @@ export function ChatAmountScreen() {
           applyLocalSpend,
           getFreshArkAddress: async () => rotateReceiveAddress(),
           bumpActivity,
+          refreshActivity,
         };
         const convert = convertDepixToSatsForPay;
         const fiatOn = fiatMode;
@@ -379,6 +381,7 @@ export function ChatAmountScreen() {
       applyLocalSpend,
       rotateReceiveAddress,
       bumpActivity,
+      refreshActivity,
       navigation,
     ],
   );
