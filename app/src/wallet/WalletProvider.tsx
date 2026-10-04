@@ -81,6 +81,12 @@ import {
 } from "../security/mnemonicStore";
 import { markWarmupSeen, clearWarmupSeen } from "./warmupSeen";
 import { balanceFromSdk, type BalanceBreakdown } from "./balance";
+import {
+  addCatchUpCredit,
+  consumeCatchUpCredit,
+  settleCatchUpCredit,
+  type CatchUpCredit,
+} from "./catchUpCredit";
 import { loadLndRestCredentials, clearLndRestIfWallet } from "../lightning/lndCredentials";
 import { lndChannelBalance } from "../lightning/lndRest";
 import type { LndRestConfig } from "../lightning/btcpayConfig";
@@ -644,16 +650,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
    */
   const lastNotifyFloorRef = useRef<number | null>(null);
   /**
-   * α89.1: poll-adopted inbound *credit* (delta) while classic notice was
-   * deferred for chat-prefer. Notify consumes only on exact amount match
-   * (skeptic B1/S5). No TTL — late notify can be >120s (Samsung ~109s); cleared
-   * on send/spend/receive/wallet switch instead (re-review B3).
+   * α89.1: running poll-adopted credit budget (see catchUpCredit.ts).
+   * Each deferred adopt adds totalDelta; notify consumes min(amount, budget).
    */
-  const catchUpCreditRef = useRef<{
-    sats: number;
-    at: number;
-    noticeSettled: boolean;
-  } | null>(null);
+  const catchUpCreditRef = useRef<CatchUpCredit | null>(null);
   /** Boost-on debounce delivered an epoch bump — only then remount on boost-off. */
   const boostEpochOnDeliveredRef = useRef(false);
   const prevBoardingRef = useRef(0);
@@ -894,10 +894,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   );
 
   const settleCatchUpNotice = useCallback((amountSats: number) => {
-    const credit = catchUpCreditRef.current;
-    if (!credit || credit.noticeSettled) return;
-    if (Math.abs(credit.sats - Math.floor(amountSats)) > 2) return;
-    credit.noticeSettled = true;
+    catchUpCreditRef.current = settleCatchUpCredit(
+      catchUpCreditRef.current,
+      amountSats,
+    );
   }, []);
 
   const emitFundsNotice = useCallback((
@@ -1539,13 +1539,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                         ackTotal: ack.total,
                       },
                     );
-                    // Credit = delta (not live total) so notify can consume (B1).
-                    // Chat-thread suppress is chat-only UX — treat notice as settled (S1).
-                    catchUpCreditRef.current = {
-                      sats: totalDelta,
-                      at: Date.now(),
-                      noticeSettled: isChatThreadFocused(),
-                    };
+                    // Running budget: add delta (do not overwrite — B4).
+                    // Chat-thread suppress is chat-only UX — notice settled (S1).
+                    catchUpCreditRef.current = addCatchUpCredit(
+                      catchUpCreditRef.current,
+                      totalDelta,
+                      { noticeSettled: isChatThreadFocused() },
+                    );
                     prevBoardingRef.current = bal.boarding;
                     prevBalanceRef.current = bal;
                     balanceBaselineReadyRef.current = true;
@@ -2943,6 +2943,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     let sawSubscribeReplay = false;
     setNotifySubscribed(false);
     setNotifyPushAlive(false);
+    // Resubscribe — drop stale catch-up credit (re-review S6).
+    catchUpCreditRef.current = null;
 
     void (async () => {
       try {
@@ -2986,6 +2988,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   amount,
                   ackAvail,
                 });
+                // Seed/replay is not a novel inbound — drop catch-up credit (S6).
+                catchUpCreditRef.current = null;
                 scheduleReload(w, walletId, { event: true });
                 return;
               }
@@ -3200,15 +3204,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   console.warn("[basic] notifyIncomingFunds skip exit-swap sats", {
                     amount,
                   });
-                  // Exact catch-up credit already raised ack — don't inflate (N5).
-                  const credit = catchUpCreditRef.current;
-                  if (
-                    credit &&
-                    Math.abs(amount - credit.sats) <= 2
-                  ) {
-                    catchUpCreditRef.current = null;
-                  } else {
-                    acknowledgeIncomingAmount(amount);
+                  // Consume catch-up budget so we don't re-ack adopted sats (N5).
+                  const taken = consumeCatchUpCredit(
+                    catchUpCreditRef.current,
+                    amount,
+                  );
+                  catchUpCreditRef.current = taken.credit;
+                  if (taken.applyAmount > 0) {
+                    acknowledgeIncomingAmount(taken.applyAmount);
                   }
                   // Floor Home at ack — getBalance often times out after Exit.
                   // ensure (not add) so Exit estimate + notify do not double.
@@ -3221,14 +3224,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   console.warn("[basic] notifyIncomingFunds skip fiat-mode sats", {
                     amount,
                   });
-                  const credit = catchUpCreditRef.current;
-                  if (
-                    credit &&
-                    Math.abs(amount - credit.sats) <= 2
-                  ) {
-                    catchUpCreditRef.current = null;
-                  } else {
-                    acknowledgeIncomingAmount(amount);
+                  const taken = consumeCatchUpCredit(
+                    catchUpCreditRef.current,
+                    amount,
+                  );
+                  catchUpCreditRef.current = taken.credit;
+                  if (taken.applyAmount > 0) {
+                    acknowledgeIncomingAmount(taken.applyAmount);
                   }
                 } else if (isDustCarrierAmount(amount)) {
                   // Exact 330/660 carriers only — real 500/501 chat pays must apply (α74).
@@ -3236,37 +3238,37 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   console.warn("[basic] notifyIncomingFunds skip dust carrier", {
                     amount,
                   });
-                  const credit = catchUpCreditRef.current;
-                  if (
-                    credit &&
-                    Math.abs(amount - credit.sats) <= 2
-                  ) {
-                    catchUpCreditRef.current = null;
-                  } else {
-                    acknowledgeIncomingAmount(amount);
+                  const taken = consumeCatchUpCredit(
+                    catchUpCreditRef.current,
+                    amount,
+                  );
+                  catchUpCreditRef.current = taken.credit;
+                  if (taken.applyAmount > 0) {
+                    acknowledgeIncomingAmount(taken.applyAmount);
                   }
                 } else {
                   // Ack + Home update FIRST so persistBalance cannot toast the same
                   // delta as classic Funds Received while chat race runs (α71).
                   beginClassicChatDefer(amount);
-                  // α89.1: consume catch-up credit only on exact amount match
-                  // (re-review S5). Different inbound applies normally.
-                  const credit = catchUpCreditRef.current;
-                  const creditExact =
-                    !!credit &&
-                    credit.sats > 0 &&
-                    Math.abs(amount - credit.sats) <= 2;
-                  let applyAmount = amount;
-                  let noticeSettled = false;
-                  if (creditExact && credit) {
-                    applyAmount = 0;
-                    noticeSettled = credit.noticeSettled;
-                    catchUpCreditRef.current = null;
+                  // Running budget: consume min(amount, credit); apply remainder.
+                  // Inherit noticeSettled only on exact match within settled TTL.
+                  const taken = consumeCatchUpCredit(
+                    catchUpCreditRef.current,
+                    amount,
+                  );
+                  catchUpCreditRef.current = taken.credit;
+                  const applyAmount = taken.applyAmount;
+                  const noticeSettled = taken.noticeSettled;
+                  if (taken.consumed > 0) {
                     console.warn(
                       "[basic] notifyIncomingFunds consume catch-up credit",
                       {
                         amount,
+                        consumed: taken.consumed,
+                        applyAmount,
                         noticeSettled,
+                        exact: taken.exact,
+                        left: taken.credit?.sats ?? 0,
                       },
                     );
                   }
