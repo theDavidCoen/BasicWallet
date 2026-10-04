@@ -88,6 +88,10 @@ import {
   settleCatchUpCredit,
   type CatchUpCredit,
 } from "./catchUpCredit";
+import {
+  decidePostSendLiveAdopt,
+  shouldWriteAckFromLive,
+} from "./postSendBalanceGuard";
 import { loadLndRestCredentials, clearLndRestIfWallet } from "../lightning/lndCredentials";
 import { lndChannelBalance } from "../lightning/lndRest";
 import type { LndRestConfig } from "../lightning/btcpayConfig";
@@ -1587,6 +1591,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
       // Never raise ack while send-suppress is active — that ate catch-up notices.
       // α84: never lower ack from a stale ASP snapshot after notify advanced it.
+      // H2: while change-guard is active, also never lower ack to a
+      // spent-without-change live total (would bake missing change into the
+      // next inbound delta).
       if (!suppressed || !ack || bal.total <= ack.total) {
         if (ack && !suppressed && bal.total + 1 < ack.total) {
           const awaitingRecv =
@@ -1615,31 +1622,45 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
               ackTotal: ack.total,
             });
           }
-        } else {
+        } else if (
+          shouldWriteAckFromLive({
+            suppressed,
+            liveTotal: bal.total,
+            ackTotal: ack?.total ?? null,
+          })
+        ) {
           lastAckRef.current = bal;
           void writeLastAckBalance(networkId, walletId, bal);
+        } else {
+          console.warn("[basic] persistBalance keep ack above post-send live", {
+            live: bal.total,
+            ackTotal: ack?.total,
+            preSend: preSendTotalRef.current,
+          });
         }
       }
 
-      // After local send, indexer may still report the pre-spend total — do not
-      // wipe the optimistic deduction. Exception: notify already advanced ack to
-      // this live total (send-max then receive same amount → live === preSend).
-      if (
-        suppressed &&
-        preSendTotalRef.current != null &&
-        bal.total >= preSendTotalRef.current - 1
-      ) {
-        const ackMatchesLive =
-          !!ack && Math.abs(bal.total - ack.total) <= 1 && bal.total > (displayed?.total ?? 0) + 1;
-        if (!ackMatchesLive) {
-          console.warn("[basic] persistBalance keep optimistic spend", {
-            live: bal.total,
-            preSend: preSendTotalRef.current,
-            displayed: displayed?.total,
-          });
-          setBalanceStatus("ready");
-          return;
-        }
+      // After local send: indexer may still report pre-spend OR spent vtxos
+      // without change yet. Do not wipe optimistic deduction / adopt a total
+      // below preSend − amount (H2). Exception: notify already advanced ack.
+      const postSendAdopt = decidePostSendLiveAdopt({
+        suppressed,
+        preSendTotal: preSendTotalRef.current,
+        liveTotal: bal.total,
+        optimisticTotal: displayed?.total ?? null,
+        ackTotal: ack?.total ?? null,
+      });
+      if (!postSendAdopt.adoptLive) {
+        console.warn("[basic] persistBalance keep optimistic spend", {
+          live: bal.total,
+          preSend: preSendTotalRef.current,
+          displayed: displayed?.total,
+          reason: postSendAdopt.reason,
+        });
+        setBalanceStatus("ready");
+        return;
+      }
+      if (suppressed && postSendAdopt.reason === "notify-ack-advanced") {
         console.warn("[basic] persistBalance adopt after notify ack", {
           live: bal.total,
           ackTotal: ack?.total,
