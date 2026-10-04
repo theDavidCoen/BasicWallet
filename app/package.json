@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "check:catch-up-credit": "npx tsx scripts/check-catch-up-credit.ts",
     "check:post-send-balance": "npx tsx scripts/check-post-send-balance-guard.ts",
-    "check:wallet-guards": "npm run check:catch-up-credit && npm run check:post-send-balance",
+    "check:activity-refresh": "npx tsx scripts/check-activity-refresh.ts",
+    "check:wallet-guards": "npm run check:catch-up-credit && npm run check:post-send-balance && npm run check:activity-refresh",
     "prebuild:android": "expo prebuild --platform android --clean"
   },
   "dependencies": {
