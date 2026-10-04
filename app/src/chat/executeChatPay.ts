@@ -217,11 +217,14 @@ export async function executeChatPay(opts: {
 
   const paymentId = opts.paymentId?.trim() || newChatId("pay");
 
+  // Exclude the brand-new bubble — historical −amount Activity must not
+  // false-skip a deliberate send (Xiaomi α92: chat paid, Home/Activity not).
   const already = findAlreadySettledOutbound({
     networkId,
     walletId,
     contactId: opts.contactId,
     amountSats: amount,
+    excludeMessageId: opts.localMessageId,
   });
   if (already) {
     console.warn("[basic] chat pay skip (already settled)", {
@@ -374,12 +377,17 @@ export async function executeChatPay(opts: {
       walletId,
       contactId: opts.contactId,
       amountSats: payAmount,
+      preferMessageId: opts.localMessageId,
     });
     if (recovered) {
       console.warn("[basic] chat pay recovered after error", {
         amount: payAmount,
         txid: recovered.txid.slice(0, 16),
       });
+      // This attempt's bubble: apply spend (hang often skipped it). A prior
+      // bubble match: spend was probably already applied — do not double.
+      const thisBubble =
+        !!opts.localMessageId && recovered.messageId === opts.localMessageId;
       finalizeChatPayPaid({
         contactId: opts.contactId,
         amountSats: payAmount,
@@ -393,7 +401,7 @@ export async function executeChatPay(opts: {
         bumpActivity: opts.hooks.bumpActivity,
         networkId,
         walletId,
-        skipLocalSpend: true,
+        skipLocalSpend: !thisBubble,
       });
       return {
         txid: recovered.txid,

@@ -1,43 +1,59 @@
 /**
  * Reconcile false-failed / stuck outbound chat payments after ASP hang (α69).
  * Matches recent activity / pending-send stamps → flip bubble to paid.
+ *
+ * α93: never let a brand-new chat bubble self-match a historical −amount
+ * Activity row (Xiaomi Pay in Chat 2000: chat showed paid, Home/Activity not).
  */
 
 import type { ArkadeNetworkId } from "../config/network";
-import {
-  findRecentSendActivityId,
-  readActivityFromDb,
-} from "../account/activityStore";
+import { readActivityFromDb } from "../account/activityStore";
 import { findPendingSendStamp } from "../account/txMeta";
 import {
   listOutboundPaymentsByStatus,
   updateChatMessage,
+  getChatMessage,
 } from "./chatStore";
 import { publishPaymentReceipt } from "./chatActions";
+import {
+  activityRowMatchesOutboundBubble,
+  pickAlreadySettledOutbound,
+  type ChatSettleActivityRow,
+} from "./chatPaySettle";
+
+function readOutboundActivityRows(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+): ChatSettleActivityRow[] {
+  return readActivityFromDb(networkId, { walletId, limit: 40 }).map((r) => ({
+    id: r.id,
+    amount: r.amount,
+    createdAt: r.createdAt,
+    tags: r.tags,
+  }));
+}
 
 function activityMatchesMessage(
   networkId: ArkadeNetworkId,
   walletId: string,
   amountSats: number,
   messageCreatedAt: number,
+  now = Date.now(),
 ): { id: string; createdAt: number } | null {
-  const abs = Math.abs(amountSats);
-  const rows = readActivityFromDb(networkId, { walletId, limit: 40 });
-  const windowMs = 20 * 60_000;
+  const rows = readOutboundActivityRows(networkId, walletId);
   for (const r of rows) {
-    if (!(r.amount < 0)) continue;
-    if (Math.abs(Math.abs(r.amount) - abs) > 1) continue;
-    if (r.tags.includes("lightning") || r.tags.includes("ln")) continue;
-    const at = r.createdAt > 0 ? r.createdAt : 0;
-    // Prefer activity near the chat bubble time (pending local rows may be 0).
-    if (at > 0 && Math.abs(at - messageCreatedAt) > windowMs) continue;
-    if (at > 0 && Date.now() - at > 30 * 60_000) continue;
-    return { id: r.id, createdAt: at };
+    if (
+      activityRowMatchesOutboundBubble({
+        amountSats,
+        bubbleCreatedAt: messageCreatedAt,
+        now,
+        row: r,
+      })
+    ) {
+      return { id: r.id, createdAt: r.createdAt };
+    }
   }
-  // Fallback: newest matching amount (findRecentSendActivityId).
-  const id = findRecentSendActivityId(networkId, walletId, abs, "arkade");
-  if (!id) return null;
-  return { id, createdAt: 0 };
+  return null;
 }
 
 /**
@@ -71,7 +87,11 @@ export function reconcileOutboundChatPayments(opts: {
       m.amountSats,
       m.createdAt,
     );
-    if (!hit && !pending) continue;
+    const pendingOk =
+      pending != null &&
+      pending.at >= m.createdAt - 5_000 &&
+      Date.now() - pending.at <= 20 * 60_000;
+    if (!hit && !pendingOk) continue;
     // Avoid claiming a still-in-flight convert as paid without activity evidence.
     if (m.status === "converting" && !hit) continue;
 
@@ -104,9 +124,9 @@ export function reconcileOutboundChatPayments(opts: {
 }
 
 /**
- * Before a new chat send: if the same amount already settled (or is pending
- * mid-flight with activity evidence), settle the matching bubble and skip
- * wallet.send — prevents double-spend after false Failed (α69).
+ * Before a new chat send: if a *prior* unsettled bubble of the same amount
+ * already has settlement evidence, mark it paid and skip wallet.send.
+ * The brand-new localMessageId is excluded so history cannot false-skip.
  */
 export function findAlreadySettledOutbound(opts: {
   networkId: ArkadeNetworkId;
@@ -114,42 +134,65 @@ export function findAlreadySettledOutbound(opts: {
   contactId: string;
   amountSats: number;
   newerThanMs?: number;
+  /** Fresh send bubble — never treat as prior settlement (α93). */
+  excludeMessageId?: string | null;
+  /** After send error: prefer reconciling this message. */
+  preferMessageId?: string | null;
 }): { messageId: string; txid: string; paymentId: string | null } | null {
   const amount = Math.floor(opts.amountSats);
   if (!(amount > 0)) return null;
   const newerThanMs = opts.newerThanMs ?? 20 * 60_000;
+  const now = Date.now();
+
   const pending = findPendingSendStamp(
     opts.networkId,
     opts.walletId,
     amount,
     newerThanMs,
   );
-  const hit = activityMatchesMessage(
-    opts.networkId,
-    opts.walletId,
-    amount,
-    Date.now(),
-  );
-  if (!hit && !pending) return null;
 
-  // Only unsettled bubbles — never block a deliberate second send of the same amount.
   const candidates = listOutboundPaymentsByStatus(
     ["failed", "sending", "converting"],
     newerThanMs,
-  ).filter(
-    (m) =>
-      m.contactId === opts.contactId &&
-      m.amountSats != null &&
-      Math.abs(m.amountSats - amount) <= 1,
-  );
-  const open = candidates[0];
-  if (!open) return null;
-  // Require evidence: matching activity, or a pending stamp (hung SDK after accept).
-  if (!hit && !pending) return null;
-  updateChatMessage(open.id, { status: "paid" });
-  return {
-    messageId: open.id,
-    txid: hit?.id ?? `pending:${pending?.at ?? Date.now()}`,
-    paymentId: open.paymentId,
-  };
+  ).map((m) => ({
+    id: m.id,
+    contactId: m.contactId,
+    amountSats: m.amountSats,
+    createdAt: m.createdAt,
+    paymentId: m.paymentId,
+    status: m.status ?? "sending",
+  }));
+
+  // Recovery may need the current message even when exclude is also set.
+  if (
+    opts.preferMessageId &&
+    !candidates.some((m) => m.id === opts.preferMessageId)
+  ) {
+    const cur = getChatMessage(opts.preferMessageId);
+    if (cur) {
+      candidates.unshift({
+        id: cur.id,
+        contactId: cur.contactId,
+        amountSats: cur.amountSats,
+        createdAt: cur.createdAt,
+        paymentId: cur.paymentId,
+        status: cur.status ?? "sending",
+      });
+    }
+  }
+
+  const picked = pickAlreadySettledOutbound({
+    amountSats: amount,
+    contactId: opts.contactId,
+    excludeMessageId: opts.excludeMessageId,
+    preferMessageId: opts.preferMessageId,
+    now,
+    candidates,
+    activityRows: readOutboundActivityRows(opts.networkId, opts.walletId),
+    pendingStampAt: pending?.at ?? null,
+  });
+  if (!picked) return null;
+
+  updateChatMessage(picked.messageId, { status: "paid" });
+  return picked;
 }
