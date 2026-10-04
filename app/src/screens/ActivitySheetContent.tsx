@@ -85,15 +85,11 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
     setRefreshArmed(false);
     const t = setTimeout(() => setRefreshArmed(true), REFRESH_ARM_MS);
     // Show DB immediately; rematerialize in the background (Xiaomi 12s ASP).
-    void refreshActivity()
-      .then(() => {
-        loadFromDb();
-      })
-      .catch((e) => {
-        console.warn("[basic] activity open rematerialize failed", e);
-      });
+    void refreshActivity().catch((e) => {
+      console.warn("[basic] activity open rematerialize failed", e);
+    });
     return () => clearTimeout(t);
-  }, [active, refreshActivity, loadFromDb]);
+  }, [active, selectedWallet?.id, refreshActivity]);
 
   useEffect(() => {
     if (!active || selectedWallet?.kind !== "lightning") return;

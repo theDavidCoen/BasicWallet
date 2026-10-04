@@ -10,8 +10,12 @@ import { commitArkadeActivityRows, recordOptimisticArkadeReceive } from "../acco
 import { loadActivityRows } from "./activity";
 import {
   ACTIVITY_REMATERIALIZE_COOL_MS,
+  coalesceActivityRefresh,
   isWalletCoolingDown,
+  outboundSpendTarget,
+  persistSpendBreakdown,
   previousBalanceForWallet,
+  shouldBumpMaterializeGenOnFailure,
   shouldCommitWalletWork,
   shouldRecordOptimisticReceive,
   switchHomeBalance,
@@ -95,8 +99,10 @@ import {
   addCatchUpCredit,
   CATCH_UP_CREDIT_EPS,
   consumeCatchUpCredit,
+  getCatchUpCreditForWallet,
+  setCatchUpCreditForWallet,
   settleCatchUpCredit,
-  type CatchUpCredit,
+  type CatchUpCreditByWallet,
 } from "./catchUpCredit";
 import {
   CHANGE_HOLD_MAX_MS,
@@ -682,9 +688,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const lastNotifyFloorRef = useRef<number | null>(null);
   /**
    * α89.1: running poll-adopted credit budget (see catchUpCredit.ts).
-   * Each deferred adopt adds totalDelta; notify consumes min(amount, budget).
+   * Per wallet so a switch cannot wipe A's budget (α92 S3).
+   * Each deferred/shown adopt adds totalDelta; notify consumes min(amount, budget).
    */
-  const catchUpCreditRef = useRef<CatchUpCredit | null>(null);
+  const catchUpCreditByWalletRef = useRef<CatchUpCreditByWallet>({});
+  /** Wallet + Home snapshot captured at beginOutboundSend / noteLocalSend. */
+  const outboundSendRef = useRef<{
+    walletId: string;
+    preSend: BalanceBreakdown | null;
+  } | null>(null);
+  /** One rematerialize promise per wallet (search/Fiat ticks join, do not stack). */
+  const activityRefreshInFlightRef = useRef<Record<string, Promise<void>>>({});
   /** Boost-on debounce delivered an epoch bump — only then remount on boost-off. */
   const boostEpochOnDeliveredRef = useRef(false);
   const prevBoardingRef = useRef(0);
@@ -801,6 +815,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const noteLocalSend = useCallback((opts?: { selectedVtxoTotal?: number }) => {
+    const outboundId = selectedIdRef.current;
+    if (outboundId) {
+      outboundSendRef.current = {
+        walletId: outboundId,
+        preSend: prevBalanceRef.current,
+      };
+    }
     if (preSendTotalRef.current == null && prevBalanceRef.current) {
       preSendTotalRef.current = prevBalanceRef.current.total;
     }
@@ -810,7 +831,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       selectedVtxoTotalRef.current = opts.selectedVtxoTotal;
     }
     suppressIncomingUntilRef.current = Date.now() + SEND_CHANGE_GUARD_MS;
-    catchUpCreditRef.current = null;
+    if (outboundId) {
+      setCatchUpCreditForWallet(catchUpCreditByWalletRef.current, outboundId, null);
+    }
     setFundsNotice(null);
   }, [clearChangeHoldRefs]);
 
@@ -845,8 +868,30 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const spend = Math.max(0, Math.floor(amountSats));
     if (!(spend > 0)) return;
     const networkId = getNetworkConfig().id;
-    const walletId = selectedIdRef.current;
-    catchUpCreditRef.current = null;
+    const outbound = outboundSendRef.current;
+    const spendWalletId = outbound?.walletId ?? selectedIdRef.current;
+    const target = outboundSpendTarget({
+      outboundWalletId: spendWalletId,
+      currentWalletId: selectedIdRef.current,
+    });
+    if (target === "ignore" || !spendWalletId) return;
+    setCatchUpCreditForWallet(catchUpCreditByWalletRef.current, spendWalletId, null);
+    if (target === "persist-foreign") {
+      const pre = outbound?.preSend;
+      if (pre) {
+        const next = persistSpendBreakdown({ preSend: pre, spendSats: spend });
+        void writeCachedBalance(networkId, spendWalletId, next);
+        void writeLastAckBalance(networkId, spendWalletId, next);
+      }
+      console.warn("[basic] applyLocalSpend persist-foreign", {
+        spend,
+        spendWallet: spendWalletId.slice(0, 8),
+        current: selectedIdRef.current?.slice(0, 8) ?? null,
+      });
+      outboundSendRef.current = null;
+      return;
+    }
+    const walletId = spendWalletId;
     setBalance((prev) => {
       if (!prev) return prev;
       if (preSendTotalRef.current == null) {
@@ -863,15 +908,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       lastAckRef.current = next;
       localSpendRef.current = (localSpendRef.current ?? 0) + spend;
       optimisticSpendTotalRef.current = next.total;
-      if (walletId) prevBalanceWalletIdRef.current = walletId;
+      prevBalanceWalletIdRef.current = walletId;
       changeHoldUntilRef.current = Date.now() + CHANGE_HOLD_MAX_MS;
       if (opts?.selectedVtxoTotal != null && opts.selectedVtxoTotal > 0) {
         selectedVtxoTotalRef.current = opts.selectedVtxoTotal;
       }
-      if (walletId) {
-        void writeCachedBalance(networkId, walletId, next);
-        void writeLastAckBalance(networkId, walletId, next);
-      }
+      void writeCachedBalance(networkId, walletId, next);
+      void writeLastAckBalance(networkId, walletId, next);
       console.warn("[basic] applyLocalSpend", {
         spend,
         total: next.total,
@@ -882,6 +925,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       return next;
     });
     setBalanceStatus("ready");
+    outboundSendRef.current = null;
   }, []);
 
   const bumpActivity = useCallback(() => {
@@ -973,9 +1017,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   );
 
   const settleCatchUpNotice = useCallback((amountSats: number) => {
-    catchUpCreditRef.current = settleCatchUpCredit(
-      catchUpCreditRef.current,
-      amountSats,
+    const walletId = selectedIdRef.current;
+    if (!walletId) return;
+    setCatchUpCreditForWallet(
+      catchUpCreditByWalletRef.current,
+      walletId,
+      settleCatchUpCredit(
+        getCatchUpCreditForWallet(catchUpCreditByWalletRef.current, walletId),
+        amountSats,
+      ),
     );
   }, []);
 
@@ -1621,6 +1671,18 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   "funds-notice",
                   false,
                 );
+                setCatchUpCreditForWallet(
+                  catchUpCreditByWalletRef.current,
+                  walletId,
+                  addCatchUpCredit(
+                    getCatchUpCreditForWallet(
+                      catchUpCreditByWalletRef.current,
+                      walletId,
+                    ),
+                    totalDelta,
+                    { noticeSettled: true },
+                  ),
+                );
               } else if (arkShown === "blocked") {
                 setBalance(bal);
                 setBalanceStatus("ready");
@@ -1663,10 +1725,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   );
                   // Running budget: add delta (do not overwrite — B4).
                   // Chat-thread suppress is chat-only UX — notice settled (S1).
-                  catchUpCreditRef.current = addCatchUpCredit(
-                    catchUpCreditRef.current,
-                    totalDelta,
-                    { noticeSettled: isChatThreadFocused() },
+                  setCatchUpCreditForWallet(
+                    catchUpCreditByWalletRef.current,
+                    walletId,
+                    addCatchUpCredit(
+                      getCatchUpCreditForWallet(
+                        catchUpCreditByWalletRef.current,
+                        walletId,
+                      ),
+                      totalDelta,
+                      { noticeSettled: isChatThreadFocused() },
+                    ),
                   );
                   prevBoardingRef.current = bal.boarding;
                   prevBalanceRef.current = bal;
@@ -1909,6 +1978,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           const id = selectedIdRef.current;
           if (id && walletId === id) {
             void loadBalance(w, walletId);
+          } else if (id) {
+            pullBalanceNowRef.current();
           }
         } else {
           balancePullAgainRef.current = false;
@@ -2168,7 +2239,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       selectedVtxoTotalRef.current = null;
       changeHoldUntilRef.current = 0;
       aspPollPausedRef.current = 0;
-      catchUpCreditRef.current = null;
       activityMaterializeGenRef.current += 1;
       balanceFetchGenRef.current += 1;
       prevBalanceRef.current = null;
@@ -2377,55 +2447,90 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       console.warn("[basic] activity rematerialize cool-down", walletId.slice(0, 8));
       return;
     }
+    const inFlight = activityRefreshInFlightRef.current[walletId];
+    if (
+      inFlight &&
+      coalesceActivityRefresh({
+        inFlightWalletId: walletId,
+        requestedWalletId: walletId,
+      }) === "join"
+    ) {
+      return inFlight;
+    }
     const networkId = getNetworkConfig().id;
-
-    if (selectedWallet?.kind === "lightning") {
+    const slot: { promise: Promise<void> | null } = { promise: null };
+    const promise = (async () => {
       try {
-        await withTimeout(
-          syncLightningHistory(networkId, walletId),
-          12_000,
-          "syncLightningHistory",
-        );
-      } catch (e) {
-        console.warn("[basic] activity ln refresh failed", e);
-      }
-      setActivityEpoch((e) => e + 1);
-      return;
-    }
+        await Promise.resolve();
+        if (selectedWallet?.kind === "lightning") {
+          try {
+            await withTimeout(
+              syncLightningHistory(networkId, walletId),
+              12_000,
+              "syncLightningHistory",
+            );
+          } catch (e) {
+            console.warn("[basic] activity ln refresh failed", e);
+          }
+          if (selectedIdRef.current === walletId) {
+            setActivityEpoch((e) => e + 1);
+          }
+          return;
+        }
 
-    if (selectedWallet?.kind !== "arkade") return;
-    const w = getOpenWallet() ?? wallet;
-    if (!w) return;
-    const startedGen = ++activityMaterializeGenRef.current;
-    try {
-      const rows = await withTimeout(
-        loadActivityRows(w),
-        12_000,
-        "materializeFromArkadeWallet",
-      );
-      if (
-        !shouldCommitWalletWork({
-          startedWalletId: walletId,
-          currentWalletId: selectedIdRef.current,
-          startedGen,
-          currentGen: activityMaterializeGenRef.current,
-        })
-      ) {
-        console.warn("[basic] activity rematerialize dropped (stale)", {
-          walletId: walletId.slice(0, 8),
-        });
-        return;
+        if (selectedWallet?.kind !== "arkade") return;
+        const w = getOpenWallet() ?? wallet;
+        if (!w) return;
+        const historyFetchStartedAt = Date.now();
+        const startedGen = ++activityMaterializeGenRef.current;
+        try {
+          const rows = await withTimeout(
+            loadActivityRows(w),
+            12_000,
+            "materializeFromArkadeWallet",
+          );
+          if (
+            !shouldCommitWalletWork({
+              startedWalletId: walletId,
+              currentWalletId: selectedIdRef.current,
+              startedGen,
+              currentGen: activityMaterializeGenRef.current,
+            })
+          ) {
+            console.warn("[basic] activity rematerialize dropped (stale)", {
+              walletId: walletId.slice(0, 8),
+            });
+            return;
+          }
+          commitArkadeActivityRows(networkId, walletId, rows, {
+            historyFetchStartedAt,
+          });
+          void backfillMissingFiat(networkId);
+        } catch (e) {
+          console.warn("[basic] activity rematerialize failed", e);
+          activityRematerializeCoolUntilRef.current[walletId] =
+            Date.now() + ACTIVITY_REMATERIALIZE_COOL_MS;
+          if (
+            shouldBumpMaterializeGenOnFailure({
+              startedGen,
+              currentGen: activityMaterializeGenRef.current,
+            })
+          ) {
+            activityMaterializeGenRef.current += 1;
+          }
+        }
+        if (selectedIdRef.current === walletId) {
+          setActivityEpoch((n) => n + 1);
+        }
+      } finally {
+        if (activityRefreshInFlightRef.current[walletId] === slot.promise) {
+          delete activityRefreshInFlightRef.current[walletId];
+        }
       }
-      commitArkadeActivityRows(networkId, walletId, rows);
-      void backfillMissingFiat(networkId);
-    } catch (e) {
-      console.warn("[basic] activity rematerialize failed", e);
-      activityRematerializeCoolUntilRef.current[walletId] = Date.now() + ACTIVITY_REMATERIALIZE_COOL_MS;
-      activityMaterializeGenRef.current += 1;
-    }
-    if (selectedIdRef.current === walletId) {
-      setActivityEpoch((n) => n + 1);
-    }
+    })();
+    slot.promise = promise;
+    activityRefreshInFlightRef.current[walletId] = promise;
+    return promise;
   }, [wallet, selectedWallet]);
   refreshActivityRef.current = refreshActivity;
 
@@ -3134,7 +3239,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       try {
         const subscribedAt = Date.now();
         const unsub = await w.notifyIncomingFunds((funds) => {
-          if (cancelled) return;
+          if (cancelled || selectedIdRef.current !== walletId) return;
           if (funds.type !== "utxo" && funds.spentVtxos.length === 0) {
             const vtxos = funds.newVtxos ?? [];
             const amount = vtxos.reduce((s, c) => s + (c.value ?? 0), 0);
@@ -3175,7 +3280,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 // Clear credit only on a real full replay — not zero/asset-only
                 // DePix pushes in the seed window (re-review N9).
                 if (looksLikeFullReplay) {
-                  catchUpCreditRef.current = null;
+                  setCatchUpCreditForWallet(
+                    catchUpCreditByWalletRef.current,
+                    walletId,
+                    null,
+                  );
                 }
                 scheduleReload(w, walletId, { event: true });
                 return;
@@ -3339,19 +3448,27 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   });
                   // Exact match only: poll adopted this change as the credit.
                   // Broad consume would eat a pending inbound's budget (N10).
-                  const pending = catchUpCreditRef.current;
+                  const pending = getCatchUpCreditForWallet(
+                    catchUpCreditByWalletRef.current,
+                    walletId,
+                  );
                   if (
                     pending &&
                     Math.abs(amount - pending.sats) <= CATCH_UP_CREDIT_EPS
                   ) {
                     const taken = consumeCatchUpCredit(pending, amount);
-                    catchUpCreditRef.current = taken.credit;
+                    setCatchUpCreditForWallet(
+                      catchUpCreditByWalletRef.current,
+                      walletId,
+                      taken.credit,
+                    );
                   }
                 } else if (postSend && expectingReceive) {
                   void (async () => {
                     const live = await readSpendableAvailable(w, {
                       timeoutMs: 3_000,
                     });
+                    if (cancelled || selectedIdRef.current !== walletId) return;
                     const ack = lastAckRef.current?.total ?? 0;
                     const inbound = decidePostSendInbound({
                       now: Date.now(),
@@ -3379,13 +3496,20 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                         },
                       );
                       if (inbound.action === "skip-change") {
-                        const pending = catchUpCreditRef.current;
+                        const pending = getCatchUpCreditForWallet(
+                          catchUpCreditByWalletRef.current,
+                          walletId,
+                        );
                         if (
                           pending &&
                           Math.abs(amount - pending.sats) <= CATCH_UP_CREDIT_EPS
                         ) {
                           const taken = consumeCatchUpCredit(pending, amount);
-                          catchUpCreditRef.current = taken.credit;
+                          setCatchUpCreditForWallet(
+                            catchUpCreditByWalletRef.current,
+                            walletId,
+                            taken.credit,
+                          );
                         }
                       }
                       return;
@@ -3413,21 +3537,18 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                     beginClassicChatDefer(credit);
                     acknowledgeIncomingAmount(credit);
                     applyLocalReceive(credit);
-                    const wid = selectedIdRef.current;
-                    if (wid) {
-                      try {
-                        recordOptimisticArkadeReceive(
-                          getNetworkConfig().id,
-                          wid,
-                          { amountSats: credit },
-                        );
-                        setActivityEpoch((n) => n + 1);
-                      } catch (e) {
-                        console.warn(
-                          "[basic] optimistic receive activity failed",
-                          e,
-                        );
-                      }
+                    try {
+                      recordOptimisticArkadeReceive(
+                        getNetworkConfig().id,
+                        walletId,
+                        { amountSats: credit },
+                      );
+                      setActivityEpoch((n) => n + 1);
+                    } catch (e) {
+                      console.warn(
+                        "[basic] optimistic receive activity failed",
+                        e,
+                      );
                     }
                     emitFundsNotice(credit, "arkade", {
                       bypassSendSuppress: true,
@@ -3440,10 +3561,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   });
                   // Consume catch-up budget so we don't re-ack adopted sats (N5).
                   const taken = consumeCatchUpCredit(
-                    catchUpCreditRef.current,
+                    getCatchUpCreditForWallet(
+                      catchUpCreditByWalletRef.current,
+                      walletId,
+                    ),
                     amount,
                   );
-                  catchUpCreditRef.current = taken.credit;
+                  setCatchUpCreditForWallet(
+                    catchUpCreditByWalletRef.current,
+                    walletId,
+                    taken.credit,
+                  );
                   if (taken.applyAmount > 0) {
                     acknowledgeIncomingAmount(taken.applyAmount);
                   }
@@ -3459,10 +3587,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                     amount,
                   });
                   const taken = consumeCatchUpCredit(
-                    catchUpCreditRef.current,
+                    getCatchUpCreditForWallet(
+                      catchUpCreditByWalletRef.current,
+                      walletId,
+                    ),
                     amount,
                   );
-                  catchUpCreditRef.current = taken.credit;
+                  setCatchUpCreditForWallet(
+                    catchUpCreditByWalletRef.current,
+                    walletId,
+                    taken.credit,
+                  );
                   if (taken.applyAmount > 0) {
                     acknowledgeIncomingAmount(taken.applyAmount);
                   }
@@ -3473,10 +3608,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                     amount,
                   });
                   const taken = consumeCatchUpCredit(
-                    catchUpCreditRef.current,
+                    getCatchUpCreditForWallet(
+                      catchUpCreditByWalletRef.current,
+                      walletId,
+                    ),
                     amount,
                   );
-                  catchUpCreditRef.current = taken.credit;
+                  setCatchUpCreditForWallet(
+                    catchUpCreditByWalletRef.current,
+                    walletId,
+                    taken.credit,
+                  );
                   if (taken.applyAmount > 0) {
                     acknowledgeIncomingAmount(taken.applyAmount);
                   }
@@ -3487,10 +3629,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   // Running budget: consume min(amount, credit); apply remainder.
                   // Skip toast when consumed fits in settledSats (within TTL).
                   const taken = consumeCatchUpCredit(
-                    catchUpCreditRef.current,
+                    getCatchUpCreditForWallet(
+                      catchUpCreditByWalletRef.current,
+                      walletId,
+                    ),
                     amount,
                   );
-                  catchUpCreditRef.current = taken.credit;
+                  setCatchUpCreditForWallet(
+                    catchUpCreditByWalletRef.current,
+                    walletId,
+                    taken.credit,
+                  );
                   const applyAmount = taken.applyAmount;
                   const noticeSettled = taken.noticeSettled;
                   if (taken.consumed > 0) {
@@ -3507,24 +3656,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                     );
                   }
                   if (applyAmount > 0) {
+                    if (selectedIdRef.current !== walletId) return;
                     acknowledgeIncomingAmount(applyAmount);
                     // ASP notify owns Maxi Home balance (receipt must not also add — α76).
                     applyLocalReceive(applyAmount);
-                    const wid = selectedIdRef.current;
-                    if (wid) {
-                      try {
-                        recordOptimisticArkadeReceive(
-                          getNetworkConfig().id,
-                          wid,
-                          { amountSats: applyAmount },
-                        );
-                        setActivityEpoch((n) => n + 1);
-                      } catch (e) {
-                        console.warn(
-                          "[basic] optimistic receive activity failed",
-                          e,
-                        );
-                      }
+                    try {
+                      recordOptimisticArkadeReceive(
+                        getNetworkConfig().id,
+                        walletId,
+                        { amountSats: applyAmount, source: "notify-credit" },
+                      );
+                      setActivityEpoch((n) => n + 1);
+                    } catch (e) {
+                      console.warn(
+                        "[basic] optimistic receive activity failed",
+                        e,
+                      );
                     }
                   }
                   // Skip classic toast if poll/chat-prefer already settled it (S1).
