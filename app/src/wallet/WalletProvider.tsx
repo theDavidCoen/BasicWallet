@@ -89,8 +89,9 @@ import {
   type CatchUpCredit,
 } from "./catchUpCredit";
 import {
-  decidePostSendLiveAdopt,
-  shouldWriteAckFromLive,
+  CHANGE_HOLD_MAX_MS,
+  decidePostSendInbound,
+  decidePostSendPersist,
 } from "./postSendBalanceGuard";
 import { loadLndRestCredentials, clearLndRestIfWallet } from "../lightning/lndCredentials";
 import { lndChannelBalance } from "../lightning/lndRest";
@@ -180,8 +181,9 @@ type WalletContextValue = {
   /**
    * Suppress FundsReceived after a local outbound (and for ~5m of change catch-up, α86).
    * Does not pause ASP balance polls — use pause/resumeAspPolls or begin/endOutboundSend.
+   * Optional selectedVtxoTotal narrows the post-send change hold to that plan.
    */
-  noteLocalSend: () => void;
+  noteLocalSend: (opts?: { selectedVtxoTotal?: number }) => void;
   /**
    * Pause background getBalance / reload only (no just-sent guard).
    * Use for post-bio vtxo planning before a real send is committed (α89 skeptic).
@@ -196,7 +198,10 @@ type WalletContextValue = {
   beginOutboundSend: () => void;
   endOutboundSend: () => void;
   /** Optimistic UI after a successful outbound send (before live getBalance catches up). */
-  applyLocalSpend: (amountSats: number) => void;
+  applyLocalSpend: (
+    amountSats: number,
+    opts?: { selectedVtxoTotal?: number },
+  ) => void;
   /**
    * Optimistic UI after inbound sats (notify / Exit swap fill) before live getBalance.
    * Advances display + ack so ASP timeouts cannot flash dust or re-toast catch-up.
@@ -575,6 +580,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const seenVtxoKeysRef = useRef<Set<string>>(new Set());
   /** Total before local spend — used to detect stale pre-spend indexer reads. */
   const preSendTotalRef = useRef<number | null>(null);
+  /** applyLocalSpend amount this guard window; null until a successful local spend. */
+  const localSpendRef = useRef<number | null>(null);
+  /** preSend − localSpend from applyLocalSpend (not displayed). */
+  const optimisticSpendTotalRef = useRef<number | null>(null);
+  /** Sum of plan.selectedVtxos when the send recorded it. */
+  const selectedVtxoTotalRef = useRef<number | null>(null);
+  /** Max Home/ack hold after applyLocalSpend (shorter than 5m suppress). */
+  const changeHoldUntilRef = useRef(0);
   /** >0 while an outbound send holds the ASP — skip balance poll / reload. */
   const aspPollPausedRef = useRef(0);
   /** After materialize timeout, cool down — α69 chat focus stacked 12s fails (α70). */
@@ -767,14 +780,26 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const noteLocalSend = useCallback(() => {
+  const clearChangeHoldRefs = useCallback(() => {
+    localSpendRef.current = null;
+    optimisticSpendTotalRef.current = null;
+    selectedVtxoTotalRef.current = null;
+    changeHoldUntilRef.current = 0;
+  }, []);
+
+  const noteLocalSend = useCallback((opts?: { selectedVtxoTotal?: number }) => {
     if (preSendTotalRef.current == null && prevBalanceRef.current) {
       preSendTotalRef.current = prevBalanceRef.current.total;
+    }
+    // New outbound window: hold only after this send's applyLocalSpend.
+    clearChangeHoldRefs();
+    if (opts?.selectedVtxoTotal != null && opts.selectedVtxoTotal > 0) {
+      selectedVtxoTotalRef.current = opts.selectedVtxoTotal;
     }
     suppressIncomingUntilRef.current = Date.now() + SEND_CHANGE_GUARD_MS;
     catchUpCreditRef.current = null;
     setFundsNotice(null);
-  }, []);
+  }, [clearChangeHoldRefs]);
 
   const pauseAspPolls = useCallback(() => {
     aspPollPausedRef.current += 1;
@@ -800,7 +825,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     resumeAspPolls();
   }, [resumeAspPolls]);
 
-  const applyLocalSpend = useCallback((amountSats: number) => {
+  const applyLocalSpend = useCallback((
+    amountSats: number,
+    opts?: { selectedVtxoTotal?: number },
+  ) => {
     const spend = Math.max(0, Math.floor(amountSats));
     if (!(spend > 0)) return;
     const networkId = getNetworkConfig().id;
@@ -820,6 +848,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       prevBalanceRef.current = next;
       prevBoardingRef.current = next.boarding;
       lastAckRef.current = next;
+      localSpendRef.current = (localSpendRef.current ?? 0) + spend;
+      optimisticSpendTotalRef.current = next.total;
+      changeHoldUntilRef.current = Date.now() + CHANGE_HOLD_MAX_MS;
+      if (opts?.selectedVtxoTotal != null && opts.selectedVtxoTotal > 0) {
+        selectedVtxoTotalRef.current = opts.selectedVtxoTotal;
+      }
       if (walletId) {
         void writeCachedBalance(networkId, walletId, next);
         void writeLastAckBalance(networkId, walletId, next);
@@ -828,6 +862,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         spend,
         total: next.total,
         preSend: preSendTotalRef.current,
+        selectedVtxoTotal: selectedVtxoTotalRef.current,
+        holdMs: CHANGE_HOLD_MAX_MS,
       });
       return next;
     });
@@ -1108,6 +1144,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const networkId = getNetworkConfig().id;
     const walletId = selectedIdRef.current;
     preSendTotalRef.current = null;
+    localSpendRef.current = null;
+    optimisticSpendTotalRef.current = null;
+    selectedVtxoTotalRef.current = null;
+    changeHoldUntilRef.current = 0;
     setBalance((prev) => {
       const base = prev ?? { available: 0, boarding: 0, total: 0 };
       if (base.total >= target - 2) {
@@ -1183,15 +1223,46 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      const fiatMode = isFiatModeActiveGate();
+      const postSend = decidePostSendPersist({
+        now: Date.now(),
+        suppressUntil: suppressIncomingUntilRef.current,
+        holdUntil: changeHoldUntilRef.current,
+        preSendTotal: preSendTotalRef.current,
+        localSpend: localSpendRef.current,
+        optimisticTotal: optimisticSpendTotalRef.current,
+        selectedVtxoTotal: selectedVtxoTotalRef.current,
+        liveTotal: bal.total,
+        ackTotal: ack?.total ?? null,
+        displayedTotal: displayed?.total ?? null,
+        fiatMode,
+        postOpen: Date.now() < openNoticeQuietUntilRef.current,
+        awaitingRecv:
+          incomingWatchBoostRef.current > 0 || posUiHoldRef.current > 0,
+        minVtxoSats: DEFAULT_MIN_VTXO_SATS,
+      });
+      if (!postSend.adoptLive) {
+        console.warn("[basic] persistBalance keep optimistic spend", {
+          live: bal.total,
+          preSend: preSendTotalRef.current,
+          optimistic: optimisticSpendTotalRef.current,
+          displayed: displayed?.total,
+          reason: postSend.reason,
+        });
+        setBalanceStatus("ready");
+        return;
+      }
+
       // ASP timeouts / partial vtxo views often return dust (330) or a stale low
       // total after Exit fill while ack already includes notifyIncoming proceeds.
       // Never regress ack or flash dust — that caused FUNDS RECEIVED on reopen.
       // Fiat Mode exception: Home is stable (R$/USDT). Optimistic pay-convert
       // floors (ensureBalanceAtLeast) must not pin fake sats forever when ASP
       // only has dust carriers (α64: UI 3758 vs live 660 → skipped convert).
+      // Hold-expiry / no-local-spend must skip this pin (α90 B1).
       const floor = Math.max(ack?.total ?? 0, displayed?.total ?? 0);
-      const fiatMode = isFiatModeActiveGate();
       if (
+        !postSend.skipFloorPin &&
         !suppressed &&
         !fiatMode &&
         floor > DEFAULT_MIN_VTXO_SATS * 2 &&
@@ -1591,10 +1662,26 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
       // Never raise ack while send-suppress is active — that ate catch-up notices.
       // α84: never lower ack from a stale ASP snapshot after notify advanced it.
-      // H2: while change-guard is active, also never lower ack to a
-      // spent-without-change live total (would bake missing change into the
-      // next inbound delta).
-      if (!suppressed || !ack || bal.total <= ack.total) {
+      // α90: writeAck from decidePostSendPersist — hold-expiry / no-local-spend
+      // lower ack so the floor cannot pin; change-pending already returned.
+      if (postSend.writeAck) {
+        lastAckRef.current = bal;
+        void writeLastAckBalance(networkId, walletId, bal);
+        if (postSend.reason === "notify-ack-advanced") {
+          console.warn("[basic] persistBalance adopt after notify ack", {
+            live: bal.total,
+            ackTotal: ack?.total,
+            preSend: preSendTotalRef.current,
+          });
+        } else if (postSend.reason === "hold-expired" || postSend.reason === "no-local-spend") {
+          console.warn("[basic] persistBalance adopt post-send live", {
+            live: bal.total,
+            reason: postSend.reason,
+            preSend: preSendTotalRef.current,
+            optimistic: optimisticSpendTotalRef.current,
+          });
+        }
+      } else if (!suppressed || !ack || bal.total <= ack.total) {
         if (ack && !suppressed && bal.total + 1 < ack.total) {
           const awaitingRecv =
             incomingWatchBoostRef.current > 0 || posUiHoldRef.current > 0;
@@ -1622,55 +1709,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
               ackTotal: ack.total,
             });
           }
-        } else if (
-          shouldWriteAckFromLive({
-            suppressed,
-            liveTotal: bal.total,
-            ackTotal: ack?.total ?? null,
-          })
-        ) {
-          lastAckRef.current = bal;
-          void writeLastAckBalance(networkId, walletId, bal);
-        } else {
-          console.warn("[basic] persistBalance keep ack above post-send live", {
-            live: bal.total,
-            ackTotal: ack?.total,
-            preSend: preSendTotalRef.current,
-          });
         }
       }
 
-      // After local send: indexer may still report pre-spend OR spent vtxos
-      // without change yet. Do not wipe optimistic deduction / adopt a total
-      // below preSend − amount (H2). Exception: notify already advanced ack.
-      const postSendAdopt = decidePostSendLiveAdopt({
-        suppressed,
-        preSendTotal: preSendTotalRef.current,
-        liveTotal: bal.total,
-        optimisticTotal: displayed?.total ?? null,
-        ackTotal: ack?.total ?? null,
-      });
-      if (!postSendAdopt.adoptLive) {
-        console.warn("[basic] persistBalance keep optimistic spend", {
-          live: bal.total,
-          preSend: preSendTotalRef.current,
-          displayed: displayed?.total,
-          reason: postSendAdopt.reason,
-        });
-        setBalanceStatus("ready");
-        return;
-      }
-      if (suppressed && postSendAdopt.reason === "notify-ack-advanced") {
-        console.warn("[basic] persistBalance adopt after notify ack", {
-          live: bal.total,
-          ackTotal: ack?.total,
-          preSend: preSendTotalRef.current,
-        });
-      }
-
-      // Only clear preSend after the change-guard — not while suppressed (α86).
+      // Only clear preSend / change-hold after the 5m suppress — not while suppressed (α86).
       if (!suppressed) {
         preSendTotalRef.current = null;
+        localSpendRef.current = null;
+        optimisticSpendTotalRef.current = null;
+        selectedVtxoTotalRef.current = null;
+        changeHoldUntilRef.current = 0;
       }
 
       prevBoardingRef.current = bal.boarding;
@@ -2035,6 +2083,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       suppressIncomingUntilRef.current = 0;
       seenVtxoKeysRef.current = new Set();
       preSendTotalRef.current = null;
+      localSpendRef.current = null;
+      optimisticSpendTotalRef.current = null;
+      selectedVtxoTotalRef.current = null;
+      changeHoldUntilRef.current = 0;
       aspPollPausedRef.current = 0;
       catchUpCreditRef.current = null;
       if (boostPullTimerRef.current != null) {
@@ -3189,27 +3241,46 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                       timeoutMs: 3_000,
                     });
                     const ack = lastAckRef.current?.total ?? 0;
-                    if (live == null || live <= ack + 1) {
+                    const inbound = decidePostSendInbound({
+                      now: Date.now(),
+                      suppressUntil: suppressIncomingUntilRef.current,
+                      holdUntil: changeHoldUntilRef.current,
+                      preSendTotal: preSendTotalRef.current,
+                      localSpend: localSpendRef.current,
+                      optimisticTotal: optimisticSpendTotalRef.current,
+                      selectedVtxoTotal: selectedVtxoTotalRef.current,
+                      liveTotal: live,
+                      ackTotal: ack,
+                      notifyAmount: amount,
+                      expectingReceive: true,
+                    });
+                    if (inbound.action !== "credit" || !(inbound.credit > 0)) {
                       classicReceiveMarkRef.current = null;
                       console.warn(
-                        "[basic] notifyIncomingFunds skip post-send change (no net credit)",
-                        { amount, live, ack },
+                        "[basic] notifyIncomingFunds skip post-send inbound",
+                        {
+                          amount,
+                          live,
+                          ack,
+                          action: inbound.action,
+                          reason: inbound.reason,
+                        },
                       );
                       return;
                     }
-                    const credit = live - ack;
-                    if (!(credit > 0) || isDustCarrierAmount(credit)) {
+                    const credit = inbound.credit;
+                    if (isDustCarrierAmount(credit)) {
                       classicReceiveMarkRef.current = null;
                       console.warn(
                         "[basic] notifyIncomingFunds skip post-send credit",
-                        { credit, live, ack },
+                        { credit, live, ack, reason: inbound.reason },
                       );
-                      if (credit > 0) acknowledgeIncomingAmount(credit);
+                      acknowledgeIncomingAmount(credit);
                       return;
                     }
                     console.warn(
                       "[basic] notifyIncomingFunds inbound during post-send window",
-                      { credit, amount, live, ack },
+                      { credit, amount, live, ack, reason: inbound.reason },
                     );
                     beginClassicChatDefer(credit);
                     acknowledgeIncomingAmount(credit);

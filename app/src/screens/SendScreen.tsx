@@ -56,6 +56,7 @@ import {
   type SendRecipient,
 } from "../wallet/arkMultiSend";
 import { useWallet } from "../wallet/WalletProvider";
+import { selectedVtxoSum } from "../wallet/postSendBalanceGuard";
 import { formatSatsLabel } from "../wallet/formatSats";
 import { ScanQrModal, extractLightningPayFromScan, extractArkAddressFromScan } from "./ScanQrModal";
 import { useFiatMode } from "../fiat/FiatModeProvider";
@@ -1238,7 +1239,9 @@ export function SendScreen() {
 
         const primaryAddr = working[0]!.address;
         // Arm change-suppress only when we are about to broadcast (not on abort).
-        noteLocalSend();
+        noteLocalSend({
+          selectedVtxoTotal: selectedVtxoSum(plan.selectedVtxos) ?? undefined,
+        });
         notePendingSendFromThisDevice(
           network.id,
           selectedWallet?.id ?? "",
@@ -1289,7 +1292,9 @@ export function SendScreen() {
           recordSentFromThisDevice(network.id, walletId, txid);
         }
 
-        applyLocalSpend(paymentSum);
+        applyLocalSpend(paymentSum, {
+          selectedVtxoTotal: selectedVtxoSum(plan.selectedVtxos) ?? undefined,
+        });
 
         const assetLegs = working.flatMap((r) => r.assets ?? []);
         const assetDisplaySum = wantsAsset
