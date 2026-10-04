@@ -84,15 +84,14 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
     }
     setRefreshArmed(false);
     const t = setTimeout(() => setRefreshArmed(true), REFRESH_ARM_MS);
-    // Rebuild list from SDK+vtxos when opening (recovers after a partial wipe).
-    void (async () => {
-      try {
-        await refreshActivity();
+    // Show DB immediately; rematerialize in the background (Xiaomi 12s ASP).
+    void refreshActivity()
+      .then(() => {
         loadFromDb();
-      } catch (e) {
+      })
+      .catch((e) => {
         console.warn("[basic] activity open rematerialize failed", e);
-      }
-    })();
+      });
     return () => clearTimeout(t);
   }, [active, refreshActivity, loadFromDb]);
 

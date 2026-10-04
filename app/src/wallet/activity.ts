@@ -14,6 +14,10 @@ import {
   formatBrlDisplay,
 } from "../fiat/depixAssets";
 import type { BasicWallet } from "./hdWallet";
+import {
+  remainingHistoryBudgetMs,
+  shouldFetchVtxoFallback,
+} from "./activityRefresh";
 
 /** User-facing status — aligned with arkade.money Transaction.tsx labels. */
 export type ActivityStatus =
@@ -471,6 +475,7 @@ async function rowsFromVtxos(wallet: BasicWallet): Promise<ActivityRow[]> {
  */
 export async function loadActivityRows(wallet: BasicWallet): Promise<ActivityRow[]> {
   const byId = new Map<string, ActivityRow>();
+  const startedAt = Date.now();
 
   const absorb = (rows: ActivityRow[]) => {
     for (const r of rows) {
@@ -481,42 +486,36 @@ export async function loadActivityRows(wallet: BasicWallet): Promise<ActivityRow
     }
   };
 
-  try {
-    const activities = await withTimeout(wallet.getActivityHistory(), 10_000, "getActivityHistory");
-    if (Array.isArray(activities) && activities.length > 0) {
-      absorb(coalesceActivityRows(activities.map(activityToRow)));
+  const sliceMs = remainingHistoryBudgetMs(startedAt, Date.now());
+  if (sliceMs > 0) {
+    // One shared budget: both ASP history reads in parallel, not 10s then 10s
+    // inside a 12s outer timeout (Xiaomi α91 rematerialize always lost the second).
+    const [act, tx] = await Promise.allSettled([
+      withTimeout(wallet.getActivityHistory(), sliceMs, "getActivityHistory"),
+      withTimeout(wallet.getTransactionHistory(), sliceMs, "getTransactionHistory"),
+    ]);
+    if (act.status === "fulfilled" && Array.isArray(act.value) && act.value.length > 0) {
+      absorb(coalesceActivityRows(act.value.map(activityToRow)));
     }
-  } catch {
-    /* fall through */
-  }
-
-  try {
-    const txs = await withTimeout(wallet.getTransactionHistory(), 10_000, "getTransactionHistory");
-    if (Array.isArray(txs) && txs.length > 0) {
+    if (tx.status === "fulfilled" && Array.isArray(tx.value) && tx.value.length > 0) {
       absorb(
         coalesceActivityRows(
-          txs.map((tx) =>
+          tx.value.map((row) =>
             activityToRow({
-              id: primaryTxId(tx) || `${tx.createdAt}:${tx.amount}`,
-              amount: tx.type === "RECEIVED" ? Math.abs(tx.amount) : -Math.abs(tx.amount),
-              createdAt: tx.createdAt,
-              settled: tx.settled,
-              txs: [tx],
+              id: primaryTxId(row) || `${row.createdAt}:${row.amount}`,
+              amount: row.type === "RECEIVED" ? Math.abs(row.amount) : -Math.abs(row.amount),
+              createdAt: row.createdAt,
+              settled: row.settled,
+              txs: [row],
             }),
           ),
         ),
       );
     }
-  } catch {
-    /* fall through */
   }
 
-  if (byId.size === 0) {
-    return coalesceActivityRows(await rowsFromVtxos(wallet));
-  }
-
-  // Thin history: still fold in vtxo snapshot so older settles are not dropped.
-  if (byId.size < 4) {
+  const leftover = remainingHistoryBudgetMs(startedAt, Date.now());
+  if (shouldFetchVtxoFallback({ rowCount: byId.size, remainingMs: leftover })) {
     try {
       absorb(coalesceActivityRows(await rowsFromVtxos(wallet)));
     } catch {
