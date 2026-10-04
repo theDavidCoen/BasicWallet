@@ -15,7 +15,9 @@ import {
   loadActivityRows,
 } from "../wallet/activity";
 import {
+  CATCH_UP_RECEIVE_TAG,
   filterUnmatchedLocalReceives,
+  isCatchUpOptimisticSource,
   matchOptimisticReceive,
   type OptimisticReceiveSource,
 } from "../wallet/activityRefresh";
@@ -448,6 +450,7 @@ export function recordOptimisticArkadeReceive(
       amount: r.amount,
       createdAt: r.createdAt,
       arkTxid: r.txs[0]?.arkTxid,
+      tags: r.tags,
     })),
     { amountSats: amount, txid: raw, now: Date.now(), source },
   );
@@ -471,6 +474,10 @@ export function recordOptimisticArkadeReceive(
       amount: String(a.amount),
     })) ?? undefined;
   const hasFiatAsset = Boolean(assetRows?.length);
+  const tags = hasFiatAsset ? ["offchain", "brl"] : ["offchain"];
+  if (isCatchUpOptimisticSource(source) && !tags.includes(CATCH_UP_RECEIVE_TAG)) {
+    tags.push(CATCH_UP_RECEIVE_TAG);
+  }
   const row: ActivityRow = {
     id,
     title: "Receive",
@@ -483,7 +490,7 @@ export function recordOptimisticArkadeReceive(
     settled: false,
     status: "preconfirmed",
     createdAt: now,
-    tags: hasFiatAsset ? ["offchain", "brl"] : ["offchain"],
+    tags,
     txs: [
       {
         type: "RECEIVED",
@@ -620,6 +627,31 @@ function readLocalExitRows(
   }
 }
 
+function deleteActivityIdxRow(
+  db: ReturnType<typeof getAccountDb>,
+  walletId: string,
+  activityId: string,
+): void {
+  db.runSync(`DELETE FROM activity_idx WHERE wallet_id = ? AND activity_id = ?`, [
+    walletId,
+    activityId,
+  ]);
+  try {
+    db.runSync(`DELETE FROM activity_fts WHERE wallet_id = ? AND activity_id = ?`, [
+      walletId,
+      activityId,
+    ]);
+  } catch {
+    /* FTS optional */
+  }
+}
+
+export type ReplaceActivityOpts = {
+  /** When this history fetch started (ms). Catch-up locals created before this drop. */
+  historyFetchStartedAt?: number;
+  now?: number;
+};
+
 /** Full replace for a wallet so coalesced/removed phases do not linger.
  * Preserves prior created_at per activity_id so rematerialize does not look like
  * brand-new receives (SDK often sends createdAt 0 → Date.now()).
@@ -630,8 +662,10 @@ export function replaceActivityRows(
   networkId: ArkadeNetworkId,
   walletId: string,
   rows: ActivityRow[],
+  opts?: ReplaceActivityOpts,
 ): void {
   const db = getAccountDb(networkId);
+  const now = opts?.now ?? Date.now();
   let existingCount = 0;
   try {
     const existing = db.getFirstSync<{ c: number }>(
@@ -643,7 +677,21 @@ export function replaceActivityRows(
     existingCount = 0;
   }
 
-  if (rows.length === 0 && existingCount > 0) {
+  const localReceives = readLocalPendingReceiveRows(networkId, walletId);
+  const skipEmpty = rows.length === 0 && existingCount > 0;
+  if (skipEmpty) {
+    const agedOut = filterUnmatchedLocalReceives(
+      localReceives.map((p) => ({
+        ...p,
+        arkTxid: p.txs[0]?.arkTxid || "",
+      })),
+      [],
+      { historySucceeded: false, now },
+    );
+    const keepIds = new Set(agedOut.map((r) => r.id));
+    for (const r of localReceives) {
+      if (!keepIds.has(r.id)) deleteActivityIdxRow(db, walletId, r.id);
+    }
     console.warn("[basic] skip empty activity rematerialize (keeping local rows)");
     return;
   }
@@ -651,7 +699,6 @@ export function replaceActivityRows(
   const preserved = new Map<string, number>();
   const localExits = readLocalExitRows(networkId, walletId);
   const localPending = readLocalPendingSendRows(networkId, walletId);
-  const localReceives = readLocalPendingReceiveRows(networkId, walletId);
   try {
     const prev = db.getAllSync<{ activity_id: string; created_at: number }>(
       `SELECT activity_id, created_at FROM activity_idx WHERE wallet_id = ?`,
@@ -681,13 +728,23 @@ export function replaceActivityRows(
     if (localExits.length > 0) {
       upsertActivityRows(networkId, walletId, localExits, preserved);
     }
+    const receiveMerge = {
+      historySucceeded: withoutDupLocals.length > 0,
+      historyFetchStartedAt: opts?.historyFetchStartedAt,
+      now,
+    };
     const receivesToKeep = filterUnmatchedLocalReceives(
       localReceives.map((p) => ({
         ...p,
         arkTxid: p.txs[0]?.arkTxid || "",
       })),
       inboundHistoryHints(withoutDupLocals),
+      receiveMerge,
     );
+    const keepIds = new Set(receivesToKeep.map((r) => r.id));
+    for (const r of localReceives) {
+      if (!keepIds.has(r.id)) deleteActivityIdxRow(db, walletId, r.id);
+    }
     if (receivesToKeep.length > 0) {
       upsertActivityRows(networkId, walletId, receivesToKeep, preserved);
     }
@@ -726,6 +783,11 @@ export function replaceActivityRows(
       arkTxid: p.txs[0]?.arkTxid || "",
     })),
     inboundHistoryHints(withoutDupLocals),
+    {
+      historySucceeded: withoutDupLocals.length > 0,
+      historyFetchStartedAt: opts?.historyFetchStartedAt,
+      now,
+    },
   );
   if (receivesToKeep.length > 0) {
     upsertActivityRows(networkId, walletId, receivesToKeep, preserved);
@@ -828,8 +890,9 @@ export function commitArkadeActivityRows(
   networkId: ArkadeNetworkId,
   walletId: string,
   rows: ActivityRow[],
+  opts?: ReplaceActivityOpts,
 ): ActivityRow[] {
-  replaceActivityRows(networkId, walletId, rows);
+  replaceActivityRows(networkId, walletId, rows, opts);
   applyPendingSendStamps(networkId, walletId, rows);
   const withDest = withDestinations(networkId, walletId, rows);
   if (withDest.some((r, i) => r !== rows[i])) {
