@@ -154,7 +154,7 @@ type WalletContextValue = {
   notifyFundsReceived: (
     amount: number,
     kind: FundsNotice["kind"],
-  ) => "shown" | "busy" | "blocked";
+  ) => "shown" | "busy" | "blocked" | "deferred";
   /**
    * While Receive POS sheet is open, pause background balance polls so the
    * keypad stays responsive (boosted getBalance timeouts were starving taps).
@@ -270,6 +270,8 @@ const BALANCE_BOOST_DEEP_MS = 8_000;
 const BALANCE_BOOST_GENTLE_MS = 3_000;
 /** Suppress duplicate Funds Received for same amount after notify/poll race. */
 const FUNDS_NOTICE_DEDUPE_MS = 60_000;
+/** Poll catch-up credit budget TTL — notify must consume before this (skeptic S2). */
+const CATCH_UP_CREDIT_TTL_MS = 120_000;
 /**
  * After open quiet settles, ignore Home poll bumps (ASP often flashes a fake
  * +change total — α85 Xiaomi +798 with no send). Receive/POS awaiting still toasts.
@@ -644,11 +646,18 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
    */
   const lastNotifyFloorRef = useRef<number | null>(null);
   /**
-   * α89: absolute live total adopted by poll while emitFundsNotice returned
-   * "busy" (chat-prefer / duplicate). One-shot so notifyIncomingFunds does not
-   * applyLocalReceive(+amount) on top (Samsung toast +0 Home → later double).
+   * α89/α89.1: poll-adopted inbound *credit* (delta) while classic notice was
+   * deferred for chat-prefer. Notify consumes this budget so applyLocalReceive
+   * only runs for the remainder — never compare against absolute live total
+   * (skeptic B1: 5000+800 → ref 5800 vs amount 800 → double to 6600).
    */
-  const catchUpAdoptTotalRef = useRef<number | null>(null);
+  const catchUpCreditRef = useRef<{
+    sats: number;
+    at: number;
+    noticeSettled: boolean;
+  } | null>(null);
+  /** Boost-on debounce delivered an epoch bump — only then remount on boost-off. */
+  const boostEpochOnDeliveredRef = useRef(false);
   const prevBoardingRef = useRef(0);
   const prevBalanceRef = useRef<BalanceBreakdown | null>(null);
   const boardingAddressRef = useRef<string | null>(null);
@@ -701,6 +710,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     return () => registerClassicFundsNoticeDismiss(null);
   }, []);
 
+  // Boost debounce timer — clear on provider unmount (skeptic N1).
+  useEffect(() => {
+    return () => {
+      if (boostPullTimerRef.current != null) {
+        clearTimeout(boostPullTimerRef.current);
+        boostPullTimerRef.current = undefined;
+      }
+    };
+  }, []);
+
   const markSessionLive = useCallback(() => {
     setSessionLive(true);
   }, []);
@@ -729,18 +748,18 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       clearTimeout(boostPullTimerRef.current);
       boostPullTimerRef.current = undefined;
     }
-    // α89: debounce boost-on so brief Receive focus does not remount the poll
-    // effect + fire an immediate ASP read (tap-scene lag evidence ~870ms flash).
+    // α89.1: debounce boost-on epoch remount only. Remount tick() pulls once —
+    // do not also pullBalanceNow (skeptic S3: two serial ASP reads).
+    // Brief flash (<500ms): no on-bump → no off-bump (no remount thrash).
     if (on && next > 0) {
       boostPullTimerRef.current = setTimeout(() => {
         boostPullTimerRef.current = undefined;
         if (incomingWatchBoostRef.current <= 0) return;
+        boostEpochOnDeliveredRef.current = true;
         setIncomingWatchBoostEpoch((n) => n + 1);
-        if (posUiHoldRef.current === 0) {
-          pullBalanceNowRef.current();
-        }
       }, 500);
-    } else {
+    } else if (boostEpochOnDeliveredRef.current) {
+      boostEpochOnDeliveredRef.current = false;
       setIncomingWatchBoostEpoch((n) => n + 1);
     }
   }, []);
@@ -750,6 +769,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       preSendTotalRef.current = prevBalanceRef.current.total;
     }
     suppressIncomingUntilRef.current = Date.now() + SEND_CHANGE_GUARD_MS;
+    catchUpCreditRef.current = null;
     setFundsNotice(null);
   }, []);
 
@@ -782,6 +802,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     if (!(spend > 0)) return;
     const networkId = getNetworkConfig().id;
     const walletId = selectedIdRef.current;
+    catchUpCreditRef.current = null;
     setBalance((prev) => {
       if (!prev) return prev;
       if (preSendTotalRef.current == null) {
@@ -874,11 +895,18 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [syncReceiveAddresses],
   );
 
+  const settleCatchUpNotice = useCallback((amountSats: number) => {
+    const credit = catchUpCreditRef.current;
+    if (!credit || credit.noticeSettled) return;
+    if (Math.abs(credit.sats - Math.floor(amountSats)) > 2) return;
+    credit.noticeSettled = true;
+  }, []);
+
   const emitFundsNotice = useCallback((
     amount: number,
     kind: FundsNotice["kind"],
     opts?: { bypassSendSuppress?: boolean; afterChatPrefer?: boolean },
-  ): "shown" | "busy" | "blocked" => {
+  ): "shown" | "busy" | "blocked" | "deferred" => {
     if (amount <= 0) return "busy";
     // After Exit Fiat Mode: suppress sats/boarding toasts for the swap fill
     // (incl. 330 dust). Must live here — gate is off so dust carrier check misses.
@@ -917,9 +945,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       return "blocked";
     }
     // ChatThread focused: never classic overlay (bubble owns UX).
+    // "deferred" — Home may still adopt; duplicate/cooldown stay "busy" (α89.1 B2).
     if (isChatThreadFocused()) {
       console.warn("[basic] fundsNotice suppressed (chat thread)", kind, amount);
-      return "busy";
+      return "deferred";
     }
     // Receive / POS awaiting payment: classic overlay immediately (match main).
     // Do not race chat prefer — open pay-requests / hints were swallowing real
@@ -946,14 +975,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         }
         if (chatOnly) {
           console.warn("[basic] fundsNotice suppressed (chat prefer)", amount);
+          settleCatchUpNotice(amount);
           return;
         }
         emitFundsNotice(amount, kind, {
           bypassSendSuppress: opts?.bypassSendSuppress,
           afterChatPrefer: true,
         });
+        // Classic toast shown or suppressed after race — do not re-toast from notify.
+        settleCatchUpNotice(amount);
       })();
-      return "busy";
+      return "deferred";
     }
     // Post-send suppress blocks poll catch-up false positives — not SDK push receives.
     if (
@@ -988,8 +1020,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     console.warn("[basic] fundsNotice", kind, amount);
     setFundsNotice({ amount, kind, at: Date.now() });
     clearCatchUpPolls();
+    settleCatchUpNotice(amount);
     return "shown";
-  }, []);
+  }, [settleCatchUpNotice]);
 
   /** Public entry for Fiat Mode BRL receive toasts (and other callers). */
   const notifyFundsReceived = useCallback(
@@ -1033,6 +1066,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     if (!(add > 0)) return;
     const networkId = getNetworkConfig().id;
     const walletId = selectedIdRef.current;
+    // Notify applied this inbound — drop any poll catch-up credit (skeptic S2).
+    catchUpCreditRef.current = null;
     if (Date.now() >= suppressIncomingUntilRef.current) {
       preSendTotalRef.current = null;
     }
@@ -1439,7 +1474,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
               const boardingShown = emitFundsNotice(boardingDelta, "boarding");
               if (boardingShown !== "shown") {
                 // blocked → adopt UI, retry toast later.
-                // busy → adopt when Home is behind live (α89 Samsung stale).
+                // deferred/busy → do not adopt boarding (no credit consume path).
                 if (boardingShown === "blocked") {
                   setBalance(bal);
                   setBalanceStatus("ready");
@@ -1447,38 +1482,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   prevBoardingRef.current = bal.boarding;
                   prevBalanceRef.current = bal;
                 } else {
-                  const displayedTotal = prevBalanceRef.current?.total ?? 0;
-                  if (bal.total > displayedTotal + 1) {
-                    console.warn(
-                      "[basic] persistBalance adopt UI after busy notice",
-                      {
-                        totalDelta,
-                        live: bal.total,
-                        displayed: displayedTotal,
-                        ackTotal: ack.total,
-                        kind: "boarding",
-                      },
-                    );
-                    catchUpAdoptTotalRef.current = bal.total;
-                    prevBoardingRef.current = bal.boarding;
-                    prevBalanceRef.current = bal;
-                    balanceBaselineReadyRef.current = true;
-                    lastAckRef.current = bal;
-                    lastNotifyFloorRef.current = bal.total;
-                    setBalance(bal);
-                    await writeCachedBalance(networkId, walletId, bal);
-                    void writeLastAckBalance(networkId, walletId, bal);
-                  } else {
-                    // displayed already matches — α86 Samsung 2004 pin.
-                    console.warn(
-                      "[basic] persistBalance skip adopt after busy notice",
-                      {
-                        totalDelta,
-                        live: bal.total,
-                        ackTotal: ack.total,
-                      },
-                    );
-                  }
+                  console.warn(
+                    "[basic] persistBalance skip adopt after busy notice",
+                    {
+                      totalDelta: boardingDelta,
+                      live: bal.total,
+                      ackTotal: ack.total,
+                      reason: boardingShown,
+                    },
+                  );
                   setBalanceStatus("ready");
                 }
                 return;
@@ -1496,24 +1508,34 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   await writeCachedBalance(networkId, walletId, bal);
                   prevBoardingRef.current = bal.boarding;
                   prevBalanceRef.current = bal;
-                } else {
-                  // busy (chat-prefer defer / duplicate / cooldown).
-                  // α86: when Home already matches live, skip (2004 pin).
-                  // α89: when Home is behind, adopt absolute live + ack so toast
-                  // / afterChatPrefer cannot leave displayed at 0 with ackTotal 0.
+                } else if (arkShown === "deferred") {
+                  // Chat-prefer / chat-thread only (α89.1). Never adopt on
+                  // duplicate/cooldown "busy" — that reopened α86 2004 pin (B2).
                   const displayedTotal = prevBalanceRef.current?.total ?? 0;
                   if (bal.total > displayedTotal + 1) {
+                    const priorNotice = lastFundsNoticeRef.current;
+                    const noticeAlready =
+                      !!priorNotice &&
+                      priorNotice.kind === "arkade" &&
+                      Math.abs(priorNotice.amount - totalDelta) <= 1 &&
+                      Date.now() - priorNotice.at < FUNDS_NOTICE_DEDUPE_MS;
                     console.warn(
-                      "[basic] persistBalance adopt UI after busy notice",
+                      "[basic] persistBalance adopt UI after deferred notice",
                       {
                         totalDelta,
                         live: bal.total,
                         displayed: displayedTotal,
                         ackTotal: ack.total,
-                        kind: "arkade",
+                        noticeAlready,
                       },
                     );
-                    catchUpAdoptTotalRef.current = bal.total;
+                    // Credit = delta (not live total) so notify can consume (B1).
+                    // Chat-thread suppress is chat-only UX — treat notice as settled (S1).
+                    catchUpCreditRef.current = {
+                      sats: totalDelta,
+                      at: Date.now(),
+                      noticeSettled: noticeAlready || isChatThreadFocused(),
+                    };
                     prevBoardingRef.current = bal.boarding;
                     prevBalanceRef.current = bal;
                     balanceBaselineReadyRef.current = true;
@@ -1524,7 +1546,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                     void writeLastAckBalance(networkId, walletId, bal);
                   } else {
                     console.warn(
-                      "[basic] persistBalance skip adopt after busy notice",
+                      "[basic] persistBalance skip adopt after deferred notice",
                       {
                         totalDelta,
                         live: bal.total,
@@ -1532,6 +1554,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                       },
                     );
                   }
+                  setBalanceStatus("ready");
+                } else {
+                  // busy (duplicate / cooldown / dust / suppress) — α86 pin.
+                  console.warn(
+                    "[basic] persistBalance skip adopt after busy notice",
+                    {
+                      totalDelta,
+                      live: bal.total,
+                      ackTotal: ack.total,
+                    },
+                  );
                   setBalanceStatus("ready");
                 }
                 return;
@@ -1971,7 +2004,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       seenVtxoKeysRef.current = new Set();
       preSendTotalRef.current = null;
       aspPollPausedRef.current = 0;
-      catchUpAdoptTotalRef.current = null;
+      catchUpCreditRef.current = null;
+      if (boostPullTimerRef.current != null) {
+        clearTimeout(boostPullTimerRef.current);
+        boostPullTimerRef.current = undefined;
+      }
+      boostEpochOnDeliveredRef.current = false;
       setSelectedWalletId(networkId, walletId);
       setSelectedWallet(record);
       selectedIdRef.current = walletId;
@@ -3176,37 +3214,53 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   // Ack + Home update FIRST so persistBalance cannot toast the same
                   // delta as classic Funds Received while chat race runs (α71).
                   beginClassicChatDefer(amount);
-                  // α89: poll may already have floored Home+ack to live while
-                  // chat-prefer returned busy (Samsung +800 toast / 0 Home). One-shot
-                  // skip applyLocalReceive so notify cannot double the balance.
-                  const catchUpAdopt = catchUpAdoptTotalRef.current;
+                  // α89.1: consume poll catch-up *credit* (delta), not live total.
+                  let credit = catchUpCreditRef.current;
                   if (
-                    catchUpAdopt != null &&
-                    Math.abs(amount - catchUpAdopt) <= 2
+                    credit &&
+                    Date.now() - credit.at > CATCH_UP_CREDIT_TTL_MS
                   ) {
-                    catchUpAdoptTotalRef.current = null;
-                    console.warn(
-                      "[basic] notifyIncomingFunds skip apply (poll catch-up adopted)",
-                      { amount, catchUpAdopt },
-                    );
-                    emitFundsNotice(amount, "arkade", {
-                      bypassSendSuppress: expectingReceive,
-                    });
-                    balancePullAgainRef.current = false;
-                  } else {
-                    if (catchUpAdopt != null) {
-                      catchUpAdoptTotalRef.current = null;
+                    catchUpCreditRef.current = null;
+                    credit = null;
+                  }
+                  let applyAmount = amount;
+                  let noticeSettled = false;
+                  if (credit && credit.sats > 0) {
+                    const consumed = Math.min(amount, credit.sats);
+                    applyAmount = amount - consumed;
+                    noticeSettled = credit.noticeSettled;
+                    const left = credit.sats - consumed;
+                    if (left <= 2) {
+                      catchUpCreditRef.current = null;
+                    } else {
+                      catchUpCreditRef.current = {
+                        sats: left,
+                        at: credit.at,
+                        noticeSettled: credit.noticeSettled,
+                      };
                     }
-                    acknowledgeIncomingAmount(amount);
+                    console.warn(
+                      "[basic] notifyIncomingFunds consume catch-up credit",
+                      {
+                        amount,
+                        consumed,
+                        applyAmount,
+                        noticeSettled,
+                        left: left > 2 ? left : 0,
+                      },
+                    );
+                  }
+                  if (applyAmount > 0) {
+                    acknowledgeIncomingAmount(applyAmount);
                     // ASP notify owns Maxi Home balance (receipt must not also add — α76).
-                    applyLocalReceive(amount);
+                    applyLocalReceive(applyAmount);
                     const wid = selectedIdRef.current;
                     if (wid) {
                       try {
                         recordOptimisticArkadeReceive(
                           getNetworkConfig().id,
                           wid,
-                          { amountSats: amount },
+                          { amountSats: applyAmount },
                         );
                         setActivityEpoch((n) => n + 1);
                       } catch (e) {
@@ -3216,13 +3270,20 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                         );
                       }
                     }
-                    // Toast from subscription first (α84) — do not wait for boost poll.
+                  }
+                  // Skip classic toast if poll/chat-prefer already settled it (S1).
+                  if (!noticeSettled) {
                     emitFundsNotice(amount, "arkade", {
                       bypassSendSuppress: expectingReceive,
                     });
-                    // Drop stacked gentle polls so they cannot re-toast the same inbound.
-                    balancePullAgainRef.current = false;
+                  } else {
+                    console.warn(
+                      "[basic] notifyIncomingFunds skip notice (catch-up settled)",
+                      { amount },
+                    );
                   }
+                  // Drop stacked gentle polls so they cannot re-toast the same inbound.
+                  balancePullAgainRef.current = false;
                 }
               }
             }
