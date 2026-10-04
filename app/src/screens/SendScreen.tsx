@@ -1174,59 +1174,62 @@ export function SendScreen() {
         return;
       }
 
-      // Post-bio: one vtxo plan (covers α76 live-balance check via totalAvailable).
-      let plan: Awaited<ReturnType<typeof prepareDustSafeSend>> = {
-        amount: paymentSum,
-        amountBumped: false,
-        originalAmount: paymentSum,
-        selectedVtxos: undefined,
-      };
-      if (!wantsAsset || paymentSum > 0) {
-        plan = await prepareDustSafeSend(wallet, paymentSum, dust, {
-          timeoutMs: 5_000,
-        });
-      }
-      if (
-        !wantsAsset &&
-        plan.totalAvailable != null &&
-        paymentSum > plan.totalAvailable
-      ) {
-        void refreshBalanceOnly();
-        Alert.alert(
-          "Insufficient balance",
-          fiatMode
-            ? `Available: ${plan.totalAvailable.toLocaleString("en-US")} sats. In Fiat Mode, Home shows stable balance — convert more or wait for sats to settle.`
-            : `Available: ${plan.totalAvailable.toLocaleString("en-US")} sats`,
-        );
-        return;
-      }
-      if (plan.amountBumped) {
-        const last = working[working.length - 1]!;
-        const lastOriginal = last.amount;
-        const delta = plan.amount - paymentSum;
-        const bumpedLast = lastOriginal + delta;
-        const ok = await confirmAmountBump(paymentSum, plan.amount, dust, {
-          lastOriginal,
-          lastBumped: bumpedLast,
-        });
-        if (!ok) return;
-        last.amount = bumpedLast;
-        paymentSum = plan.amount;
-        // Reflect bump on matching UI line (last complete / same address).
-        setLines((prev) => {
-          const copy = [...prev];
-          for (let i = copy.length - 1; i >= 0; i--) {
-            if (copy[i]!.address.trim() === last.address) {
-              copy[i] = { ...copy[i]!, amountStr: String(bumpedLast) };
-              break;
-            }
-          }
-          return copy;
-        });
-      }
-
+      // α89: pause balance polls for plan+send (not only wallet.send). Xiaomi
+      // evidence: bio OK → ~6.4s plan while polls still raced getSpendableVtxos.
       beginOutboundSend();
       try {
+        // Post-bio: one vtxo plan (covers α76 live-balance check via totalAvailable).
+        let plan: Awaited<ReturnType<typeof prepareDustSafeSend>> = {
+          amount: paymentSum,
+          amountBumped: false,
+          originalAmount: paymentSum,
+          selectedVtxos: undefined,
+        };
+        if (!wantsAsset || paymentSum > 0) {
+          plan = await prepareDustSafeSend(wallet, paymentSum, dust, {
+            // Exclusive ASP (polls paused) — one 8s attempt, not 5s fail + 8s retry.
+            timeoutMs: 8_000,
+          });
+        }
+        if (
+          !wantsAsset &&
+          plan.totalAvailable != null &&
+          paymentSum > plan.totalAvailable
+        ) {
+          void refreshBalanceOnly();
+          Alert.alert(
+            "Insufficient balance",
+            fiatMode
+              ? `Available: ${plan.totalAvailable.toLocaleString("en-US")} sats. In Fiat Mode, Home shows stable balance — convert more or wait for sats to settle.`
+              : `Available: ${plan.totalAvailable.toLocaleString("en-US")} sats`,
+          );
+          return;
+        }
+        if (plan.amountBumped) {
+          const last = working[working.length - 1]!;
+          const lastOriginal = last.amount;
+          const delta = plan.amount - paymentSum;
+          const bumpedLast = lastOriginal + delta;
+          const ok = await confirmAmountBump(paymentSum, plan.amount, dust, {
+            lastOriginal,
+            lastBumped: bumpedLast,
+          });
+          if (!ok) return;
+          last.amount = bumpedLast;
+          paymentSum = plan.amount;
+          // Reflect bump on matching UI line (last complete / same address).
+          setLines((prev) => {
+            const copy = [...prev];
+            for (let i = copy.length - 1; i >= 0; i--) {
+              if (copy[i]!.address.trim() === last.address) {
+                copy[i] = { ...copy[i]!, amountStr: String(bumpedLast) };
+                break;
+              }
+            }
+            return copy;
+          });
+        }
+
         const primaryAddr = working[0]!.address;
         notePendingSendFromThisDevice(
           network.id,

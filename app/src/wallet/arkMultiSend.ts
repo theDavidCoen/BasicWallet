@@ -187,8 +187,10 @@ export async function prepareDustSafeSend(
 
   let list: SpendableVtxo[] | null = null;
   let lastErr: unknown = null;
-  // One retry — Xiaomi often times out the first vtxo read during ASP pause.
-  for (const ms of [timeoutMs, Math.max(timeoutMs, 8_000)]) {
+  // One retry when first budget is short — Xiaomi often times out during ASP load.
+  // Deduped: timeoutMs >= 8s (post-bio exclusive plan) → single attempt only.
+  const attemptMs = [...new Set([timeoutMs, Math.max(timeoutMs, 8_000)])];
+  for (const ms of attemptMs) {
     try {
       list = await withTimeout(w.getSpendableVtxos(), ms, "getSpendableVtxos");
       lastErr = null;
