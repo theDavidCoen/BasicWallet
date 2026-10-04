@@ -121,3 +121,25 @@ export function settleCatchUpCredit(
     settledSats: Math.min(credit.sats, credit.settledSats + amt),
   };
 }
+
+/** Per-wallet credit map — switch must not wipe another wallet's budget. */
+export type CatchUpCreditByWallet = Record<string, CatchUpCredit>;
+
+export function getCatchUpCreditForWallet(
+  byWallet: CatchUpCreditByWallet,
+  walletId: string | null | undefined,
+): CatchUpCredit | null {
+  if (!walletId) return null;
+  const c = byWallet[walletId];
+  return c && c.sats > 0 ? c : null;
+}
+
+export function setCatchUpCreditForWallet(
+  byWallet: CatchUpCreditByWallet,
+  walletId: string | null | undefined,
+  credit: CatchUpCredit | null,
+): void {
+  if (!walletId) return;
+  if (credit && credit.sats > 0) byWallet[walletId] = credit;
+  else delete byWallet[walletId];
+}

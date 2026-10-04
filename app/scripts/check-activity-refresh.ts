@@ -5,12 +5,19 @@
 import {
   ACTIVITY_HISTORY_BUDGET_MS,
   ACTIVITY_REMATERIALIZE_COOL_MS,
+  CATCH_UP_LOCAL_MAX_AGE_MS,
+  CATCH_UP_RECEIVE_TAG,
+  coalesceActivityRefresh,
   filterUnmatchedLocalReceives,
   isWalletCoolingDown,
   matchOptimisticReceive,
+  outboundSpendTarget,
+  persistSpendBreakdown,
   previousBalanceForWallet,
   remainingHistoryBudgetMs,
+  shouldBumpMaterializeGenOnFailure,
   shouldCommitWalletWork,
+  shouldDropCatchUpLocalReceive,
   shouldFetchVtxoFallback,
   shouldRecordOptimisticReceive,
   switchHomeBalance,
@@ -194,6 +201,173 @@ console.log("activityRefresh scenarios\n");
     "skip vtxos when history is thick",
     shouldFetchVtxoFallback({ rowCount: 11, remainingMs: 8_000 }) === false,
   );
+}
+
+{
+  console.log("\n9) catch-up while away — history minutes/hours earlier");
+  const rowAt = 36 * 60_000;
+  const local = [
+    {
+      id: "local-recv:away",
+      amount: 1900,
+      createdAt: rowAt,
+      arkTxid: "",
+      tags: [CATCH_UP_RECEIVE_TAG],
+    },
+  ];
+  const history = [
+    {
+      id: "aabbccdd".repeat(8).slice(0, 64),
+      amount: 1900,
+      createdAt: rowAt - 36 * 60_000,
+    },
+  ];
+  const naive = filterUnmatchedLocalReceives(local, history);
+  assert("120s window would keep phantom", naive.length === 1);
+  const dropped = filterUnmatchedLocalReceives(local, history, {
+    historySucceeded: true,
+    historyFetchStartedAt: rowAt + 1_000,
+    now: rowAt + 2_000,
+  });
+  assert("successful later history drops catch-up", dropped.length === 0);
+  const inFlight = filterUnmatchedLocalReceives(local, history, {
+    historySucceeded: true,
+    historyFetchStartedAt: rowAt - 5_000,
+    now: rowAt + 2_000,
+  });
+  assert("fetch started before row is kept (until next)", inFlight.length === 1);
+}
+
+{
+  console.log("\n10) 500+700 in one catch-up → one +1200 placeholder");
+  const local = [
+    {
+      id: "local-recv:sum",
+      amount: 1200,
+      createdAt: 10_000,
+      arkTxid: "",
+      tags: [CATCH_UP_RECEIVE_TAG],
+    },
+  ];
+  const history = [
+    { id: "aa".repeat(32), amount: 500, createdAt: 1_000 },
+    { id: "bb".repeat(32), amount: 700, createdAt: 2_000 },
+  ];
+  const kept = filterUnmatchedLocalReceives(local, history, {
+    historySucceeded: true,
+    historyFetchStartedAt: 11_000,
+    now: 12_000,
+  });
+  assert("summed catch-up drops once history lands", kept.length === 0);
+}
+
+{
+  console.log("\n11) ack-0 first open whole-balance phantom");
+  const local = [
+    {
+      id: "local-recv:ack0",
+      amount: 6795,
+      createdAt: 50_000,
+      arkTxid: "",
+      tags: [CATCH_UP_RECEIVE_TAG],
+    },
+  ];
+  const history = [
+    { id: "cc".repeat(32), amount: 6795, createdAt: 1_000 },
+  ];
+  const kept = filterUnmatchedLocalReceives(local, history, {
+    historySucceeded: true,
+    historyFetchStartedAt: 51_000,
+    now: 52_000,
+  });
+  assert("ack-0 whole-balance catch-up drops", kept.length === 0);
+  assert(
+    "age backstop drops catch-up",
+    shouldDropCatchUpLocalReceive({
+      createdAt: 1_000,
+      historySucceeded: false,
+      now: 1_000 + CATCH_UP_LOCAL_MAX_AGE_MS + 1,
+    }) === true,
+  );
+}
+
+{
+  console.log("\n12) shown then notify same funds — narrow dedupe");
+  const shown = [
+    {
+      id: "local-recv:shown",
+      amount: 1900,
+      createdAt: 20_000,
+      arkTxid: "",
+      tags: [CATCH_UP_RECEIVE_TAG],
+    },
+  ];
+  const notify = matchOptimisticReceive(shown, {
+    amountSats: 1900,
+    now: 20_000 + 15_000,
+    source: "notify-credit",
+  });
+  assert("notify-credit dedupes catch-up shown row", notify === "local-recv:shown");
+  const late = matchOptimisticReceive(shown, {
+    amountSats: 1900,
+    now: 20_000 + 61_000,
+    source: "notify-credit",
+  });
+  assert("notify-credit after 60s not amount-deduped", late === null);
+  const s7 = matchOptimisticReceive(
+    [{ id: "local-recv:n", amount: 500, createdAt: 10_000 }],
+    { amountSats: 500, now: 11_000, source: "notify-credit" },
+  );
+  assert("S7 two notify 500s still distinct", s7 === null);
+}
+
+{
+  console.log("\n13) refreshActivity coalesce + timeout gen");
+  assert(
+    "same wallet joins in-flight",
+    coalesceActivityRefresh({
+      inFlightWalletId: "w_mutqs3",
+      requestedWalletId: "w_mutqs3",
+    }) === "join",
+  );
+  assert(
+    "other wallet starts new",
+    coalesceActivityRefresh({
+      inFlightWalletId: "w_mutqs3",
+      requestedWalletId: "w_pk_i_0",
+    }) === "start",
+  );
+  assert(
+    "timeout bumps only newest gen",
+    shouldBumpMaterializeGenOnFailure({ startedGen: 4, currentGen: 4 }) === true,
+  );
+  assert(
+    "older timeout does not bump newer gen",
+    shouldBumpMaterializeGenOnFailure({ startedGen: 3, currentGen: 4 }) === false,
+  );
+}
+
+{
+  console.log("\n14) outbound spend binds to send wallet, not current");
+  assert(
+    "still on sender → Home",
+    outboundSpendTarget({
+      outboundWalletId: "w_a",
+      currentWalletId: "w_a",
+    }) === "apply-home",
+  );
+  assert(
+    "switched away → persist foreign, do not block",
+    outboundSpendTarget({
+      outboundWalletId: "w_a",
+      currentWalletId: "w_b",
+    }) === "persist-foreign",
+  );
+  const next = persistSpendBreakdown({
+    preSend: { available: 5000, boarding: 0, total: 5000 },
+    spendSats: 800,
+  });
+  assert("foreign persist is sender minus spend", next.total === 4200);
 }
 
 if (failed > 0) {

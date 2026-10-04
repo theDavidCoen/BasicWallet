@@ -7,6 +7,12 @@ export const ACTIVITY_REMATERIALIZE_COOL_MS = 60_000;
 export const ACTIVITY_HISTORY_BUDGET_MS = 10_000;
 export const ACTIVITY_HISTORY_MIN_SLICE_MS = 400;
 export const OPTIMISTIC_RECEIVE_DEDUP_MS = 120_000;
+/** Catch-up placeholders expire even if history never lands. */
+export const CATCH_UP_LOCAL_MAX_AGE_MS = 30 * 60_000;
+/** Tag stored on poll/catch-up optimistic receives (not notify-credit). */
+export const CATCH_UP_RECEIVE_TAG = "catch-up";
+/** Narrow shown-then-notify amount dedupe — shorter than history merge window. */
+export const NOTIFY_CATCHUP_ROW_DEDUP_MS = 60_000;
 
 export type OptimisticReceiveSource =
   | "catch-up"
@@ -22,7 +28,26 @@ export type OptimisticReceiveHint = {
   amount: number;
   createdAt: number;
   arkTxid?: string;
+  tags?: string[];
 };
+
+export function isCatchUpOptimisticSource(source: OptimisticReceiveSource): boolean {
+  return (
+    source === "catch-up" ||
+    source === "funds-notice" ||
+    source === "persist-adopt"
+  );
+}
+
+export function rowHasCatchUpTag(tags?: string[]): boolean {
+  return (tags ?? []).includes(CATCH_UP_RECEIVE_TAG);
+}
+
+function hintHasRealTxid(row: { id?: string; arkTxid?: string }): boolean {
+  const ark = (row.arkTxid || "").trim().toLowerCase();
+  const id = (row.id || "").trim().toLowerCase();
+  return /^[0-9a-f]{64}$/.test(ark) || /^[0-9a-f]{64}$/.test(id);
+}
 
 export function shouldRecordOptimisticReceive(input: {
   amountSats: number;
@@ -73,9 +98,21 @@ export function matchOptimisticReceive(
   }
 
   // Notify credit must not collapse two distinct same-size inbounds (S7).
-  // Catch-up / persist / funds-notice skip if notify (or a prior catch-up) already
-  // wrote this amount recently.
-  if (incoming.source === "notify-credit") return null;
+  // Narrow exception: a poll "shown" catch-up row with no txid from the last
+  // ~60s is the same funds as a later notify (α92 S1).
+  if (incoming.source === "notify-credit") {
+    for (const row of existing) {
+      if (!(row.amount > 0)) continue;
+      if (Math.abs(row.amount - amount) > 1) continue;
+      if (hintHasRealTxid(row)) continue;
+      if (!rowHasCatchUpTag(row.tags)) continue;
+      if (row.createdAt > 0 && now > 0 && now - row.createdAt > NOTIFY_CATCHUP_ROW_DEDUP_MS) {
+        continue;
+      }
+      return row.id;
+    }
+    return null;
+  }
 
   for (const row of existing) {
     if (!(row.amount > 0)) continue;
@@ -86,6 +123,24 @@ export function matchOptimisticReceive(
     return row.id;
   }
   return null;
+}
+
+export function shouldDropCatchUpLocalReceive(input: {
+  createdAt: number;
+  historySucceeded: boolean;
+  historyFetchStartedAt?: number;
+  now?: number;
+  maxAgeMs?: number;
+}): boolean {
+  const now = input.now ?? 0;
+  const maxAge = input.maxAgeMs ?? CATCH_UP_LOCAL_MAX_AGE_MS;
+  if (now > 0 && input.createdAt > 0 && now - input.createdAt > maxAge) {
+    return true;
+  }
+  if (!input.historySucceeded) return false;
+  const started = input.historyFetchStartedAt;
+  if (started == null) return false;
+  return started > input.createdAt;
 }
 
 export function localReceiveMatchedByHistory(
@@ -104,13 +159,92 @@ export function localReceiveMatchedByHistory(
   });
 }
 
+export type LocalReceiveMergeOpts = {
+  historySucceeded?: boolean;
+  historyFetchStartedAt?: number;
+  now?: number;
+};
+
 export function filterUnmatchedLocalReceives<
-  T extends { amount: number; createdAt: number; arkTxid?: string },
+  T extends { amount: number; createdAt: number; arkTxid?: string; tags?: string[] },
 >(
   local: T[],
   history: Array<{ amount: number; createdAt: number; id: string; arkTxid?: string }>,
+  opts?: LocalReceiveMergeOpts,
 ): T[] {
-  return local.filter((p) => !localReceiveMatchedByHistory(p, history));
+  const historySucceeded = opts?.historySucceeded === true;
+  const now = opts?.now;
+  return local.filter((p) => {
+    if (rowHasCatchUpTag(p.tags)) {
+      if (
+        shouldDropCatchUpLocalReceive({
+          createdAt: p.createdAt,
+          historySucceeded,
+          historyFetchStartedAt: opts?.historyFetchStartedAt,
+          now,
+        })
+      ) {
+        return false;
+      }
+    } else if (
+      now != null &&
+      now > 0 &&
+      p.createdAt > 0 &&
+      now - p.createdAt > CATCH_UP_LOCAL_MAX_AGE_MS &&
+      !hintHasRealTxid(p)
+    ) {
+      // Untagged α92 phantoms: age backstop only.
+      return false;
+    }
+    return !localReceiveMatchedByHistory(p, history);
+  });
+}
+
+/** Join an in-flight rematerialize for the same wallet; start a new one otherwise. */
+export function coalesceActivityRefresh(input: {
+  inFlightWalletId: string | null | undefined;
+  requestedWalletId: string;
+}): "join" | "start" {
+  if (input.inFlightWalletId && input.inFlightWalletId === input.requestedWalletId) {
+    return "join";
+  }
+  return "start";
+}
+
+/** Timeout may bump gen only when this call is still the newest. */
+export function shouldBumpMaterializeGenOnFailure(input: {
+  startedGen: number;
+  currentGen: number;
+}): boolean {
+  return input.startedGen === input.currentGen;
+}
+
+export type OutboundSpendTarget = "apply-home" | "persist-foreign" | "ignore";
+
+/** Spend/hold follow the wallet captured at beginOutboundSend, not the current selection. */
+export function outboundSpendTarget(input: {
+  outboundWalletId: string | null | undefined;
+  currentWalletId: string | null | undefined;
+}): OutboundSpendTarget {
+  const out = input.outboundWalletId || null;
+  const cur = input.currentWalletId || null;
+  if (!out && !cur) return "ignore";
+  if (!out) return "apply-home";
+  if (out === cur) return "apply-home";
+  return "persist-foreign";
+}
+
+export function persistSpendBreakdown(input: {
+  preSend: { available: number; boarding: number; total: number };
+  spendSats: number;
+}): { available: number; boarding: number; total: number } {
+  const spend = Math.max(0, Math.floor(input.spendSats));
+  const available = Math.max(0, Math.floor(input.preSend.available) - spend);
+  return {
+    available,
+    boarding: input.preSend.boarding,
+    total: available + input.preSend.boarding,
+  };
 }
 
 export function shouldCommitWalletWork(input: {

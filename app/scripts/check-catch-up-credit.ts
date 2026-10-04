@@ -6,8 +6,11 @@ import {
   addCatchUpCredit,
   consumeCatchUpCredit,
   settleCatchUpCredit,
+  getCatchUpCreditForWallet,
+  setCatchUpCreditForWallet,
   CATCH_UP_SETTLED_TTL_MS,
   type CatchUpCredit,
+  type CatchUpCreditByWallet,
 } from "../src/wallet/catchUpCredit";
 
 let failed = 0;
@@ -178,6 +181,26 @@ console.log("catchUpCredit scenarios\n");
   const r2 = consumeCatchUpCredit(r1.credit, 500, { now: 110_000 });
   assert("500 skip toast", r2.noticeSettled === true);
   assert("cleared", r2.credit === null);
+}
+
+{
+  console.log("\n11) per-wallet credit survives switch (not cleared globally)");
+  const byWallet: CatchUpCreditByWallet = {};
+  setCatchUpCreditForWallet(
+    byWallet,
+    "w_a",
+    addCatchUpCredit(null, 800, { now: 0, noticeSettled: true }),
+  );
+  setCatchUpCreditForWallet(
+    byWallet,
+    "w_b",
+    addCatchUpCredit(null, 500, { now: 1_000, noticeSettled: false }),
+  );
+  assert("A still 800 after B adopt", eq(getCatchUpCreditForWallet(byWallet, "w_a")?.sats ?? -1, 800));
+  assert("B has 500", eq(getCatchUpCreditForWallet(byWallet, "w_b")?.sats ?? -1, 500));
+  setCatchUpCreditForWallet(byWallet, "w_b", null);
+  assert("clearing B leaves A", eq(getCatchUpCreditForWallet(byWallet, "w_a")?.sats ?? -1, 800));
+  assert("B gone", getCatchUpCreditForWallet(byWallet, "w_b") === null);
 }
 
 console.log(failed === 0 ? "\nAll scenarios passed." : `\n${failed} scenario(s) failed.`);
