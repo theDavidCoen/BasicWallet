@@ -188,7 +188,7 @@ export async function prepareDustSafeSend(
   let list: SpendableVtxo[] | null = null;
   let lastErr: unknown = null;
   // One retry when first budget is short — Xiaomi often times out during ASP load.
-  // Deduped: timeoutMs >= 8s (post-bio exclusive plan) → single attempt only.
+  // Deduped so timeoutMs >= 8s stays a single attempt; classic Send uses 6s→8s.
   const attemptMs = [...new Set([timeoutMs, Math.max(timeoutMs, 8_000)])];
   for (const ms of attemptMs) {
     try {

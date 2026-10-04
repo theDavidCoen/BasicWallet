@@ -168,13 +168,19 @@ type WalletContextValue = {
   setIncomingWatchBoost: (on: boolean) => void;
   /**
    * Suppress FundsReceived after a local outbound (and for ~5m of change catch-up, α86).
-   * Does not pause ASP balance polls — use begin/endOutboundSend for that.
+   * Does not pause ASP balance polls — use pause/resumeAspPolls or begin/endOutboundSend.
    */
   noteLocalSend: () => void;
   /**
-   * Pause background getBalance / reload traffic so wallet.send() is not
-   * starved (official Arkade wallet has no parallel balance pollers during send).
-   * Pair with endOutboundSend in finally.
+   * Pause background getBalance / reload only (no just-sent guard).
+   * Use for post-bio vtxo planning before a real send is committed (α89 skeptic).
+   * Pair with resumeAspPolls in finally.
+   */
+  pauseAspPolls: () => void;
+  resumeAspPolls: () => void;
+  /**
+   * noteLocalSend + pauseAspPolls. Pair with endOutboundSend in finally.
+   * Prefer pauseAspPolls alone when planning may abort without sending.
    */
   beginOutboundSend: () => void;
   endOutboundSend: () => void;
@@ -747,21 +753,29 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setFundsNotice(null);
   }, []);
 
-  const beginOutboundSend = useCallback(() => {
-    noteLocalSend();
+  const pauseAspPolls = useCallback(() => {
     aspPollPausedRef.current += 1;
     clearTimeout(reloadTimerRef.current);
     console.warn("[basic] aspPolls pause", { depth: aspPollPausedRef.current });
-  }, [noteLocalSend]);
+  }, []);
 
-  const endOutboundSend = useCallback(() => {
+  const resumeAspPolls = useCallback(() => {
     aspPollPausedRef.current = Math.max(0, aspPollPausedRef.current - 1);
     console.warn("[basic] aspPolls resume", { depth: aspPollPausedRef.current });
-    // One catch-up pull after send so Home is not stuck on optimistic balance.
+    // Catch-up pull when the last pause lifts (plan abort or send done).
     if (aspPollPausedRef.current === 0) {
       pullBalanceNowRef.current();
     }
   }, []);
+
+  const beginOutboundSend = useCallback(() => {
+    noteLocalSend();
+    pauseAspPolls();
+  }, [noteLocalSend, pauseAspPolls]);
+
+  const endOutboundSend = useCallback(() => {
+    resumeAspPolls();
+  }, [resumeAspPolls]);
 
   const applyLocalSpend = useCallback((amountSats: number) => {
     const spend = Math.max(0, Math.floor(amountSats));
@@ -3305,6 +3319,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setPosUiHold,
       setIncomingWatchBoost,
       noteLocalSend,
+      pauseAspPolls,
+      resumeAspPolls,
       beginOutboundSend,
       endOutboundSend,
       applyLocalSpend,
@@ -3356,6 +3372,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       notifyFundsReceived,
       setIncomingWatchBoost,
       noteLocalSend,
+      pauseAspPolls,
+      resumeAspPolls,
       beginOutboundSend,
       endOutboundSend,
       applyLocalSpend,

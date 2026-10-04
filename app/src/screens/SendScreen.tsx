@@ -228,6 +228,9 @@ export function SendScreen() {
     refresh,
     balanceStatus,
     walletInteractive,
+    pauseAspPolls,
+    resumeAspPolls,
+    noteLocalSend,
     beginOutboundSend,
     endOutboundSend,
     applyLocalSpend,
@@ -1174,9 +1177,10 @@ export function SendScreen() {
         return;
       }
 
-      // α89: pause balance polls for plan+send (not only wallet.send). Xiaomi
-      // evidence: bio OK → ~6.4s plan while polls still raced getSpendableVtxos.
-      beginOutboundSend();
+      // α89: pause polls for plan+send without arming the 5m just-sent guard
+      // (skeptic B1: beginOutboundSend→noteLocalSend on Insufficient/bump-cancel
+      // swallowed real inbound). Guard arms only once the send is committed.
+      pauseAspPolls();
       try {
         // Post-bio: one vtxo plan (covers α76 live-balance check via totalAvailable).
         let plan: Awaited<ReturnType<typeof prepareDustSafeSend>> = {
@@ -1187,8 +1191,9 @@ export function SendScreen() {
         };
         if (!wantsAsset || paymentSum > 0) {
           plan = await prepareDustSafeSend(wallet, paymentSum, dust, {
-            // Exclusive ASP (polls paused) — one 8s attempt, not 5s fail + 8s retry.
-            timeoutMs: 8_000,
+            // Two attempts: 6s then 8s (skeptic S1 — in-flight poll can still
+            // contend; single 8s was a blind send on timeout).
+            timeoutMs: 6_000,
           });
         }
         if (
@@ -1196,7 +1201,8 @@ export function SendScreen() {
           plan.totalAvailable != null &&
           paymentSum > plan.totalAvailable
         ) {
-          void refreshBalanceOnly();
+          // resumeAspPolls finally → pullBalanceNow; do not call refreshBalanceOnly
+          // here (paused loadBalance is a no-op — skeptic N1).
           Alert.alert(
             "Insufficient balance",
             fiatMode
@@ -1231,6 +1237,8 @@ export function SendScreen() {
         }
 
         const primaryAddr = working[0]!.address;
+        // Arm change-suppress only when we are about to broadcast (not on abort).
+        noteLocalSend();
         notePendingSendFromThisDevice(
           network.id,
           selectedWallet?.id ?? "",
@@ -1372,7 +1380,7 @@ export function SendScreen() {
           }
         })();
       } finally {
-        endOutboundSend();
+        resumeAspPolls();
       }
     } catch (e) {
       const msg = formatSendError(e, dust);
