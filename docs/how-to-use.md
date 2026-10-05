@@ -72,6 +72,7 @@ These are easy to miss; they are part of the real Home / Send UX.
 | Gesture / control | What it does |
 |-------------------|--------------|
 | **Pull / drag the bottom handle up** (or tap the handle) | Open **Activity** sheet |
+| **Swipe down** from just below the logo | Force **balance + activity** resync (circular spinner while it runs) |
 | **Swipe left → right** (LTR) on Home | Open **POS** (point of sale / request) side page |
 | **Swipe right → left** (RTL) on Home | Open **Scan QR** side page |
 | **R$** button (header, Arkade wallet) | Enter Fiat Mode sheet |

@@ -67,7 +67,7 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 
 Expect bugs, incomplete screens, and breaking changes between `0.x` alphas.
 
-Gestures (Activity pull, POS/Scan swipes, Send Enter/Paste/My wallets/Scan, Fiat Mode icon): [`docs/how-to-use.md`](./docs/how-to-use.md#shortcuts--gestures). Bluetooth pair / fast login: [`docs/how-to-use.md`](./docs/how-to-use.md#bluetooth-pair--fast-login).
+Gestures (Activity pull, Home pull-down resync, POS/Scan swipes, Send Enter/Paste/My wallets/Scan, Fiat Mode icon): [`docs/how-to-use.md`](./docs/how-to-use.md#shortcuts--gestures). Bluetooth pair / fast login: [`docs/how-to-use.md`](./docs/how-to-use.md#bluetooth-pair--fast-login).
 
 ## Repository layout
 
