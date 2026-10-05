@@ -61,7 +61,8 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 - **Pair with Bluetooth** — move wallets / nsec to a nearby phone on the welcome screen (lobby code + biometrics; passkeys stay on Device 1)
 - **Manage a Nostr identity**; Advanced Backup (Nostr relays and/or home server), including Fiat/Maxi prefs in the Path C package
 - Maintain **contacts** (npub, NIP-05, BIP-353, etc.) and share a contact over Nostr
-- **Pay in Chat** — 1:1 Nostr threads with text, payment cards, and requests (opt-in Android push when enabled)
+- **Pay in Chat** — 1:1 Nostr threads with text plus send/request payment cards (Home **Chat & Pay** hub or a contact; classic Send stays separate)
+- **Closed-app alerts** (Android, opt-in) — opaque tray wake (“New Pay message”) for Pay in Chat / contact share while the app is closed; never amounts or memos; classic receives still catch up on open
 - Prefer mainnet or Mutinynet (and optional custom ASP) from Settings
 
 Expect bugs, incomplete screens, and breaking changes between `0.x` alphas.

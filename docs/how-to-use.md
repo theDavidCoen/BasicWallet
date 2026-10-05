@@ -38,6 +38,12 @@ Settings → About shows version + git commit for the APK you installed.
 
 - Bottom sheet from Home (see shortcuts). Tap a row for detail, notes, and related actions.
 
+### Pay in Chat
+
+- **Chat & Pay** on Home (or open a contact) → 1:1 thread over Nostr gift wraps.
+- Composer for text; **Request** / **Send** for payment cards in the thread (Arkade; classic Send stays for paste / QR / multisend).
+- Unread activity can surface as a Home banner; history is local (encrypted) and recoverable from Nostr when identity/relays allow.
+
 ### Settings (highlights)
 
 | Row | Purpose |
@@ -45,6 +51,8 @@ Settings → About shows version + git commit for the APK you installed.
 | Bitcoin Maxi Mode | Auto-swap inbound alt-assets → sats when Fiat Mode is off (default ON) |
 | Fiat Mode | Enter/exit stable unit mode; pick available stable card |
 | Contacts | Private directory; Nostr share |
+| Chat & Pay | Pay in Chat hub (threads + open contacts) |
+| Notifications | Android opt-in closed-app alerts (opaque “New Pay message”; default off) |
 | Backup | Passkey status, Nostr package, home server |
 | Restore | Seed / nsec package / home server |
 | Pair with Bluetooth | Move this account to a nearby phone on the welcome screen (Advanced) |
@@ -159,11 +167,12 @@ Both phones need Bluetooth (and nearby-devices) permission. Stay within range un
 - Local encrypted directory; optional always-on Nostr directory sync (separate from Path C passphrase).
 - Share a contact over Nostr gift wraps when identity is set.
 
-### Pay in Chat
+### Closed-app alerts (Android)
 
-- Open a contact → **Chat & Pay** for a 1:1 Nostr thread (text, send/request cards).
-- Needs an npub or NIP-05 on the contact; classic Send stays for paste / QR / multisend.
-- Optional Android tray wake: Settings → Notifications (opaque push; tap opens the thread after unlock).
+- Settings → **Notifications** → **Closed-app alerts** (opt-in, off by default; needs a Nostr identity).
+- Opaque tray only (“New Pay message”) for Pay in Chat / contact share while Basic is closed — never amounts, memos, or addresses.
+- Tap the tray → unlock → Chat thread (or Chat & Pay hub if the contact is unknown). Classic Bitcoin receives still catch up when you open the app (no tray).
+- Prefer swipe-away over system **Force stop**; some OEMs block tray wake after force-stop.
 
 ### Lightning
 
