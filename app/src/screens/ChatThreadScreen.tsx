@@ -29,7 +29,6 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
 import { ChatPaymentCard } from "../components/chat/ChatPaymentCard";
@@ -332,12 +331,13 @@ export function ChatThreadScreen() {
     return () => clearTimeout(t);
   }, [keyboardTopY]);
 
-  // Composer sits above ScreenChrome bottom pad; lift so its bottom meets
-  // the keyboard top (same screen-space idea as InteractiveBottomSheet).
-  const chromeBottomPad = insets.bottom + SCREEN_CHROME_BOTTOM_EXTRA;
+  // Composer sits above ScreenChrome bottom pad. Do NOT subtract that pad from
+  // the lift: on Xiaomi/Gboard, Keyboard screenY is the key-area top (below the
+  // suggestion strip), so subtracting chrome pad leaves the field under the
+  // predictions bar. Full windowHeight - screenY clears the real IME inset.
   const androidComposerLift =
     Platform.OS === "android" && keyboardTopY != null
-      ? Math.max(0, windowHeight - keyboardTopY - chromeBottomPad)
+      ? Math.max(0, windowHeight - keyboardTopY)
       : 0;
 
   async function onSendText() {
