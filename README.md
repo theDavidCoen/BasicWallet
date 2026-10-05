@@ -17,6 +17,12 @@ If you run the app or study the repo, **verify the code yourself**. Read the sou
 
 Use at your own risk. There is no warranty.
 
+## Download
+
+Latest release: **[v0.8.4](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.8.4)** (arm64-v8a APK + SHA256).
+
+All builds: [Releases](https://github.com/theDavidCoen/BasicWallet/releases). Prefer verifying the checksum before install.
+
 ## What is Basic?
 
 Basic (`app.basic.wallet`) is an experimental mobile wallet built with **Expo / React Native**, focused on:
@@ -30,6 +36,7 @@ Basic (`app.basic.wallet`) is an experimental mobile wallet built with **Expo / 
 | **Lightning** | User-linked node (e.g. BTCPay / LNDHub) and Arkade↔Lightning **intents** (not Boltz) |
 | **Backup** | Passkey-oriented onboarding, Advanced Backup via Nostr and/or home server |
 | **Contacts** | Local encrypted contacts, share over Nostr gift wraps |
+| **Ask Cursor** | Optional on-device Nostr bot (Cursor Cloud Agents) under Chat & Pay for shopping / pay flows |
 | **Bluetooth pair** | Move an account to a nearby phone from the welcome screen (encrypted Bluetooth; no QR/NFC) |
 | **Ops hygiene** | Reproducible Android APK recipe, minimal permissions, SQLCipher for account DB |
 
@@ -55,17 +62,21 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 - **Pair with Bluetooth** — move wallets / nsec to a nearby phone on the welcome screen (lobby code + biometrics; passkeys stay on Device 1)
 - **Manage a Nostr identity**; Advanced Backup (Nostr relays and/or home server), including Fiat/Maxi prefs in the Path C package
 - Maintain **contacts** (npub, NIP-05, BIP-353, etc.) and share a contact over Nostr
+- **Pay in Chat** — 1:1 Nostr threads with text plus send/request payment cards (Home **Chat & Pay** hub or Settings → Nostr → Chat & Pay; classic Send stays separate)
+- **Ask Cursor** — paste a Cursor API key in Settings → Provider Settings → Cursor; then use **Ask Cursor** in Chat & Pay (owner-only bot; shopping MCPs stay on your Cursor Dashboard)
+- **Closed-app alerts** (Android, opt-in) — opaque tray wake (“New Pay message”) for Pay in Chat / contact share while the app is closed; never amounts or memos; classic receives still catch up on open
 - Prefer mainnet or Mutinynet (and optional custom ASP) from Settings
 
 Expect bugs, incomplete screens, and breaking changes between `0.x` alphas.
 
-Gestures (Activity pull, POS/Scan swipes, Send Enter/Paste/My wallets/Scan, Fiat Mode icon): [`docs/how-to-use.md`](./docs/how-to-use.md#shortcuts--gestures). Bluetooth pair / fast login: [`docs/how-to-use.md`](./docs/how-to-use.md#bluetooth-pair--fast-login).
+Gestures (Activity pull, Home pull-down resync, POS/Scan swipes, Send Enter/Paste/My wallets/Scan, Fiat Mode icon): [`docs/how-to-use.md`](./docs/how-to-use.md#shortcuts--gestures). Bluetooth pair / fast login: [`docs/how-to-use.md`](./docs/how-to-use.md#bluetooth-pair--fast-login).
 
 ## Repository layout
 
 | Path | Role |
 |------|------|
 | [`app/`](./app/) | Expo client (TypeScript) |
+| [`notifier/`](./notifier/) | Closed-app push sidecar (Nostr kind 1059 → opaque FCM); deploy beside strfry |
 | [`prototype/docs/`](./prototype/docs/) | Product / UX / Arkade tech specs |
 | [`docs/`](./docs/) | How to use, reproducible builds, passkey asset links, notes |
 | [`scripts/`](./scripts/) | Release APK build helpers |
@@ -90,7 +101,6 @@ Release checksums may be PGP-signed with fingerprint `5351632CBBF23EF29F1815ACD2
 
 Ideas on the roadmap (design, Penpot, or partial code; not commitments):
 
-- **Pay in Chat** — chat-adjacent payment UX (Penpot page; product TBD)
 - **Multi-asset** — more stable corridors when intents exist (Fiat Mode already explores DePix/USDT)
 - **Hardware wallet & multisig** — colder signing paths beyond the soft wallet
 - **Passkey PRF hardening** — PRF already ships; harden defaults and edge cases

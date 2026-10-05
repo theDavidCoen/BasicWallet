@@ -69,6 +69,8 @@ export type RootStackParamList = {
       }
     | undefined;
   Privacy: undefined;
+  /** Android closed-app push (opt-in opaque FCM for kind 1059). */
+  Notifications: undefined;
   SetAppPin:
     | {
         intent?: "set" | "change" | "remove" | "onboarding";
@@ -78,8 +80,22 @@ export type RootStackParamList = {
   ExportRecoveryPhrase: { walletId?: string } | undefined;
   NostrIdentity: undefined;
   ArchivedWallets: undefined;
-  /** Private contacts directory */
-  Contacts: undefined;
+  /** Private contacts directory. From Chat & Pay: selectForChat opens thread on tap. */
+  Contacts: { selectForChat?: boolean } | undefined;
+  /** Chat & Pay hub (Penpot 15g) — recent threads / choose contact */
+  PayHub: undefined;
+  /** 1:1 Pay in Chat thread (Penpot 15 / 15f) */
+  ChatThread: { contactId: string; focusRequestId?: string; seedDraft?: string };
+  /** Settings → Cursor agent (API key only; bot activation) */
+  CursorAgentSettings: undefined;
+  /** Full-screen amount: Request / Send use POS; Pay is biometrics-only from the card. */
+  ChatAmount: {
+    contactId: string;
+    mode: "send" | "request" | "pay";
+    requestId?: string;
+    amountSats?: number;
+    memo?: string;
+  };
   ContactEdit: { contactId?: string } | undefined;
   /** Incoming Nostr contact share offer */
   ContactShareOffer: { offerId: string };

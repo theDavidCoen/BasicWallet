@@ -14,6 +14,13 @@ import {
   deriveActivityStatus,
   loadActivityRows,
 } from "../wallet/activity";
+import {
+  CATCH_UP_RECEIVE_TAG,
+  filterUnmatchedLocalReceives,
+  isCatchUpOptimisticSource,
+  matchOptimisticReceive,
+  type OptimisticReceiveSource,
+} from "../wallet/activityRefresh";
 import { depixAtomicToDisplay } from "../fiat/depixAssets";
 import type { BasicWallet } from "../wallet/hdWallet";
 import { getAccountDb } from "./accountDb";
@@ -176,6 +183,15 @@ function isLocalOptimisticId(activityId: string): boolean {
   return isLocalPendingSendId(activityId) || isLocalPendingReceiveId(activityId);
 }
 
+function inboundHistoryHints(rows: ActivityRow[]) {
+  return rows.map((r) => ({
+    amount: r.amount,
+    createdAt: r.createdAt,
+    id: r.id,
+    arkTxid: r.txs[0]?.arkTxid,
+  }));
+}
+
 /** Snapshot optimistic / pending sends so rematerialize does not wipe them. */
 function readLocalPendingSendRows(
   networkId: ArkadeNetworkId,
@@ -307,6 +323,11 @@ export function recordOptimisticArkadeSend(
       rememberSendRecipients(networkId, walletId, arkTxid, recipients);
     }
   }
+  console.warn("[basic] optimistic send activity", {
+    walletId: walletId.slice(0, 8),
+    id: id.slice(0, 16),
+    amount: amount > 0 ? -amount : 0,
+  });
   return id;
 }
 
@@ -416,10 +437,33 @@ export function recordOptimisticArkadeReceive(
     txid?: string;
     /** Designated fiat asset legs (DePix/USDT display → atomic). */
     assets?: Array<{ assetId: string; amount: bigint | number | string }>;
+    source?: OptimisticReceiveSource;
   },
 ): string {
   const amount = Math.abs(Math.floor(opts.amountSats));
   const raw = opts.txid?.trim() ?? "";
+  const source: OptimisticReceiveSource = opts.source ?? "notify-credit";
+  const recent = readActivityFromDb(networkId, { walletId, limit: 40 });
+  const dup = matchOptimisticReceive(
+    recent.map((r) => ({
+      id: r.id,
+      amount: r.amount,
+      createdAt: r.createdAt,
+      arkTxid: r.txs[0]?.arkTxid,
+      tags: r.tags,
+    })),
+    { amountSats: amount, txid: raw, now: Date.now(), source },
+  );
+  if (dup) {
+    console.warn("[basic] optimistic receive activity", {
+      walletId: walletId.slice(0, 8),
+      id: dup.slice(0, 16),
+      amount,
+      source,
+      deduped: true,
+    });
+    return dup;
+  }
   const id =
     raw && /^[0-9a-fA-F]{64}$/.test(raw) ? raw : `local-recv:${Date.now()}`;
   const arkTxid = id.startsWith("local-recv:") ? "" : id;
@@ -430,15 +474,23 @@ export function recordOptimisticArkadeReceive(
       amount: String(a.amount),
     })) ?? undefined;
   const hasFiatAsset = Boolean(assetRows?.length);
+  const tags = hasFiatAsset ? ["offchain", "brl"] : ["offchain"];
+  if (isCatchUpOptimisticSource(source) && !tags.includes(CATCH_UP_RECEIVE_TAG)) {
+    tags.push(CATCH_UP_RECEIVE_TAG);
+  }
   const row: ActivityRow = {
     id,
     title: "Receive",
-    subtitle: arkTxid ? arkTxid.slice(0, 16) : "Incoming",
+    subtitle: arkTxid
+      ? arkTxid.slice(0, 16)
+      : hasFiatAsset
+        ? "Converted"
+        : "Receive",
     amount: amount > 0 ? amount : 0,
     settled: false,
     status: "preconfirmed",
     createdAt: now,
-    tags: hasFiatAsset ? ["offchain", "brl"] : ["offchain"],
+    tags,
     txs: [
       {
         type: "RECEIVED",
@@ -454,7 +506,48 @@ export function recordOptimisticArkadeReceive(
     ],
   };
   upsertActivityRows(networkId, walletId, [row]);
+  console.warn("[basic] optimistic receive activity", {
+    walletId: walletId.slice(0, 8),
+    id: id.slice(0, 16),
+    amount,
+    source,
+    deduped: false,
+  });
   return id;
+}
+
+/**
+ * Drop a recent local-recv placeholder after a false inbound rollback
+ * (ASP spike adopted then reversed). Prefer catch-up-tagged rows.
+ */
+export function dropOptimisticArkadeReceive(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+  amountSats: number,
+  opts?: { maxAgeMs?: number; now?: number },
+): string | null {
+  const amount = Math.abs(Math.floor(amountSats));
+  if (!walletId || !(amount > 0)) return null;
+  const now = opts?.now ?? Date.now();
+  const maxAgeMs = opts?.maxAgeMs ?? 120_000;
+  const locals = readLocalPendingReceiveRows(networkId, walletId)
+    .filter((r) => {
+      if (Math.abs(r.amount - amount) > 1) return false;
+      if (r.createdAt > 0 && now - r.createdAt > maxAgeMs) return false;
+      return true;
+    })
+    .sort((a, b) => b.createdAt - a.createdAt);
+  if (!locals.length) return null;
+  const preferred =
+    locals.find((r) => (r.tags ?? []).includes(CATCH_UP_RECEIVE_TAG)) ?? locals[0];
+  const db = getAccountDb(networkId);
+  deleteActivityIdxRow(db, walletId, preferred.id);
+  console.warn("[basic] drop optimistic receive activity", {
+    walletId: walletId.slice(0, 8),
+    id: preferred.id.slice(0, 16),
+    amount,
+  });
+  return preferred.id;
 }
 
 /** Snapshot optimistic / pending receives so rematerialize does not wipe them. */
@@ -568,6 +661,31 @@ function readLocalExitRows(
   }
 }
 
+function deleteActivityIdxRow(
+  db: ReturnType<typeof getAccountDb>,
+  walletId: string,
+  activityId: string,
+): void {
+  db.runSync(`DELETE FROM activity_idx WHERE wallet_id = ? AND activity_id = ?`, [
+    walletId,
+    activityId,
+  ]);
+  try {
+    db.runSync(`DELETE FROM activity_fts WHERE wallet_id = ? AND activity_id = ?`, [
+      walletId,
+      activityId,
+    ]);
+  } catch {
+    /* FTS optional */
+  }
+}
+
+export type ReplaceActivityOpts = {
+  /** When this history fetch started (ms). Catch-up locals created before this drop. */
+  historyFetchStartedAt?: number;
+  now?: number;
+};
+
 /** Full replace for a wallet so coalesced/removed phases do not linger.
  * Preserves prior created_at per activity_id so rematerialize does not look like
  * brand-new receives (SDK often sends createdAt 0 → Date.now()).
@@ -578,8 +696,10 @@ export function replaceActivityRows(
   networkId: ArkadeNetworkId,
   walletId: string,
   rows: ActivityRow[],
+  opts?: ReplaceActivityOpts,
 ): void {
   const db = getAccountDb(networkId);
+  const now = opts?.now ?? Date.now();
   let existingCount = 0;
   try {
     const existing = db.getFirstSync<{ c: number }>(
@@ -591,7 +711,11 @@ export function replaceActivityRows(
     existingCount = 0;
   }
 
-  if (rows.length === 0 && existingCount > 0) {
+  const localReceives = readLocalPendingReceiveRows(networkId, walletId);
+  const skipEmpty = rows.length === 0 && existingCount > 0;
+  if (skipEmpty) {
+    // Timed-out / empty history is not authoritative — keep all local rows
+    // (catch-up placeholders and Fiat R$ local-recv).
     console.warn("[basic] skip empty activity rematerialize (keeping local rows)");
     return;
   }
@@ -599,7 +723,6 @@ export function replaceActivityRows(
   const preserved = new Map<string, number>();
   const localExits = readLocalExitRows(networkId, walletId);
   const localPending = readLocalPendingSendRows(networkId, walletId);
-  const localReceives = readLocalPendingReceiveRows(networkId, walletId);
   try {
     const prev = db.getAllSync<{ activity_id: string; created_at: number }>(
       `SELECT activity_id, created_at FROM activity_idx WHERE wallet_id = ?`,
@@ -629,8 +752,25 @@ export function replaceActivityRows(
     if (localExits.length > 0) {
       upsertActivityRows(networkId, walletId, localExits, preserved);
     }
-    if (localReceives.length > 0) {
-      upsertActivityRows(networkId, walletId, localReceives, preserved);
+    const receiveMerge = {
+      historySucceeded: withoutDupLocals.length > 0,
+      historyFetchStartedAt: opts?.historyFetchStartedAt,
+      now,
+    };
+    const receivesToKeep = filterUnmatchedLocalReceives(
+      localReceives.map((p) => ({
+        ...p,
+        arkTxid: p.txs[0]?.arkTxid || "",
+      })),
+      inboundHistoryHints(withoutDupLocals),
+      receiveMerge,
+    );
+    const keepIds = new Set(receivesToKeep.map((r) => r.id));
+    for (const r of localReceives) {
+      if (!keepIds.has(r.id)) deleteActivityIdxRow(db, walletId, r.id);
+    }
+    if (receivesToKeep.length > 0) {
+      upsertActivityRows(networkId, walletId, receivesToKeep, preserved);
     }
     return;
   }
@@ -661,18 +801,18 @@ export function replaceActivityRows(
   if (pendingToKeep.length > 0) {
     upsertActivityRows(networkId, walletId, pendingToKeep, preserved);
   }
-  const receivesToKeep = localReceives.filter((p) => {
-    const abs = Math.abs(p.amount);
-    const ark = (p.txs[0]?.arkTxid || "").toLowerCase();
-    const matched = withoutDupLocals.some((r) => {
-      if (!(r.amount > 0)) return false;
-      if (Math.abs(Math.abs(r.amount) - abs) > 1) return false;
-      if (ark && r.id.toLowerCase() === ark) return true;
-      if (ark && r.txs.some((t) => (t.arkTxid || "").toLowerCase() === ark)) return true;
-      return Math.abs(r.createdAt - p.createdAt) < 120_000;
-    });
-    return !matched;
-  });
+  const receivesToKeep = filterUnmatchedLocalReceives(
+    localReceives.map((p) => ({
+      ...p,
+      arkTxid: p.txs[0]?.arkTxid || "",
+    })),
+    inboundHistoryHints(withoutDupLocals),
+    {
+      historySucceeded: withoutDupLocals.length > 0,
+      historyFetchStartedAt: opts?.historyFetchStartedAt,
+      now,
+    },
+  );
   if (receivesToKeep.length > 0) {
     upsertActivityRows(networkId, walletId, receivesToKeep, preserved);
   }
@@ -770,20 +910,28 @@ export function upsertActivityRows(
   }
 }
 
+export function commitArkadeActivityRows(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+  rows: ActivityRow[],
+  opts?: ReplaceActivityOpts,
+): ActivityRow[] {
+  replaceActivityRows(networkId, walletId, rows, opts);
+  applyPendingSendStamps(networkId, walletId, rows);
+  const withDest = withDestinations(networkId, walletId, rows);
+  if (withDest.some((r, i) => r !== rows[i])) {
+    upsertActivityRows(networkId, walletId, withDest.filter((r) => r.amount < 0));
+  }
+  return withDest;
+}
+
 export async function materializeFromArkadeWallet(
   networkId: ArkadeNetworkId,
   walletId: string,
   wallet: BasicWallet,
 ): Promise<ActivityRow[]> {
   const rows = await loadActivityRows(wallet);
-  replaceActivityRows(networkId, walletId, rows);
-  applyPendingSendStamps(networkId, walletId, rows);
-  // Re-attach destinations into txs_json after pending stamps wrote account_kv.
-  const withDest = withDestinations(networkId, walletId, rows);
-  if (withDest.some((r, i) => r !== rows[i])) {
-    upsertActivityRows(networkId, walletId, withDest.filter((r) => r.amount < 0));
-  }
-  return withDest;
+  return commitArkadeActivityRows(networkId, walletId, rows);
 }
 
 /**
@@ -990,9 +1138,32 @@ export function getStoredActivity(
   walletId: string,
   activityId: string,
 ): StoredActivity | null {
-  return (
-    readActivityFromDb(networkId, { walletId, limit: 500 }).find((r) => r.id === activityId) ?? null
+  // Direct PK lookup — never scan/parse the full activity list on open.
+  // (Previously: readActivityFromDb(limit 500).find(...) which JSON.parse'd
+  // every txs_json/tags_json on Xiaomi with 100+ rows → multi-second tap lag.)
+  const id = activityId.trim();
+  if (!walletId || !id) return null;
+  const db = getAccountDb(networkId);
+  const r = db.getFirstSync<{
+    wallet_id: string;
+    activity_id: string;
+    amount_sats: number;
+    created_at: number;
+    settled: number;
+    kind: string;
+    title: string;
+    subtitle: string | null;
+    primary_txid: string | null;
+    tags_json: string | null;
+    txs_json: string | null;
+    fiat_amount: number | null;
+    fiat_code: string | null;
+    status: string | null;
+  }>(
+    `SELECT * FROM activity_idx WHERE wallet_id = ? AND activity_id = ? LIMIT 1`,
+    [walletId, id],
   );
+  return r ? mapDbRow(networkId, r) : null;
 }
 
 /**

@@ -21,6 +21,7 @@ import {
 import { RestArkProvider } from "@arkade-os/sdk";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome, WalletAvatar } from "../components/ScreenChrome";
+import { PullResyncIndicator } from "../components/PullResyncIndicator";
 import { SyncProgressBar } from "../components/SyncProgressBar";
 import { getVmempoolBase } from "../config/explorers";
 import { getNetworkConfig } from "../config/network";
@@ -47,6 +48,10 @@ import { formatSatsAmount, formatSatsLabel } from "../wallet/formatSats";
 import { colors } from "../theme/colors";
 import { useFiatMode } from "../fiat/FiatModeProvider";
 import { formatBrlDisplay, stripFiatModeLabelSuffix } from "../fiat/depixAssets";
+import {
+  listUnreadChatThreads,
+  subscribeChatStore,
+} from "../chat/chatStore";
 
 const MUTINYNET_OK = "#7DCEA0";
 const MUTINYNET_DOWN = "#E07070";
@@ -80,6 +85,7 @@ export function HomeScreen() {
     selectedWallet,
     avatarLabel,
     bumpActivity,
+    forceResync,
   } = useWallet();
   const {
     fiatMode,
@@ -87,6 +93,7 @@ export function HomeScreen() {
     satsEstimate,
     pendingExitSats,
     pendingEnterFiat,
+    pendingConvertHint,
   } = useFiatMode();
   const { activeCount, pendingSweep, refreshPendingSweep } = useExitJobs();
   const {
@@ -123,6 +130,7 @@ export function HomeScreen() {
   >({});
   /** Home primary unit: sats or one of the enabled display fiats. */
   const [balanceUnit, setBalanceUnit] = useState<"sats" | DisplayCurrencyCode>("sats");
+  const [chatUnreadTotal, setChatUnreadTotal] = useState(0);
   const handleRef = useRef<View>(null);
   /** 0 undecided · 1 POS (LTR) · -1 scan (RTL) */
   const sideDir = useSharedValue(0);
@@ -133,6 +141,29 @@ export function HomeScreen() {
     sidesLocked.value =
       activityOpen || homeDragging || posOpen || scanOpen ? 1 : 0;
   }, [activityOpen, homeDragging, posOpen, scanOpen, sidesLocked]);
+
+  const refreshChatUnread = useCallback(() => {
+    try {
+      const total = listUnreadChatThreads().reduce(
+        (sum, t) => sum + t.unreadCount,
+        0,
+      );
+      setChatUnreadTotal(total);
+    } catch {
+      setChatUnreadTotal(0);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshChatUnread();
+    return subscribeChatStore(refreshChatUnread);
+  }, [refreshChatUnread]);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshChatUnread();
+    }, [refreshChatUnread]),
+  );
 
   const openSettings = useCallback(() => {
     navigation.navigate("Settings");
@@ -223,34 +254,8 @@ export function HomeScreen() {
 
   const mutinynetColor = mutinynetOnline ? MUTINYNET_OK : MUTINYNET_DOWN;
 
-  useFocusEffect(
-    useCallback(() => {
-      let cancelled = false;
-      void (async () => {
-        await refreshPendingSweep();
-        if (cancelled || !selectedWallet || selectedWallet.kind !== "arkade") {
-          return;
-        }
-        const rec = await readRecoveryAddress(network.id);
-        if (!rec || cancelled) return;
-        const added = await syncRecoveryExitActivities({
-          networkId: network.id,
-          walletId: selectedWallet.id,
-          sweepAddress: rec,
-        });
-        if (!cancelled && added > 0) bumpActivity();
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }, [
-      refreshPendingSweep,
-      selectedWallet,
-      network.id,
-      bumpActivity,
-    ]),
-  );
-
+  // Recovery / pending-sweep sync once per Home focus (duplicate useFocusEffect
+  // removed α89 — tap-scene lag evidence: double work on every Home focus).
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
@@ -431,7 +436,39 @@ export function HomeScreen() {
     dragStartX: scanDragStart,
   } = scanMotion;
 
-  const { pan, homeSwipe } = useMemo(() => {
+  const pullY = useSharedValue(0);
+  const [pullResyncBusy, setPullResyncBusy] = useState(false);
+
+  const onPullResyncJS = useCallback(() => {
+    setPullResyncBusy(true);
+    void forceResync().finally(() => setPullResyncBusy(false));
+  }, [forceResync]);
+
+  const { pan, homeSwipe, pullResync } = useMemo(() => {
+    /** Swipe down from below the logo → force balance + activity resync (α95/α96). */
+    const pullDown = Gesture.Pan()
+      .enabled(!activityOpen && !posOpen && !scanOpen && !fiatModeSheetOpen)
+      .activeOffsetY(28)
+      .failOffsetX([-36, 36])
+      .onUpdate((e) => {
+        "worklet";
+        pullY.value = Math.max(0, e.translationY);
+      })
+      .onEnd((e) => {
+        "worklet";
+        const trigger = e.translationY > 72;
+        pullY.value = withSpring(0, SHEET_SPRING);
+        if (trigger) {
+          runOnJS(onPullResyncJS)();
+        }
+      })
+      .onFinalize(() => {
+        "worklet";
+        if (pullY.value > 0) {
+          pullY.value = withSpring(0, SHEET_SPRING);
+        }
+      });
+
     const activityPan = Gesture.Pan()
       .activeOffsetY([-4, 4])
       .failOffsetX([-40, 40])
@@ -584,16 +621,19 @@ export function HomeScreen() {
         }
       });
 
-    return { pan: activityPan, homeSwipe: swipe };
+    return { pan: activityPan, homeSwipe: swipe, pullResync: pullDown };
   }, [
     activityOpen,
     beginPosDrag,
     beginScanDrag,
     clearHomeDragJS,
     dragStartY,
+    fiatModeSheetOpen,
     finishDismissJS,
     finishPosDismissJS,
     finishScanDismissJS,
+    onPullResyncJS,
+    pullY,
     settlePosOpen,
     settleScanOpen,
     offY,
@@ -710,16 +750,23 @@ export function HomeScreen() {
           onLongPressEmpty={openSettings}
         >
           <View style={styles.flex}>
-            <View style={styles.center}>
-              <View style={styles.walletTagRow}>
-                <Text style={styles.walletTag}>
-                  {stripFiatModeLabelSuffix(selectedWallet?.label ?? "Personal")}
-                </Text>
-                {fiatMode ? (
-                  <View style={styles.fiatModeBadge} accessibilityLabel="Fiat Mode on">
-                    <Text style={styles.fiatModeBadgeLabel}>FIAT MODE</Text>
-                  </View>
-                ) : null}
+            <GestureDetector gesture={pullResync}>
+            <View
+              style={styles.center}
+              accessibilityHint="Swipe down to resync balance and activity"
+            >
+              <View style={styles.pullResyncAnchor}>
+                <PullResyncIndicator pullY={pullY} busy={pullResyncBusy} />
+                <View style={styles.walletTagRow}>
+                  <Text style={styles.walletTag}>
+                    {stripFiatModeLabelSuffix(selectedWallet?.label ?? "Personal")}
+                  </Text>
+                  {fiatMode ? (
+                    <View style={styles.fiatModeBadge} accessibilityLabel="Fiat Mode on">
+                      <Text style={styles.fiatModeBadgeLabel}>FIAT MODE</Text>
+                    </View>
+                  ) : null}
+                </View>
               </View>
               <View style={styles.balanceRow}>
                 <Pressable onPress={toggleBalanceHidden} style={styles.balancePress}>
@@ -746,6 +793,14 @@ export function HomeScreen() {
               {secondaryBalance ? (
                 <Text style={styles.fiatHint}>{secondaryBalance}</Text>
               ) : null}
+              {pendingConvertHint ? (
+                <Text
+                  style={styles.pendingConvertHint}
+                  accessibilityLabel={pendingConvertHint}
+                >
+                  {pendingConvertHint}
+                </Text>
+              ) : null}
               {!fiatMode && pendingExitSats != null && pendingExitSats > 0 ? (
                 <Text
                   style={styles.pendingExitHint}
@@ -771,6 +826,28 @@ export function HomeScreen() {
                 </Pressable>
               </View>
             </View>
+            </GestureDetector>
+
+            <Pressable
+              style={styles.chatPayCard}
+              onPress={() => navigation.navigate("PayHub")}
+              accessibilityRole="button"
+              accessibilityLabel={
+                chatUnreadTotal > 0
+                  ? `Chat and Pay, ${chatUnreadTotal} unread`
+                  : "Chat and Pay"
+              }
+            >
+              {chatUnreadTotal > 0 ? (
+                <View style={styles.chatPayBadge} pointerEvents="none">
+                  <Text style={styles.chatPayBadgeText}>
+                    {chatUnreadTotal > 99 ? "99+" : String(chatUnreadTotal)}
+                  </Text>
+                </View>
+              ) : null}
+              <Text style={styles.chatPayTitle}>Chat & Pay</Text>
+              <Text style={styles.chatPayHint}>Private chats · pay contacts</Text>
+            </Pressable>
 
             <GestureDetector gesture={pan}>
               <View
@@ -872,6 +949,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingBottom: 48,
   },
+  /** Anchor so the pull spinner sits above the wallet tag without shifting layout. */
+  pullResyncAnchor: {
+    position: "relative",
+    alignItems: "center",
+  },
   balanceRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -938,6 +1020,14 @@ const styles = StyleSheet.create({
     marginTop: 6,
     minHeight: 18,
   },
+  pendingConvertHint: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 11,
+    color: colors.caption,
+    textAlign: "center",
+    marginTop: 4,
+    paddingHorizontal: 24,
+  },
   pendingExitHint: {
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 12,
@@ -971,6 +1061,52 @@ const styles = StyleSheet.create({
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 16,
     color: colors.fg,
+  },
+  /** Same horizontal span as Receive+Send (maxWidth 160 each + gap 16). */
+  chatPayCard: {
+    alignSelf: "center",
+    width: "100%",
+    maxWidth: 336,
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 4,
+    position: "relative",
+  },
+  chatPayBadge: {
+    position: "absolute",
+    top: 8,
+    right: 10,
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    paddingHorizontal: 6,
+    backgroundColor: colors.fg,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1,
+  },
+  chatPayBadgeText: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 11,
+    color: colors.bg,
+    lineHeight: 14,
+  },
+  chatPayTitle: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 15,
+    color: colors.fg,
+    textAlign: "center",
+  },
+  chatPayHint: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 11,
+    color: colors.hint,
+    textAlign: "center",
+    marginTop: 4,
   },
   histHit: {
     alignItems: "center",

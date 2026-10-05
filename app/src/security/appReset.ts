@@ -13,6 +13,8 @@ import { getAccountDb } from "../account/accountDb";
 import { getNetworkConfig, type ArkadeNetworkId } from "../config/network";
 import { wipeContactsTables } from "../contacts/contactStore";
 import { clearNostrIdentity } from "../nostr/identityStore";
+import { unregisterPushBestEffort } from "../notifications/register";
+import { writePushNotificationPrefs } from "../notifications/prefs";
 import { deleteMnemonic, hasLegacyMnemonic } from "../security/mnemonicStore";
 import { clearExitPackage, clearAllExitPackages } from "../exit/packageStore";
 import { clearAllRecoveryAddresses } from "../exit/recoveryAddress";
@@ -36,6 +38,9 @@ const SECURE_KEYS_ALWAYS = [
   "basic.wallet.appPin.v1",
   "basic.wallet.lnd.rest.v1",
   "basic.wallet.lndhub.v1",
+  // Cursor Ask Cursor bot (API key + bot nsec) — never survive factory reset.
+  "basic.wallet.cursor.apiKey.v1",
+  "basic.wallet.cursor.bot.nsec.v1",
   // Clear passkey link so next onboarding uses discoverable get (password manager picker),
   // never a silent create of a brand-new passkey.
   "basic.wallet.passkey.credentialId.v1",
@@ -133,6 +138,25 @@ export async function factoryResetWipeDevice(): Promise<void> {
   const networkId = getNetworkConfig().id;
   const wallets = listWallets(networkId);
   const ids = wallets.map((w) => w.id);
+
+  // Drop remote FCM registration before wiping local npub/token prefs.
+  try {
+    await unregisterPushBestEffort();
+  } catch {
+    /* ignore */
+  }
+  try {
+    await writePushNotificationPrefs({ enabled: false });
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    const { wipeCursorBotForReset } = await import("../agent/activateBot");
+    await wipeCursorBotForReset();
+  } catch {
+    /* bot wipe best-effort */
+  }
 
   await clearSecureSlots(ids);
   wipeAccountTables(networkId);

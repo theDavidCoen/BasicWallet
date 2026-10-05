@@ -6,6 +6,7 @@
  */
 
 import { getNetworkConfig } from "../config/network";
+import { hasOutboundPayInFlight } from "../chat/chatStore";
 import { getOpenWallet, getOpenWalletId } from "../wallet/hdWallet";
 import {
   exitAutoFingerprint,
@@ -39,6 +40,8 @@ export function getExitPrepareEpoch(): number {
 }
 
 export function scheduleAutoPrepare(reason = "balance"): void {
+  // Skip while chat send holds ASP — prepare fights wallet.send (Xiaomi lag α71).
+  if (hasOutboundPayInFlight()) return;
   if (timer) clearTimeout(timer);
   timer = setTimeout(() => {
     void runAutoPrepare(reason);
@@ -55,6 +58,10 @@ export function scheduleAutoPrepareSoon(reason = "recovery-address"): void {
 
 export async function runAutoPrepare(reason = "manual"): Promise<void> {
   if (inflight) return;
+  if (hasOutboundPayInFlight()) {
+    console.warn("[basic] exit auto-prepare skip: chat pay in flight");
+    return;
+  }
   const network = getNetworkConfig();
   const walletId = getOpenWalletId();
   const wallet = getOpenWallet();

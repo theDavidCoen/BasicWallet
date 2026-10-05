@@ -34,6 +34,13 @@ export function ImportNsecWarningScreen() {
         return;
       }
       await importAndStoreNsec(nsec);
+      // Owner binding for Ask Cursor must stay 1:1 — wipe bot on identity change.
+      try {
+        const { wipeCursorBotForReset } = await import("../agent/activateBot");
+        await wipeCursorBotForReset();
+      } catch {
+        /* */
+      }
       const applied = await syncContactsDirectoryNow("nsec-import");
       setNsec("");
       Alert.alert(

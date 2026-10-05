@@ -21,13 +21,19 @@ import { shareActivityCsv } from "../account/activityCsv";
 import { syncLightningHistory } from "../account/lightningActivity";
 import { backfillMissingFiat } from "../account/fiatRate";
 import { getNetworkConfig } from "../config/network";
+import { filterFiatModeActivityRows } from "../fiat/fiatActivityFilter";
+import { useFiatMode } from "../fiat/FiatModeProvider";
 import { useWallet } from "../wallet/WalletProvider";
 import { activityDepixAtomic, formatActivityAmountSigned, formatWhen, statusLabel } from "../wallet/activity";
 import { colors } from "../theme/colors";
 
 type Props = {
   active?: boolean;
-  onOpenDetail: (activityId: string, walletId: string) => void;
+  onOpenDetail: (
+    activityId: string,
+    walletId: string,
+    seed?: StoredActivity,
+  ) => void;
 };
 
 /** Delay before allowing pull-to-refresh after the sheet opens. */
@@ -35,6 +41,7 @@ const REFRESH_ARM_MS = 700;
 
 export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
   const { selectedWallet, activityEpoch, refreshActivity, bumpActivity } = useWallet();
+  const { fiatMode, depixDisplay } = useFiatMode();
   const network = getNetworkConfig();
   const [rows, setRows] = useState<StoredActivity[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,13 +62,17 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
       const list = query.trim()
         ? searchActivity(network.id, query, { walletId: selectedWallet.id })
         : readActivityFromDb(network.id, { walletId: selectedWallet.id });
-      setRows(list);
+      setRows(
+        fiatMode
+          ? filterFiatModeActivityRows(list, network.id, depixDisplay)
+          : list,
+      );
       void backfillMissingFiat(network.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load activity");
       setRows([]);
     }
-  }, [selectedWallet, network.id, query]);
+  }, [selectedWallet, network.id, query, fiatMode, depixDisplay]);
 
   useEffect(() => {
     setLoading(true);
@@ -77,17 +88,12 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
     }
     setRefreshArmed(false);
     const t = setTimeout(() => setRefreshArmed(true), REFRESH_ARM_MS);
-    // Rebuild list from SDK+vtxos when opening (recovers after a partial wipe).
-    void (async () => {
-      try {
-        await refreshActivity();
-        loadFromDb();
-      } catch (e) {
-        console.warn("[basic] activity open rematerialize failed", e);
-      }
-    })();
+    // Show DB immediately; rematerialize in the background (Xiaomi 12s ASP).
+    void refreshActivity().catch((e) => {
+      console.warn("[basic] activity open rematerialize failed", e);
+    });
     return () => clearTimeout(t);
-  }, [active, refreshActivity, loadFromDb]);
+  }, [active, selectedWallet?.id, refreshActivity]);
 
   useEffect(() => {
     if (!active || selectedWallet?.kind !== "lightning") return;
@@ -228,7 +234,15 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
                 : item.amount;
             return (
             <GHPressable
-              onPress={() => onOpenDetail(item.id, item.walletId)}
+              onPress={() => {
+                const t0 = Date.now();
+                onOpenDetail(item.id, item.walletId, item);
+                console.warn("[basic] activityDetail tap", {
+                  ms: Date.now() - t0,
+                  id: item.id.slice(0, 16),
+                  via: "sheet",
+                });
+              }}
               accessibilityRole="button"
               accessibilityLabel={`${item.title}, ${amountLabel}`}
             >

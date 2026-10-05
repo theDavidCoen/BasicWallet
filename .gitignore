@@ -1,4 +1,13 @@
 .secrets/
+notifier/node_modules/
+notifier/dist/
+notifier/secrets/
+notifier/data/
+notifier/.env
+
+# Firebase / FCM (never commit)
+app/google-services.json
+**/firebase-service-account*.json
 
 # Local scratch
 .tmp-*

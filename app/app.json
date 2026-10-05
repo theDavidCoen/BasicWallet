@@ -2,7 +2,7 @@
   "expo": {
     "name": "Basic",
     "slug": "basic-wallet",
-    "version": "0.7.0-alpha.44",
+    "version": "0.8.4",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "splash": {
@@ -46,6 +46,7 @@
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.CAMERA",
+        "android.permission.POST_NOTIFICATIONS",
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_ADMIN",
         "android.permission.BLUETOOTH_CONNECT",
@@ -53,11 +54,20 @@
         "android.permission.BLUETOOTH_ADVERTISE",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION"
-      ]
+      ],
+      "googleServicesFile": "./google-services.json"
     },
     "plugins": [
       "expo-secure-store",
       "expo-font",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#000000",
+          "defaultChannel": "basic-pay"
+        }
+      ],
       [
         "react-native-ble-plx",
         {
@@ -118,5 +128,5 @@
       "passkeyRpId": "basic.davidcoen.it"
     }
   },
-  "version": "0.7.0-alpha.44"
+  "version": "0.7.0-alpha.62"
 }

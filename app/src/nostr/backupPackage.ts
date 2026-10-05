@@ -59,12 +59,13 @@ export function clearSessionWrapKey(): void {
 }
 
 export const DEFAULT_NOSTR_RELAYS = [
+  "wss://relay.davidcoen.it",
   "wss://relay.damus.io",
   "wss://nos.lol",
   "wss://relay.primal.net",
 ];
 
-/** User relays first, then defaults — deduped, order preserved. */
+/** User relays first, then defaults — deduped, order preserved. Home always present. */
 export function mergeNostrRelays(extra?: string[] | null): string[] {
   const out: string[] = [];
   const seen = new Set<string>();

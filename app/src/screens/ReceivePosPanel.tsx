@@ -105,6 +105,10 @@ export function ReceivePosPanel({
   onRequestBrlUri,
   active = true,
   fiatMode = false,
+  variant = "receive",
+  contactLabel,
+  onChatRequestConfirm,
+  chatRequestBusy = false,
 }: {
   /** Base BIP21 (boarding + ark) without amount — used when enabling Request. */
   bip21Uri: string | null;
@@ -120,6 +124,23 @@ export function ReceivePosPanel({
   active?: boolean;
   /** When true, primary unit is the network stable (BRL / USD), not EUR. */
   fiatMode?: boolean;
+  /**
+   * `receive` = classic POS (QR).
+   * `chat-request` = amount entry then publish encrypted Nostr pay-request.
+   * `chat-send` = amount entry then Confirm → biometrics → quiet convert/send.
+   */
+  variant?: "receive" | "chat-request" | "chat-send";
+  /** Shown under title when variant is chat-request / chat-send. */
+  contactLabel?: string;
+  /**
+   * Chat request/send confirm — amount in sats.
+   * When Fiat Mode keypad, `meta.fiatDisplay` is the typed stable amount.
+   */
+  onChatRequestConfirm?: (
+    amountSats: number,
+    meta?: { fiatDisplay?: number },
+  ) => void | Promise<void>;
+  chatRequestBusy?: boolean;
 }) {
   const insets = useSafeAreaInsets();
   const networkId = getNetworkConfig().id;
@@ -271,7 +292,12 @@ export function ReceivePosPanel({
     });
   }, [fiatCode, rate, unit]);
 
+  const isChatRequest = variant === "chat-request";
+  const isChatSend = variant === "chat-send";
+  const isChatAmount = isChatRequest || isChatSend;
+
   const onRequest = useCallback(() => {
+    if (chatRequestBusy) return;
     if (fiatMode) {
       // Keypad stays in fiat denomination; chip picks URI shape.
       const d =
@@ -281,6 +307,15 @@ export function ReceivePosPanel({
             ? (raw / 100_000_000) * rate
             : 0;
       if (!(d > 0)) return;
+      if (isChatAmount) {
+        const sats =
+          amountSats > 0
+            ? amountSats
+            : satsFromFiatMinor(Math.round(d * 100), fiatCode, rate) ?? 0;
+        if (!(sats > 0) || sats > MAX_POS_SATS) return;
+        void onChatRequestConfirm?.(sats, { fiatDisplay: d });
+        return;
+      }
       if (fiatRequestKind === "fiat" && onRequestBrlUri) {
         const uri = onRequestBrlUri(d);
         if (!uri) return;
@@ -301,15 +336,22 @@ export function ReceivePosPanel({
       return;
     }
     if (amountSats <= 0 || amountSats > MAX_POS_SATS) return;
+    if (isChatAmount) {
+      void onChatRequestConfirm?.(amountSats);
+      return;
+    }
     const uri = onRequestUri(amountSats);
     if (!uri) return;
     setRequestUri(uri);
     setPhase("receive");
   }, [
     amountSats,
+    chatRequestBusy,
     fiatCode,
     fiatMode,
     fiatRequestKind,
+    isChatAmount,
+    onChatRequestConfirm,
     onRequestBrlUri,
     onRequestUri,
     raw,
@@ -333,14 +375,16 @@ export function ReceivePosPanel({
   const padTop = Math.max(insets.top, 12) + 8;
   const padBottom = insets.bottom + 16;
 
-  const canRequest = fiatMode
-    ? ((fiatDisplay ?? 0) > 0 || (unit === "fiat" && raw > 0)) &&
-      (fiatRequestKind === "fiat"
-        ? Boolean(onRequestBrlUri)
-        : Boolean(bip21Uri) && (amountSats > 0 || rate != null))
-    : amountSats > 0 && amountSats <= MAX_POS_SATS && Boolean(bip21Uri);
+  const canRequest = isChatAmount
+    ? amountSats > 0 && amountSats <= MAX_POS_SATS && !chatRequestBusy
+    : fiatMode
+      ? ((fiatDisplay ?? 0) > 0 || (unit === "fiat" && raw > 0)) &&
+        (fiatRequestKind === "fiat"
+          ? Boolean(onRequestBrlUri)
+          : Boolean(bip21Uri) && (amountSats > 0 || rate != null))
+      : amountSats > 0 && amountSats <= MAX_POS_SATS && Boolean(bip21Uri);
 
-  if (phase === "receive" && requestUri) {
+  if (!isChatAmount && phase === "receive" && requestUri) {
     return (
       <View style={[styles.root, { paddingTop: padTop, paddingBottom: padBottom }]}>
         <View style={styles.header}>
@@ -380,8 +424,16 @@ export function ReceivePosPanel({
         <View style={styles.headerSide} />
       </View>
 
-      <Text style={styles.title}>RECEIVE</Text>
-      {fiatMode ? (
+      <Text style={styles.title}>
+        {isChatRequest ? "REQUEST" : isChatSend ? "SEND" : "RECEIVE"}
+      </Text>
+      {isChatRequest && contactLabel ? (
+        <Text style={styles.chatSub}>Ask {contactLabel} via encrypted Nostr</Text>
+      ) : null}
+      {isChatSend && contactLabel ? (
+        <Text style={styles.chatSub}>To {contactLabel} · destination locked</Text>
+      ) : null}
+      {fiatMode && !isChatAmount ? (
         <View style={styles.modeRow}>
           <Pressable
             style={[
@@ -472,11 +524,17 @@ export function ReceivePosPanel({
       </View>
 
       <Pressable
-        style={[styles.cta, !canRequest && styles.ctaDisabled]}
-        disabled={!canRequest}
+        style={[styles.cta, (!canRequest || chatRequestBusy) && styles.ctaDisabled]}
+        disabled={!canRequest || chatRequestBusy}
         onPress={onRequest}
       >
-        {!fiatMode && !bip21Uri ? (
+        {chatRequestBusy ? (
+          <ActivityIndicator color="#000" />
+        ) : isChatRequest ? (
+          <Text style={styles.ctaText}>Send request</Text>
+        ) : isChatSend ? (
+          <Text style={styles.ctaText}>Confirm</Text>
+        ) : !fiatMode && !bip21Uri ? (
           <View style={styles.ctaBusy}>
             <ActivityIndicator color="#000" />
             <Text style={styles.ctaPreparing}>Preparing receive…</Text>
@@ -512,6 +570,15 @@ const styles = StyleSheet.create({
     color: colors.fg,
     textAlign: "center",
     marginTop: 4,
+  },
+  chatSub: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.caption,
+    textAlign: "center",
+    marginTop: 8,
+    marginBottom: 4,
+    paddingHorizontal: 8,
   },
   modeRow: {
     flexDirection: "row",

@@ -11,6 +11,7 @@ import {
   type SwapClient,
 } from "@arkade-os/swap";
 import type { ArkadeNetworkId } from "../config/network";
+import { DEFAULT_MIN_VTXO_SATS } from "../wallet/arkMultiSend";
 import { getAssetSwapRepository } from "../wallet/persistentStorage";
 import {
   depixAssetIdForNetwork,
@@ -100,6 +101,147 @@ function maxFeeForTake(
   return { amount: feeSats > 0n ? feeSats : 500n, asset: BTC };
 }
 
+function readAssetAtomicFromBalance(raw: unknown, assetId: string): bigint {
+  if (!raw || typeof raw !== "object") return 0n;
+  const o = raw as Record<string, unknown>;
+  const lists = [o.availableAssets, o.assets].filter(Array.isArray) as unknown[][];
+  const want = assetId.toLowerCase();
+  for (const list of lists) {
+    for (const item of list) {
+      if (!item || typeof item !== "object") continue;
+      const row = item as Record<string, unknown>;
+      const id = String(row.assetId ?? row.id ?? "").toLowerCase();
+      if (id !== want) continue;
+      const amt = row.amount;
+      if (typeof amt === "bigint") return amt;
+      if (typeof amt === "number" && Number.isFinite(amt)) return BigInt(Math.floor(amt));
+      if (typeof amt === "string" && /^\d+$/.test(amt)) return BigInt(amt);
+    }
+  }
+  return 0n;
+}
+
+async function readAvailableSats(wallet: IWallet): Promise<number> {
+  const w = wallet as IWallet & {
+    getSpendableVtxos?: () => Promise<Array<{ value?: number }>>;
+    getBalance?: () => Promise<unknown>;
+  };
+  try {
+    if (typeof w.getSpendableVtxos === "function") {
+      const list = await w.getSpendableVtxos();
+      let sum = 0;
+      for (const v of list) sum += Number(v.value ?? 0);
+      if (sum > 0) return sum;
+    }
+  } catch {
+    /* fall through */
+  }
+  try {
+    const raw = await w.getBalance?.();
+    if (
+      raw &&
+      typeof raw === "object" &&
+      typeof (raw as { available?: unknown }).available === "number"
+    ) {
+      return Math.floor((raw as { available: number }).available);
+    }
+  } catch {
+    /* ignore */
+  }
+  return 0;
+}
+
+/**
+ * Swap asset deposits omit `amount` so the SDK uses a dust sat carrier (~330).
+ * If the wallet holds dust < sats < 2×dust, that leaves subdust change and ASP
+ * rejects with AMOUNT_TOO_LOW. When giving the full stable balance, bump the
+ * carrier to all spendable sats so the deposit consumes inputs with no change.
+ */
+function patchWalletSendForFullAssetDeposit(
+  wallet: IWallet,
+  assetId: string,
+  dust: number,
+): () => void {
+  type SendFn = IWallet["send"];
+  const w = wallet as IWallet & { send: SendFn };
+  const originalSend: SendFn = w.send.bind(w);
+  const want = assetId.toLowerCase();
+
+  const patchedSend = ((...args: unknown[]) => {
+    const run = async (): Promise<string> => {
+      const params = args[0];
+      if (params && typeof params === "object" && !Array.isArray(params)) {
+        const p = params as {
+          amount?: number;
+          assets?: Array<{ assetId?: string; amount?: bigint | number | string }>;
+        };
+        const assets = p.assets;
+        if (Array.isArray(assets) && assets.length > 0) {
+          const give =
+            assets.find((a) => String(a.assetId ?? "").toLowerCase() === want) ??
+            assets[0];
+          const giveAmt = (() => {
+            const a = give?.amount;
+            if (typeof a === "bigint") return a;
+            if (typeof a === "number" && Number.isFinite(a)) {
+              return BigInt(Math.floor(a));
+            }
+            if (typeof a === "string" && /^\d+$/.test(a)) return BigInt(a);
+            return 0n;
+          })();
+
+          let liveAsset = 0n;
+          try {
+            const bal = await (
+              wallet as IWallet & { getBalance: () => Promise<unknown> }
+            ).getBalance();
+            liveAsset = readAssetAtomicFromBalance(bal, assetId);
+          } catch {
+            /* ignore */
+          }
+
+          const givingAll = liveAsset > 0n && giveAmt >= liveAsset;
+          const carrier =
+            p.amount == null || !(Number(p.amount) > 0)
+              ? dust
+              : Math.floor(Number(p.amount));
+          const availableSats = await readAvailableSats(wallet);
+          const change = availableSats - carrier;
+          if (
+            givingAll &&
+            availableSats >= dust &&
+            change > 0 &&
+            change < dust
+          ) {
+            console.warn(
+              "[basic] swap fund bump asset carrier (avoid subdust change)",
+              {
+                carrier,
+                availableSats,
+                dust,
+                giveAmt: String(giveAmt),
+                liveAsset: String(liveAsset),
+              },
+            );
+            return (originalSend as (...a: unknown[]) => Promise<string>)({
+              ...(params as object),
+              amount: availableSats,
+            });
+          }
+        }
+      }
+      return (originalSend as (...a: unknown[]) => Promise<string>)(...args);
+    };
+    return run();
+  }) as SendFn;
+
+  w.send = patchedSend;
+
+  return () => {
+    w.send = originalSend;
+  };
+}
+
 /**
  * Run BTC↔DePix exchange. Single-flight; caller surfaces converting overlay.
  * Resolves when filled or cancelled; rejects on hard errors.
@@ -139,14 +281,30 @@ export async function runDepixExchange(opts: {
     const take = direction === "btc-to-depix" ? DEPIX : BTC;
     const maxFee = maxFeeForTake(direction, amount, networkId);
 
+    // depix-to-btc: asset deposit uses dust carrier; bump when full give would
+    // leave subdust sats change (AMOUNT_TOO_LOW on output #1).
+    const unpatch =
+      direction === "depix-to-btc"
+        ? patchWalletSendForFullAssetDeposit(
+            wallet,
+            depixAssetIdForNetwork(networkId),
+            DEFAULT_MIN_VTXO_SATS,
+          )
+        : null;
+
     onProgress?.({ phase: "funding", message: "Funding swap…" });
-    const swap = await client.exchange({
-      give,
-      take,
-      amount,
-      amountOn: "give",
-      maxFee,
-    });
+    let swap: Awaited<ReturnType<typeof client.exchange>>;
+    try {
+      swap = await client.exchange({
+        give,
+        take,
+        amount,
+        amountOn: "give",
+        maxFee,
+      });
+    } finally {
+      unpatch?.();
+    }
 
     onProgress?.({
       phase: "waiting",

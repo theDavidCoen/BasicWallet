@@ -41,6 +41,9 @@ import { ArchivedWalletsScreen } from "../screens/ArchivedWalletsScreen";
 import { ContactsListScreen } from "../screens/ContactsListScreen";
 import { ContactEditScreen } from "../screens/ContactEditScreen";
 import { ContactShareOfferScreen } from "../screens/ContactShareOfferScreen";
+import { PayHubScreen } from "../screens/PayHubScreen";
+import { ChatThreadScreen } from "../screens/ChatThreadScreen";
+import { ChatAmountScreen } from "../screens/ChatAmountScreen";
 import { ExportNsecWarningScreen } from "../screens/ExportNsecWarningScreen";
 import { ExportNsecRevealScreen } from "../screens/ExportNsecRevealScreen";
 import { GenerateIdentityWarningScreen } from "../screens/GenerateIdentityWarningScreen";
@@ -48,7 +51,10 @@ import { ImportNsecWarningScreen } from "../screens/ImportNsecWarningScreen";
 import { ResetAppScreen } from "../screens/ResetAppScreen";
 import { LogsScreen } from "../screens/LogsScreen";
 import { PrivacyScreen } from "../screens/PrivacyScreen";
+import { NotificationsSettingsScreen } from "../screens/NotificationsSettingsScreen";
+import { CursorAgentSettingsScreen } from "../screens/CursorAgentSettingsScreen";
 import { SetAppPinScreen } from "../screens/SetAppPinScreen";
+import { bindPushNotificationListeners } from "../notifications";
 import { OnboardingSecurityScreen } from "../screens/OnboardingSecurityScreen";
 import { ActivityDetailScreen } from "../screens/ActivityDetailScreen";
 import { UnilateralExitHubScreen } from "../screens/UnilateralExitHubScreen";
@@ -60,11 +66,13 @@ import { ExitRecoveryAddressScreen } from "../screens/ExitRecoveryAddressScreen"
 import { AboutScreen } from "../screens/AboutScreen";
 import { WalletWarmupScreen } from "../screens/WalletWarmupScreen";
 import { BackupReminderBanner } from "./BackupReminderBanner";
+import { ChatUnreadBanner } from "./ChatUnreadBanner";
 import { ContactShareReminder } from "./ContactShareReminder";
 import { RecoveryAddressReminder } from "./RecoveryAddressReminder";
 import { SheetHost } from "./SheetHost";
 import { AppLockGate } from "../security/AppLockGate";
 import { UserPresenceHost } from "../security/UserPresenceHost";
+import { useEffect } from "react";
 import { ActivityIndicator, View } from "react-native";
 import { colors } from "../theme/colors";
 
@@ -86,6 +94,11 @@ export function RootNavigator() {
   const { ready, hasWallet, sessionPhase } = useWallet();
   const navigationRef = useNavigationContainerRef<RootStackParamList>();
 
+  useEffect(() => {
+    if (!ready || !hasWallet) return;
+    return bindPushNotificationListeners(navigationRef);
+  }, [ready, hasWallet, navigationRef]);
+
   if (!ready) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.bg, alignItems: "center", justifyContent: "center" }}>
@@ -105,6 +118,7 @@ export function RootNavigator() {
         <NavigationContainer ref={navigationRef} theme={navTheme}>
           <SheetHost>
             <BackupReminderBanner navigationRef={navigationRef} />
+            <ChatUnreadBanner navigationRef={navigationRef} />
             <RecoveryAddressReminder navigationRef={navigationRef} />
             <ContactShareReminder navigationRef={navigationRef} />
             <Stack.Navigator
@@ -142,6 +156,8 @@ export function RootNavigator() {
             <Stack.Screen name="ConnectLndHub" component={ConnectLndHubScreen} />
             <Stack.Screen name="NodeStatus" component={NodeStatusScreen} />
             <Stack.Screen name="Privacy" component={PrivacyScreen} />
+            <Stack.Screen name="Notifications" component={NotificationsSettingsScreen} />
+            <Stack.Screen name="CursorAgentSettings" component={CursorAgentSettingsScreen} />
             <Stack.Screen name="SetAppPin" component={SetAppPinScreen} />
             <Stack.Screen name="ExportRecoveryPhrase" component={ExportRecoveryPhraseScreen} />
             <Stack.Screen name="NostrIdentity" component={NostrIdentityScreen} />
@@ -149,6 +165,9 @@ export function RootNavigator() {
             <Stack.Screen name="Contacts" component={ContactsListScreen} />
             <Stack.Screen name="ContactEdit" component={ContactEditScreen} />
             <Stack.Screen name="ContactShareOffer" component={ContactShareOfferScreen} />
+            <Stack.Screen name="PayHub" component={PayHubScreen} />
+            <Stack.Screen name="ChatThread" component={ChatThreadScreen} />
+            <Stack.Screen name="ChatAmount" component={ChatAmountScreen} />
             <Stack.Screen name="ExportNsecWarning" component={ExportNsecWarningScreen} />
             <Stack.Screen name="ExportNsecReveal" component={ExportNsecRevealScreen} />
             <Stack.Screen name="GenerateIdentityWarning" component={GenerateIdentityWarningScreen} />

@@ -16,11 +16,14 @@ import { colors } from "../../theme/colors";
 export function ContactPickList({
   contacts,
   onPick,
+  onLongPress,
   emptyLabel = "No contacts yet",
   isMuted,
 }: {
   contacts: Contact[];
   onPick: (contact: Contact) => void;
+  /** Optional long-press (e.g. Edit while selectForChat). */
+  onLongPress?: (contact: Contact) => void;
   emptyLabel?: string;
   /** Muted / non-selectable styling (e.g. no npub for share). */
   isMuted?: (contact: Contact) => boolean;
@@ -41,6 +44,8 @@ export function ContactPickList({
             key={c.id}
             style={[styles.row, muted && styles.rowMuted]}
             onPress={() => onPick(c)}
+            onLongPress={onLongPress ? () => onLongPress(c) : undefined}
+            delayLongPress={450}
             accessibilityRole="button"
             accessibilityLabel={`Contact ${title}`}
             accessibilityState={{ disabled: muted }}

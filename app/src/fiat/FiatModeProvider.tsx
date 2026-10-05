@@ -21,8 +21,16 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Alert } from "react-native";
+import { Alert, AppState, type AppStateStatus } from "react-native";
 import type { IWallet } from "@arkade-os/sdk";
+import { recordOptimisticArkadeReceive } from "../account/activityStore";
+import {
+  markChatInboundFiatConverting,
+  revertChatInboundFiatConverting,
+  setAutoInboundBusy,
+  settleChatInboundFiatPaid,
+} from "../chat/chatInboundFiat";
+import { hasOutboundPayInFlight } from "../chat/chatStore";
 import { getNetworkConfig } from "../config/network";
 import { DEFAULT_MIN_VTXO_SATS } from "../wallet/arkMultiSend";
 import { getOpenWalletMode } from "../wallet/hdWallet";
@@ -36,9 +44,12 @@ import {
   fiatFeeBps,
   fiatMinBaseSats,
   fiatStableForNetwork,
+  formatBrlDisplay,
   isFiatModeSwapAvailable,
+  padSatsForDepixSwap,
   satsToFiatEstimate,
   stripFiatModeLabelSuffix,
+  sumDesignatedAssetAtomic,
 } from "./depixAssets";
 import {
   quietFiatEnterNotices,
@@ -100,20 +111,48 @@ type FiatModeContextValue = {
   /** Optimistic DePix spend so Home does not flash 0 while ASP settles. */
   applyLocalDepixSpend: (displayAmount: number) => void;
   /** Optimistic DePix receive so Home updates with the Funds Received notice. */
-  applyLocalDepixReceive: (displayAmount: number) => void;
+  applyLocalDepixReceive: (
+    displayAmount: number,
+    opts?: { force?: boolean },
+  ) => void;
   /** After inbound sats while in fiat mode — swap to DePix (non-blocking job). */
   maybeAutoSwapInboundSats: (sats: number) => void;
-  /** Convert DePix → BTC then return; used by Send for sats destinations. */
-  convertDepixToSatsForPay: (satsNeeded: number) => Promise<void>;
+  /**
+   * Convert DePix/USDT → BTC for a sats pay.
+   * Targeted: only `satsNeeded` + fee pad (not full stable balance).
+   * Resolves with observed spendable sats after fill (or throws).
+   * `quiet: true` suppresses the full-screen converting overlay (chat pay
+   * shows progress on the payment bubble instead).
+   */
+  convertDepixToSatsForPay: (
+    satsNeeded: number,
+    opts?: { quiet?: boolean },
+  ) => Promise<number>;
+  /**
+   * Hold auto-inbound so leftover pay sats are not re-swapped to stable
+   * while chat/classic send is in flight (or just failed mid-send).
+   */
+  holdAutoInboundForPay: (ms?: number) => void;
+  /**
+   * Home caption when inbound value is held below the auto-convert minimum
+   * (Fiat: sats accumulating; Maxi: designated stable accumulating).
+   */
+  pendingConvertHint: string | null;
 };
 
 const FiatModeContext = createContext<FiatModeContextValue | null>(null);
 
+/**
+ * Read designated-asset atomic from getBalance().
+ * Take the *max* across availableAssets and assets — availableAssets can lag
+ * after a swap fill while `assets` already shows the new total (α60 stuck Home).
+ */
 function readDepixAtomicFromBalance(raw: unknown, assetId: string): bigint {
   if (!raw || typeof raw !== "object") return 0n;
   const o = raw as Record<string, unknown>;
   const lists = [o.availableAssets, o.assets].filter(Array.isArray) as unknown[][];
   const want = assetId.toLowerCase();
+  let best = 0n;
   for (const list of lists) {
     for (const item of list) {
       if (!item || typeof item !== "object") continue;
@@ -121,10 +160,53 @@ function readDepixAtomicFromBalance(raw: unknown, assetId: string): bigint {
       const id = String(row.assetId ?? row.id ?? "").toLowerCase();
       if (id !== want) continue;
       const amt = row.amount;
-      if (typeof amt === "bigint") return amt;
-      if (typeof amt === "number" && Number.isFinite(amt)) return BigInt(Math.floor(amt));
-      if (typeof amt === "string" && /^\d+$/.test(amt)) return BigInt(amt);
+      let n = 0n;
+      if (typeof amt === "bigint") n = amt;
+      else if (typeof amt === "number" && Number.isFinite(amt)) {
+        n = BigInt(Math.floor(amt));
+      } else if (typeof amt === "string" && /^\d+$/.test(amt)) n = BigInt(amt);
+      if (n > best) best = n;
     }
+  }
+  return best;
+}
+
+async function readDepixAtomicFromVtxos(
+  wallet: object,
+  networkId: Parameters<typeof sumDesignatedAssetAtomic>[1],
+): Promise<bigint> {
+  const w = wallet as {
+    getSpendableVtxos?: () => Promise<unknown>;
+    getVtxos?: () => Promise<unknown>;
+  };
+  const tryList = async (label: string, p: Promise<unknown>): Promise<bigint> => {
+    const list = await Promise.race([
+      p,
+      new Promise<never>((_, rej) =>
+        setTimeout(() => rej(new Error(`${label} timeout`)), 3500),
+      ),
+    ]);
+    if (!Array.isArray(list)) return 0n;
+    return sumDesignatedAssetAtomic(
+      list as Parameters<typeof sumDesignatedAssetAtomic>[0],
+      networkId,
+    );
+  };
+  try {
+    if (typeof w.getSpendableVtxos === "function") {
+      const n = await tryList("getSpendableVtxos", w.getSpendableVtxos());
+      if (n > 0n) return n;
+    }
+  } catch (e) {
+    console.warn("[basic] depix vtxo spendable read failed", e);
+  }
+  try {
+    if (typeof w.getVtxos === "function") {
+      const n = await tryList("getVtxos", w.getVtxos());
+      if (n > 0n) return n;
+    }
+  } catch (e) {
+    console.warn("[basic] depix vtxo read failed", e);
   }
   return 0n;
 }
@@ -133,6 +215,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const {
     wallet,
     selectedWallet,
+    balance,
     balanceSats,
     renameWallet,
     refresh,
@@ -140,7 +223,13 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     endOutboundSend,
     reopenWithWalletMode,
     ensureBalanceAtLeast,
+    bumpActivity,
   } = useWallet();
+  /** Prefer spendable offchain — total can include boarding / optimistic wedges. */
+  const spendableSats =
+    balance != null && Number.isFinite(balance.available)
+      ? Math.floor(balance.available)
+      : balanceSats;
 
   const [state, setState] = useState<FiatModeState | null>(null);
   const [converting, setConverting] = useState(false);
@@ -151,6 +240,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const [pendingEnterFiat, setPendingEnterFiat] = useState<number | null>(null);
   /** Default ON until storage loads. */
   const [bitcoinMaxiMode, setBitcoinMaxiMode] = useState(true);
+  /** Maxi: live designated-asset display held below convert min (Home caption). */
+  const [maxiPendingDisplay, setMaxiPendingDisplay] = useState<number | null>(
+    null,
+  );
   const abortRef = useRef<AbortController | null>(null);
   const activeSwapIdRef = useRef<string | null>(null);
   const walletIdRef = useRef<string | null>(null);
@@ -172,6 +265,27 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
   const maxiBaselineReadyRef = useRef(false);
   /** True while any enter/exit/auto/pay job runs (incl. quiet auto-inbound). */
   const jobBusyRef = useRef(false);
+  /**
+   * After pay-convert, suppress auto-inbound so freshly converted sats are not
+   * immediately swapped back to stable before the user can send.
+   */
+  const suppressAutoInboundUntilRef = useRef(0);
+  /** Sats delta that triggered the current auto-inbound job (for chat match). */
+  const autoInboundSatsRef = useRef(0);
+  /** Designated-asset atomic baseline before auto-inbound fill. */
+  const autoInboundBaselineRef = useRef<bigint | null>(null);
+  /** Backoff for idle excess-sats recovery (missed delta / α58 hang). */
+  const idleAutoInboundAtRef = useRef(0);
+  /** After auto-inbound: refresh must adopt live DePix (skip overshoot hold). */
+  const adoptLiveDepixUntilRef = useRef(0);
+  /** One cold-start reconcile pass per wallet+fiat session. */
+  const coldStartReconcileKeyRef = useRef<string | null>(null);
+  /** Outbound chat/classic pay convert — auto-inbound must not steal the job mutex. */
+  const payConvertInFlightRef = useRef(false);
+  const activeJobKindRef = useRef<FiatModeJobKind>(null);
+  /** Skip VTXO fallback after timeouts (α63 thrash: every 4s poll hit getVtxos). */
+  const depixVtxoCooldownUntilRef = useRef(0);
+  const depixPollInFlightRef = useRef(false);
 
   const networkId = getNetworkConfig().id;
   const walletId = selectedWallet?.kind === "arkade" ? selectedWallet.id : null;
@@ -233,9 +347,15 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       ]);
       if (cancelled) return;
       setBitcoinMaxiMode(maxiOn);
-      // Stale pending enter/exit must not resume CONVERTING after reopen.
+      // Stale pending jobs must not block pay-convert / auto-inbound after reopen.
       let next = s;
-      if (s.pendingJob === "enter" || s.pendingJob === "exit") {
+      if (
+        s.pendingJob === "enter" ||
+        s.pendingJob === "exit" ||
+        s.pendingJob === "auto-inbound" ||
+        s.pendingJob === "pay-convert" ||
+        s.pendingJob === "maxi-inbound"
+      ) {
         next = await writeFiatModeState(networkId, walletId, {
           pendingJob: null,
         });
@@ -286,28 +406,63 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const applyLocalDepixReceive = useCallback((displayAmount: number) => {
-    const add = Number(displayAmount);
-    if (!(add > 0)) return;
-    setDepixDisplay((prev) => {
-      const base = prev ?? lastGoodDepixRef.current ?? 0;
-      // Full-balance replay mistaken as a receive (enter/auto fill) — would 2× Home.
-      if (base >= 0.01 && add >= base * 0.85) {
-        console.warn("[basic] applyLocalDepixReceive ignore near-full replay", {
-          add,
-          base,
-        });
-        return prev ?? base;
+  const applyLocalDepixReceive = useCallback(
+    (displayAmount: number, opts?: { force?: boolean }) => {
+      const add = Number(displayAmount);
+      if (!(add > 0)) return;
+      setDepixDisplay((prev) => {
+        const base = prev ?? lastGoodDepixRef.current ?? 0;
+        // Full-balance replay mistaken as a receive (enter/auto fill) — would 2× Home.
+        // Auto-inbound settle uses force / adoptLiveDepix after convert.
+        if (!opts?.force && base >= 0.01 && add >= base * 0.85) {
+          console.warn("[basic] applyLocalDepixReceive ignore near-full replay", {
+            add,
+            base,
+          });
+          return prev ?? base;
+        }
+        const next = Math.round((base + add) * 100) / 100;
+        optimisticDepixRef.current = next;
+        optimisticDepixUntilRef.current = Date.now() + 20_000;
+        lastDepixRef.current = next;
+        if (next >= 0.01) lastGoodDepixRef.current = next;
+        console.warn("[basic] applyLocalDepixReceive", { add, next, force: !!opts?.force });
+        return next;
+      });
+    },
+    [],
+  );
+
+  /** After auto-inbound fill: adopt live stable as Home truth (skip overshoot guards). */
+  const adoptLiveDepixDisplay = useCallback(
+    (liveDisplay: number, opts?: { holdForceMs?: number }) => {
+      const live = Math.round(Number(liveDisplay) * 100) / 100;
+      if (!(live >= 0.01)) return;
+      const prev = lastDepixRef.current ?? lastGoodDepixRef.current;
+      // No-op adopt: same amount must not re-extend force window or rewrite storage.
+      if (prev != null && Math.abs(prev - live) <= 0.005) {
+        lastGoodDepixRef.current = live;
+        lastDepixRef.current = live;
+        if (opts?.holdForceMs != null && opts.holdForceMs > 0) {
+          adoptLiveDepixUntilRef.current = Date.now() + opts.holdForceMs;
+        }
+        return;
       }
-      const next = Math.round((base + add) * 100) / 100;
-      optimisticDepixRef.current = next;
-      optimisticDepixUntilRef.current = Date.now() + 20_000;
-      lastDepixRef.current = next;
-      if (next >= 0.01) lastGoodDepixRef.current = next;
-      console.warn("[basic] applyLocalDepixReceive", { add, next });
-      return next;
-    });
-  }, []);
+      clearOptimisticDepix();
+      lastGoodDepixRef.current = live;
+      lastDepixRef.current = live;
+      setDepixDisplay(live);
+      // Only auto-inbound settle should hold force-adopt (not every poll).
+      if (opts?.holdForceMs != null && opts.holdForceMs > 0) {
+        adoptLiveDepixUntilRef.current = Date.now() + opts.holdForceMs;
+      }
+      if (walletId) {
+        void writeFiatModeState(networkId, walletId, { lastGoodDisplay: live });
+      }
+      console.warn("[basic] adoptLiveDepixDisplay", { live });
+    },
+    [clearOptimisticDepix, networkId, walletId],
+  );
 
   const refreshDepixBalance = useCallback(async () => {
     if (!wallet || !walletId) {
@@ -315,10 +470,44 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       clearOptimisticDepix();
       return;
     }
+    // Never compete with swap/send for ASP bandwidth (α63 Xiaomi lag + send timeout).
+    if (jobBusyRef.current || payConvertInFlightRef.current) return;
+    if (depixPollInFlightRef.current) return;
+    depixPollInFlightRef.current = true;
     try {
       const raw = await wallet.getBalance();
-      const atomic = readDepixAtomicFromBalance(raw, depixAssetIdForNetwork(networkId));
+      let atomic = readDepixAtomicFromBalance(
+        raw,
+        depixAssetIdForNetwork(networkId),
+      );
+      const goodHint = lastGoodDepixRef.current ?? 0;
+      const liveFromBal = depixAtomicToDisplay(atomic, networkId);
+      // VTXO fallback only when balance is empty/missing while we expect funds —
+      // NOT when live already matches last-good (α61–63 thrashed getVtxos every 4s).
+      const needVtxoFallback =
+        Date.now() >= depixVtxoCooldownUntilRef.current &&
+        goodHint >= 0.01 &&
+        (atomic <= 0n || liveFromBal + 0.5 < goodHint);
+      if (needVtxoFallback) {
+        const fromVtxos = await readDepixAtomicFromVtxos(wallet, networkId);
+        if (fromVtxos > atomic) {
+          console.warn("[basic] depix poll prefer vtxo sum", {
+            balance: String(atomic),
+            vtxos: String(fromVtxos),
+          });
+          atomic = fromVtxos;
+        } else {
+          // Timeouts return 0n — cool down so we do not stack getVtxos every poll.
+          depixVtxoCooldownUntilRef.current = Date.now() + 60_000;
+        }
+      }
       const live = depixAtomicToDisplay(atomic, networkId);
+      const forceAdopt = Date.now() < adoptLiveDepixUntilRef.current;
+      if (forceAdopt && live >= 0.01) {
+        // Same-value no-op inside adopt; do not re-arm force window here.
+        adoptLiveDepixDisplay(live);
+        return;
+      }
       const opt = optimisticDepixRef.current;
       const hold =
         opt != null && Date.now() < optimisticDepixUntilRef.current;
@@ -329,36 +518,24 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
           return;
         }
         // Transient overshoot (double-count / unsettled vtxos) — keep optimistic.
+        // Clear increase above last-good still adopts (stuck-Home recovery).
         if (live > opt + 0.05) {
+          const good = lastGoodDepixRef.current ?? 0;
+          if (live > good + 0.05 && live <= good * 1.75 + 0.05) {
+            adoptLiveDepixDisplay(live);
+            return;
+          }
           console.warn("[basic] depix poll ignore overshoot", { live, opt });
           return;
         }
         // Live caught up to optimistic (±0.02) — adopt and clear hold.
         if (Math.abs(live - opt) <= 0.02) {
-          clearOptimisticDepix();
-          if (live >= 0.01) {
-            lastGoodDepixRef.current = live;
-            if (walletId) {
-              void writeFiatModeState(networkId, walletId, {
-                lastGoodDisplay: live,
-              });
-            }
-          }
-          setDepixDisplay(live);
+          adoptLiveDepixDisplay(live);
           return;
         }
         // Live slightly below optimistic (fee dust) — adopt when close.
         if (live >= opt - 0.05 && live <= opt) {
-          clearOptimisticDepix();
-          if (live >= 0.01) {
-            lastGoodDepixRef.current = live;
-            if (walletId) {
-              void writeFiatModeState(networkId, walletId, {
-                lastGoodDisplay: live,
-              });
-            }
-          }
-          setDepixDisplay(live);
+          adoptLiveDepixDisplay(live);
           return;
         }
         // Still settling — keep showing optimistic.
@@ -387,12 +564,13 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         // Do not publish 0 — keeps Home on pending/last-good path.
         return;
       }
-      // Transient ~2× (old assets + unsettled swap fill) — hold last good.
+      // Transient exact ~2× (old assets + unsettled duplicate fill) — hold last good.
+      // Multi-convert catch-up (e.g. 15.67 → 37.17) must adopt, not look like 2×.
       const good = lastGoodDepixRef.current;
       if (
         good != null &&
         good >= 0.01 &&
-        live > good * 1.75 + 0.05
+        Math.abs(live - good * 2) <= 0.5
       ) {
         console.warn("[basic] depix poll ignore double-count overshoot", {
           live,
@@ -401,6 +579,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         optimisticDepixRef.current = good;
         optimisticDepixUntilRef.current = Date.now() + 12_000;
         setDepixDisplay(good);
+        return;
+      }
+      if (good != null && live > good + 0.04) {
+        adoptLiveDepixDisplay(live);
         return;
       }
       clearOptimisticDepix();
@@ -418,8 +600,16 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       // Keep showing last good on transient read errors.
       const good = lastGoodDepixRef.current;
       if (good != null && good >= 0.01) setDepixDisplay(good);
+    } finally {
+      depixPollInFlightRef.current = false;
     }
-  }, [wallet, walletId, networkId, clearOptimisticDepix]);
+  }, [
+    wallet,
+    walletId,
+    networkId,
+    clearOptimisticDepix,
+    adoptLiveDepixDisplay,
+  ]);
 
   /**
    * Live spendable stable atomic only — never lastGood / optimistic.
@@ -447,16 +637,109 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!state?.fiatMode || !wallet) return;
-    void refreshDepixBalance();
     // Pure asset receives may not change balanceSats (amount: 0 carrier).
-    // Poll the designated stable so BRL/USD Funds Received can fire.
-    const timer = setInterval(() => void refreshDepixBalance(), 4_000);
-    return () => clearInterval(timer);
-  }, [state?.fiatMode, wallet, refreshDepixBalance, balanceSats]);
+    // Slow poll — α59–63 used 4s + VTXO fallback and saturated ASP on Xiaomi.
+    // α82: skip ticks while backgrounded; refresh once on resume.
+    const tick = () => {
+      if (AppState.currentState !== "active") return;
+      void refreshDepixBalance();
+    };
+    tick();
+    const timer = setInterval(tick, 12_000);
+    const onApp = (next: AppStateStatus) => {
+      if (next === "active") void refreshDepixBalance();
+    };
+    const sub = AppState.addEventListener("change", onApp);
+    return () => {
+      clearInterval(timer);
+      sub.remove();
+    };
+  }, [state?.fiatMode, wallet, refreshDepixBalance]);
 
-  // Spot BTC/fiat for Home secondary sats-estimate of the stable (not leftover carrier dust).
+  /**
+   * Cold open / reinstall recovery: lastGood can be stale after a convert that
+   * never force-adopted. Retry live balance + VTXO sum and adopt when higher.
+   */
   useEffect(() => {
-    if (!state?.fiatMode) {
+    if (!state?.fiatMode || !wallet || !walletId) {
+      coldStartReconcileKeyRef.current = null;
+      return;
+    }
+    const key = `${networkId}:${walletId}:fiat`;
+    if (coldStartReconcileKeyRef.current === key) return;
+    coldStartReconcileKeyRef.current = key;
+    let cancelled = false;
+    const recover = async () => {
+      for (let attempt = 0; attempt < 6 && !cancelled; attempt++) {
+        if (attempt > 0) {
+          await new Promise((r) => setTimeout(r, 1200 * attempt));
+        }
+        if (cancelled) return;
+        try {
+          const raw = await wallet.getBalance();
+          let atomic = readDepixAtomicFromBalance(
+            raw,
+            depixAssetIdForNetwork(networkId),
+          );
+          const shown =
+            lastDepixRef.current ?? lastGoodDepixRef.current ?? 0;
+          let live = depixAtomicToDisplay(atomic, networkId);
+          // VTXO only when balance empty or clearly below last-good (not every attempt).
+          if (
+            (atomic <= 0n || (shown >= 0.01 && live + 0.5 < shown)) &&
+            Date.now() >= depixVtxoCooldownUntilRef.current
+          ) {
+            try {
+              const fromVtxos = await readDepixAtomicFromVtxos(
+                wallet,
+                networkId,
+              );
+              if (fromVtxos > atomic) {
+                atomic = fromVtxos;
+                live = depixAtomicToDisplay(atomic, networkId);
+              }
+            } catch {
+              depixVtxoCooldownUntilRef.current = Date.now() + 60_000;
+            }
+          }
+          if (!(live >= 0.01)) {
+            console.warn("[basic] cold-start depix empty", { attempt });
+            continue;
+          }
+          if (live > shown + 0.04) {
+            console.warn("[basic] cold-start adopt live depix", {
+              live,
+              shown,
+              attempt,
+              balanceAtomic: String(
+                readDepixAtomicFromBalance(
+                  raw,
+                  depixAssetIdForNetwork(networkId),
+                ),
+              ),
+            });
+            adoptLiveDepixDisplay(live);
+            return;
+          }
+          // Live confirms shown — stop retrying.
+          if (Math.abs(live - shown) <= 0.05) return;
+        } catch (e) {
+          console.warn("[basic] cold-start depix reconcile failed", e);
+        }
+      }
+    };
+    void recover();
+    return () => {
+      cancelled = true;
+    };
+  }, [state?.fiatMode, wallet, walletId, networkId, adoptLiveDepixDisplay]);
+
+  // Spot BTC/fiat for Home secondary sats-estimate + Maxi pending-min checks.
+  useEffect(() => {
+    const needSpot =
+      Boolean(state?.fiatMode) ||
+      (Boolean(bitcoinMaxiMode) && !state?.fiatMode);
+    if (!needSpot) {
       setBtcBrl(null);
       return;
     }
@@ -465,13 +748,22 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       const spot = await fetchFiatSpot(networkId);
       if (!cancelled && spot != null) setBtcBrl(spot);
     };
-    void pull();
-    const timer = setInterval(() => void pull(), 60_000);
+    const tick = () => {
+      if (AppState.currentState !== "active") return;
+      void pull();
+    };
+    tick();
+    const timer = setInterval(tick, 60_000);
+    const onApp = (next: AppStateStatus) => {
+      if (next === "active") void pull();
+    };
+    const sub = AppState.addEventListener("change", onApp);
     return () => {
       cancelled = true;
       clearInterval(timer);
+      sub.remove();
     };
-  }, [state?.fiatMode, depixDisplay, networkId]);
+  }, [state?.fiatMode, bitcoinMaxiMode, depixDisplay, networkId]);
 
   const patchState = useCallback(
     async (patch: Partial<FiatModeState>) => {
@@ -502,22 +794,64 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     void reopenWithWalletMode("hd");
   }, [walletId, reopenWithWalletMode]);
 
+  const waitForFiatJobSlot = useCallback(
+    async (opts: {
+      forKind: FiatModeJobKind;
+      timeoutMs: number;
+      /** When true, abort quiet background jobs so user pay-convert can run. */
+      preemptQuiet?: boolean;
+    }): Promise<void> => {
+      const deadline = Date.now() + opts.timeoutMs;
+      while (jobBusyRef.current) {
+        const active = activeJobKindRef.current;
+        if (
+          opts.preemptQuiet &&
+          opts.forKind === "pay-convert" &&
+          (active === "auto-inbound" || active === "maxi-inbound") &&
+          abortRef.current
+        ) {
+          console.warn("[basic] pay-convert preempt quiet job", { active });
+          abortRef.current.abort();
+        }
+        if (Date.now() > deadline) {
+          throw new Error("A conversion is already in progress.");
+        }
+        await new Promise<void>((r) => setTimeout(r, 200));
+      }
+    },
+    [],
+  );
+
   const runJob = useCallback(
     async (
       kind: FiatModeJobKind,
       direction: "btc-to-depix" | "depix-to-btc",
       amount: bigint,
-      opts?: { quiet?: boolean },
+      opts?: { quiet?: boolean; throwOnError?: boolean },
     ): Promise<boolean> => {
-      if (!wallet || !walletId || !kind) return false;
+      const fail = (msg: string): false => {
+        if (opts?.throwOnError) throw new Error(msg);
+        return false;
+      };
+      if (!wallet || !walletId || !kind) {
+        console.warn("[basic] fiat job skip (wallet not ready)", {
+          kind,
+          hasWallet: Boolean(wallet),
+          walletId,
+        });
+        return fail("Wallet not ready for conversion.");
+      }
       // Never re-run enter once Fiat Mode is already on.
       if (kind === "enter" && state?.fiatMode) {
         console.warn("[basic] fiat job skip enter (already in fiat mode)");
-        return false;
+        return fail("Already in Fiat Mode.");
       }
       // Mutex is jobBusyRef only — `converting` is UI and can lag a frame after
       // confirmExit's spendable-balance check clears the overlay.
       if (jobBusyRef.current) {
+        if (opts?.throwOnError) {
+          throw new Error("A conversion is already in progress.");
+        }
         if (!opts?.quiet) {
           Alert.alert("Busy", "A conversion is already in progress.");
         } else {
@@ -525,7 +859,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         }
         return false;
       }
-      if (!(amount > 0n)) return false;
+      if (!(amount > 0n)) return fail("Conversion amount must be positive.");
 
       const quiet =
         Boolean(opts?.quiet) ||
@@ -534,6 +868,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       const ac = new AbortController();
       abortRef.current = ac;
       jobBusyRef.current = true;
+      activeJobKindRef.current = kind;
       // Enter/exit/pay: full-screen CONVERTING. Auto-inbound: quiet background only.
       if (!quiet) {
         setConverting(true);
@@ -544,6 +879,23 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         );
       } else {
         console.warn("[basic] fiat quiet job start", kind, String(amount));
+      }
+
+      // Auto-inbound: quiet BRL notices *before* fill notify; baseline from
+      // local refs (never block the swap on getBalance — ASP timeouts broke
+      // classic Receive→Fiat convert in α58). Chat status is best-effort only.
+      if (kind === "auto-inbound") {
+        quietFiatEnterNotices(90_000);
+        setAutoInboundBusy(true);
+        markChatInboundFiatConverting();
+        const d =
+          lastGoodDepixRef.current ?? lastDepixRef.current ?? depixDisplay ?? 0;
+        autoInboundBaselineRef.current =
+          d > 0 ? depixDisplayToAtomic(d, networkId) : 0n;
+        console.warn("[basic] auto-inbound baseline", {
+          atomic: String(autoInboundBaselineRef.current ?? 0n),
+          inboundSats: autoInboundSatsRef.current,
+        });
       }
 
       // Seed Enter pending ASAP (before fill) so Home never lands on bare `…`.
@@ -660,14 +1012,113 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
               pendingEnterDisplay: null,
             });
           } else if (kind === "auto-inbound") {
-            // Quiet fill — no Enter CONVERTING UI, no BRL toast for swap itself.
-            quietFiatEnterNotices(45_000);
+            // Keep quiet through settle notify; Home adopts *live* balance;
+            // Activity records post-fee *delta* (never full consolidated bag).
+            quietFiatEnterNotices(60_000);
+            const baseline =
+              autoInboundBaselineRef.current ??
+              (() => {
+                const d =
+                  lastGoodDepixRef.current ??
+                  lastDepixRef.current ??
+                  depixDisplay ??
+                  0;
+                return d > 0 ? depixDisplayToAtomic(d, networkId) : 0n;
+              })();
+            let liveAtomic: bigint | null = null;
+            try {
+              const raw = await Promise.race([
+                wallet.getBalance(),
+                new Promise<never>((_, rej) =>
+                  setTimeout(() => rej(new Error("live-adopt timeout")), 4000),
+                ),
+              ]);
+              liveAtomic = readDepixAtomicFromBalance(
+                raw,
+                depixAssetIdForNetwork(networkId),
+              );
+            } catch (e) {
+              console.warn("[basic] auto-inbound live adopt read failed", e);
+            }
+
+            let takeAtomic =
+              result.takeAmount != null && result.takeAmount > 0n
+                ? result.takeAmount
+                : null;
+            if (liveAtomic != null && liveAtomic > baseline) {
+              const fromLive = liveAtomic - baseline;
+              // Swap take or notify often reports the consolidated VTXO (full bag).
+              // Prefer live−baseline whenever take looks like the whole balance.
+              if (
+                takeAtomic == null ||
+                takeAtomic >= liveAtomic ||
+                (baseline > 0n && takeAtomic > fromLive + fromLive / 10n)
+              ) {
+                takeAtomic = fromLive;
+              }
+            } else if (takeAtomic == null && liveAtomic != null && baseline > 0n) {
+              /* live did not rise — leave take null */
+            }
+
+            if (liveAtomic != null && liveAtomic > 0n) {
+              adoptLiveDepixDisplay(
+                depixAtomicToDisplay(liveAtomic, networkId),
+                { holdForceMs: 45_000 },
+              );
+            } else if (takeAtomic != null && takeAtomic > 0n) {
+              applyLocalDepixReceive(depixAtomicToDisplay(takeAtomic, networkId), {
+                force: true,
+              });
+            }
+
+            if (takeAtomic != null && takeAtomic > 0n) {
+              const display = depixAtomicToDisplay(takeAtomic, networkId);
+              if (display >= 0.01) {
+                const caption = formatBrlDisplay(display, { networkId });
+                try {
+                  recordOptimisticArkadeReceive(networkId, walletId, {
+                    amountSats: 0,
+                    assets: [
+                      {
+                        assetId: depixAssetIdForNetwork(networkId),
+                        amount: takeAtomic,
+                      },
+                    ],
+                  });
+                  bumpActivity();
+                } catch (e) {
+                  console.warn("[basic] auto-inbound activity record failed", e);
+                }
+                settleChatInboundFiatPaid(caption, {
+                  inboundSats: autoInboundSatsRef.current,
+                });
+                console.warn("[basic] auto-inbound settled receive", {
+                  display,
+                  takeAtomic: String(takeAtomic),
+                  liveAtomic: liveAtomic != null ? String(liveAtomic) : null,
+                  baseline: String(baseline),
+                  inboundSats: autoInboundSatsRef.current,
+                });
+              }
+            } else {
+              console.warn("[basic] auto-inbound fill without take delta", {
+                takeAmount:
+                  result.takeAmount != null ? String(result.takeAmount) : null,
+                liveAtomic: liveAtomic != null ? String(liveAtomic) : null,
+                baseline: String(baseline),
+              });
+            }
+            autoInboundBaselineRef.current = null;
             await patchState({ pendingJob: null, lastSwapId: result.swapId });
           } else if (kind === "maxi-inbound") {
             // Asset → sats: allow sats Funds Received after settle; no asset toast.
             await patchState({ pendingJob: null, lastSwapId: result.swapId });
             // Baseline will re-read after refresh (asset should be ~0).
             maxiBaselineReadyRef.current = false;
+          } else if (kind === "pay-convert") {
+            // Hold auto-inbound so pay sats are not immediately re-swapped.
+            suppressAutoInboundUntilRef.current = Date.now() + 180_000;
+            await patchState({ pendingJob: null, lastSwapId: result.swapId });
           } else {
             await patchState({ pendingJob: null, lastSwapId: result.swapId });
           }
@@ -689,6 +1140,9 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
           return true;
         }
         await patchState({ pendingJob: null });
+        if (opts?.throwOnError) {
+          throw new Error("Conversion incomplete");
+        }
         if (!quiet) {
           Alert.alert("Conversion incomplete", "Your previous mode was kept.");
         }
@@ -697,6 +1151,9 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         const msg = e instanceof Error ? e.message : String(e);
         console.warn("[basic] fiat swap failed", e);
         await patchState({ pendingJob: null });
+        if (opts?.throwOnError) {
+          throw e instanceof Error ? e : new Error(msg);
+        }
         if (!quiet) {
           const fundingEmpty =
             /funding needs .+wallet holds 0/i.test(msg) ||
@@ -712,6 +1169,15 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       } finally {
         endOutboundSend();
         jobBusyRef.current = false;
+        if (activeJobKindRef.current === kind) {
+          activeJobKindRef.current = null;
+        }
+        if (kind === "auto-inbound") {
+          setAutoInboundBusy(false);
+          autoInboundBaselineRef.current = null;
+          // Success path settles to paid; on failure leave cards as arriving.
+          revertChatInboundFiatConverting();
+        }
         if (!quiet) {
           setConverting(false);
           setConvertingMessage("");
@@ -736,6 +1202,9 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       state?.fiatMode,
       ensureBalanceAtLeast,
       setEnterPending,
+      applyLocalDepixReceive,
+      adoptLiveDepixDisplay,
+      bumpActivity,
     ],
   );
 
@@ -838,39 +1307,118 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     // Cancel UI removed — keep no-op for API stability.
   }, []);
 
+  const holdAutoInboundForPay = useCallback((ms = 180_000) => {
+    const until = Date.now() + Math.max(5_000, ms);
+    if (until > suppressAutoInboundUntilRef.current) {
+      suppressAutoInboundUntilRef.current = until;
+    }
+  }, []);
+
   const maybeAutoSwapInboundSats = useCallback(
     (sats: number) => {
       if (!state?.fiatMode || converting || jobBusyRef.current) return;
+      if (payConvertInFlightRef.current) {
+        console.warn("[basic] auto-inbound skip (pay-convert)", { sats });
+        return;
+      }
+      if (Date.now() < suppressAutoInboundUntilRef.current) {
+        console.warn("[basic] auto-inbound suppress (pay-convert hold)", { sats });
+        return;
+      }
+      if (hasOutboundPayInFlight()) {
+        console.warn("[basic] auto-inbound skip (outbound chat pay)", { sats });
+        return;
+      }
       const minBase = fiatMinBaseSats(networkId);
       const reserve = DEFAULT_MIN_VTXO_SATS;
-      // USDT/DePix receives land with a ~330 sat carrier. On Mutinynet
-      // minBase === 330, so carrier alone used to re-fire CONVERTING forever.
-      // Require a real BTC inbound: enough after dust reserve for minBase.
-      if (!(sats > reserve)) {
-        console.warn("[basic] auto-inbound skip dust carrier", { sats, reserve });
-        return;
-      }
-      if (sats - reserve < minBase) {
-        console.warn("[basic] auto-inbound skip below min after reserve", {
-          sats,
-          reserve,
+      // Resolve live available before funding — UI total can exceed spendable
+      // (boarding / stale), which made α67 queue 1299 → Insufficient funds.
+      void (async () => {
+        if (jobBusyRef.current) return;
+        let live = Math.floor(sats);
+        try {
+          const raw = await (
+            wallet as { getBalance?: () => Promise<unknown> } | null
+          )?.getBalance?.();
+          if (
+            raw &&
+            typeof raw === "object" &&
+            typeof (raw as { available?: unknown }).available === "number"
+          ) {
+            const avail = Math.floor(
+              (raw as { available: number }).available,
+            );
+            if (avail >= 0) live = avail;
+          }
+        } catch (e) {
+          console.warn("[basic] auto-inbound live sats read failed", e);
+        }
+        const total = live;
+        console.warn("[basic] auto-inbound thresholds", {
+          uiSats: Math.floor(sats),
+          liveAvailable: live,
+          dust: reserve,
           minBase,
         });
-        return;
-      }
-      const swap = sats - reserve;
-      // Quiet background — never Enter CONVERTING modal.
-      void runJob("auto-inbound", "btc-to-depix", BigInt(Math.floor(swap)), {
-        quiet: true,
-      });
+        // Single dust carrier (asset change) — never start a convert loop.
+        if (!(total > reserve)) {
+          console.warn("[basic] auto-inbound skip dust carrier", {
+            sats: total,
+            reserve,
+          });
+          return;
+        }
+        // Prefer leave a dust carrier for leftover assets. If that drops below
+        // solver minBase, swap the full bag (same as Enter) so small classic
+        // receives still convert (α65: 639 delta / 1299 total stuck as sats).
+        let swap: number;
+        if (total - reserve >= minBase) {
+          swap = total - reserve;
+        } else if (total >= minBase) {
+          swap = total;
+        } else {
+          console.warn("[basic] auto-inbound skip below minBase", {
+            sats: total,
+            reserve,
+            minBase,
+          });
+          return;
+        }
+        if (jobBusyRef.current) {
+          console.warn("[basic] auto-inbound skip (busy after live read)", {
+            total,
+            swap,
+          });
+          return;
+        }
+        autoInboundSatsRef.current = total;
+        console.warn("[basic] auto-inbound queue", {
+          total,
+          swap,
+          minBase,
+          reserve,
+        });
+        // Quiet background — never Enter CONVERTING modal.
+        void runJob("auto-inbound", "btc-to-depix", BigInt(Math.floor(swap)), {
+          quiet: true,
+        });
+      })();
     },
-    [state?.fiatMode, converting, runJob, networkId],
+    [state?.fiatMode, converting, runJob, networkId, wallet],
   );
 
   // Inbound sats while in Fiat Mode → quiet auto-swap to designated stable.
-  // Ignore dust-sized deltas (asset carriers) — those are not BTC to convert.
+  // Ignore only single dust carriers — not "below minBase+dust" (that blocked
+  // real ~R$3 payments: delta 639 < minMeaningful 1331).
   useEffect(() => {
     if (!state?.fiatMode || converting || jobBusyRef.current) {
+      // While a job runs, keep the sats baseline — do NOT adopt live balance.
+      // Rebasing here swallowed inbound deltas when α58 blocked on getBalance
+      // (jobBusy stuck / failed) and classic Receive never retried.
+      return;
+    }
+    if (Date.now() < suppressAutoInboundUntilRef.current) {
+      // Re-baseline during pay-convert hold so the convert delta is not queued.
       lastSatsRef.current = balanceSats;
       return;
     }
@@ -879,57 +1427,120 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     lastSatsRef.current = balanceSats;
     if (prev == null) return;
     const delta = balanceSats - prev;
-    const minMeaningful = Math.max(
-      fiatMinBaseSats(networkId) + DEFAULT_MIN_VTXO_SATS,
-      DEFAULT_MIN_VTXO_SATS * 2 + 1,
-    );
-    if (delta >= minMeaningful) {
-      maybeAutoSwapInboundSats(delta);
-    } else if (delta > 0) {
-      console.warn("[basic] auto-inbound ignore small sats delta", {
-        delta,
-        minMeaningful,
-      });
+    // Exact dust / 2×dust carriers from asset change — not classic BTC receive.
+    if (delta > 0 && delta <= DEFAULT_MIN_VTXO_SATS) {
+      console.warn("[basic] auto-inbound ignore dust carrier delta", { delta });
+      return;
+    }
+    if (delta > DEFAULT_MIN_VTXO_SATS) {
+      // Convert *total* excess (not only delta) so partial receives accumulate
+      // up to minBase (639 + prior 660 → 1299 ≥ 1001).
+      maybeAutoSwapInboundSats(balanceSats);
     }
   }, [balanceSats, state?.fiatMode, converting, maybeAutoSwapInboundSats, networkId]);
+
+  // Recovery: Fiat Mode with idle excess BTC (missed delta / failed job).
+  // Chat pay hold (suppress / outbound bubble / payConvert) still blocks this.
+  useEffect(() => {
+    if (!state?.fiatMode || converting || jobBusyRef.current) return;
+    if (payConvertInFlightRef.current) return;
+    if (Date.now() < suppressAutoInboundUntilRef.current) return;
+    if (hasOutboundPayInFlight()) return;
+    if (spendableSats == null) return;
+    const minBase = fiatMinBaseSats(networkId);
+    // Enough to meet solver min (maybeAutoSwap decides reserve vs full bag).
+    if (spendableSats < minBase) return;
+    // Slower backoff — idle recovery was racing chat Send (α63 R$12 timeout).
+    if (Date.now() - idleAutoInboundAtRef.current < 60_000) return;
+    idleAutoInboundAtRef.current = Date.now();
+    console.warn("[basic] auto-inbound idle recovery", {
+      spendableSats,
+      balanceTotal: balanceSats,
+    });
+    maybeAutoSwapInboundSats(spendableSats);
+  }, [
+    spendableSats,
+    balanceSats,
+    state?.fiatMode,
+    converting,
+    maybeAutoSwapInboundSats,
+    networkId,
+  ]);
 
   /**
    * Bitcoin Maxi Mode: outside Fiat Mode, inbound designated stable assets
    * (DePix / USDT) auto-swap to sats. Baseline first poll (no swap of stock);
-   * swap only when atomic increases.
+   * swap only when atomic increases *and* estimated sats ≥ solver minBase
+   * (below that: Home pending caption, wait to accumulate).
    */
   useEffect(() => {
     if (!wallet || !walletId) return;
     if (state?.fiatMode || converting || !bitcoinMaxiMode) {
       maxiAssetBaselineRef.current = null;
       maxiBaselineReadyRef.current = false;
+      setMaxiPendingDisplay(null);
       return;
     }
     if (!isFiatModeSwapAvailable(networkId)) return;
 
     let cancelled = false;
     const assetId = depixAssetIdForNetwork(networkId);
+    const minBase = fiatMinBaseSats(networkId);
+
+    const meetsConvertMin = (display: number): boolean => {
+      if (!(display >= 0.01)) return false;
+      const spot = btcBrl;
+      if (spot != null && spot > 0) {
+        const est = brlToSatsEstimate(display, spot);
+        return est != null && est >= minBase;
+      }
+      // No spot yet — allow tiny dust UI only; hold sub-1.00 for caption.
+      return display >= 1;
+    };
 
     const tick = async () => {
       if (cancelled || jobBusyRef.current) return;
       if (walletIdRef.current !== walletId) return;
+      // Never fight chat Maxi/Fiat send or pay-convert hold (α69 Xiaomi thrash).
+      if (payConvertInFlightRef.current) return;
+      if (Date.now() < suppressAutoInboundUntilRef.current) return;
+      if (hasOutboundPayInFlight()) return;
       try {
         const raw = await wallet.getBalance();
         if (cancelled) return;
         const atomic = readDepixAtomicFromBalance(raw, assetId);
+        const display = depixAtomicToDisplay(atomic, networkId);
+        const ready = meetsConvertMin(display);
+
         if (!maxiBaselineReadyRef.current) {
           maxiAssetBaselineRef.current = atomic;
           maxiBaselineReadyRef.current = true;
+          setMaxiPendingDisplay(
+            display >= 0.01 && !ready ? display : null,
+          );
           console.warn("[basic] maxi baseline asset", {
             atomic: String(atomic),
+            display,
+            pending: display >= 0.01 && !ready,
           });
           return;
         }
         const prev = maxiAssetBaselineRef.current ?? 0n;
         if (atomic > prev && atomic > 0n) {
-          const display = depixAtomicToDisplay(atomic, networkId);
           if (display < 0.01) {
             maxiAssetBaselineRef.current = atomic;
+            setMaxiPendingDisplay(null);
+            return;
+          }
+          if (!ready) {
+            // Below min — keep bag, show Home caption, do not swap yet.
+            maxiAssetBaselineRef.current = atomic;
+            setMaxiPendingDisplay(display);
+            console.warn("[basic] maxi hold below convert min", {
+              display,
+              atomic: String(atomic),
+              minBase,
+            });
             return;
           }
           console.warn("[basic] maxi auto-swap asset→sats", {
@@ -937,6 +1548,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
             display,
             prev: String(prev),
           });
+          setMaxiPendingDisplay(null);
           // Optimistically raise baseline so we do not stack jobs on the same bump.
           maxiAssetBaselineRef.current = atomic;
           const ok = await runJob("maxi-inbound", "depix-to-btc", atomic, {
@@ -946,21 +1558,36 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
             // Allow retry on next poll if swap failed.
             maxiAssetBaselineRef.current = prev;
             maxiBaselineReadyRef.current = true;
+            setMaxiPendingDisplay(display);
           }
           return;
         }
         // Asset decreased or flat (after swap / spend) — track live.
         maxiAssetBaselineRef.current = atomic;
+        setMaxiPendingDisplay(
+          display >= 0.01 && !ready ? display : null,
+        );
       } catch (e) {
         console.warn("[basic] maxi asset poll failed", e);
       }
     };
 
-    void tick();
-    const timer = setInterval(() => void tick(), 5_000);
+    const scheduleTick = () => {
+      if (AppState.currentState !== "active") return;
+      void tick();
+    };
+    scheduleTick();
+    // 15s — 5s getBalance fought wallet.send / notify on Xiaomi (α69).
+    // α82: skip while backgrounded; one tick on resume.
+    const timer = setInterval(scheduleTick, 15_000);
+    const onApp = (next: AppStateStatus) => {
+      if (next === "active") void tick();
+    };
+    const sub = AppState.addEventListener("change", onApp);
     return () => {
       cancelled = true;
       clearInterval(timer);
+      sub.remove();
     };
   }, [
     wallet,
@@ -970,23 +1597,203 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     bitcoinMaxiMode,
     networkId,
     runJob,
+    btcBrl,
   ]);
 
   const convertDepixToSatsForPay = useCallback(
-    async (satsNeeded: number) => {
-      if (!(satsNeeded > 0)) return;
-      const display = depixDisplay ?? 0;
-      if (!(display > 0)) {
+    async (
+      satsNeeded: number,
+      opts?: { quiet?: boolean },
+    ): Promise<number> => {
+      const need = Math.floor(satsNeeded);
+      if (!(need > 0)) return balanceSats ?? 0;
+
+      payConvertInFlightRef.current = true;
+      holdAutoInboundForPay(180_000);
+      try {
+      const code = fiatStableForNetwork(networkId).displayCode;
+      const uiDisplay = depixDisplay ?? lastGoodDepixRef.current ?? 0;
+      if (!(uiDisplay > 0)) {
+        console.warn("[basic] pay-convert ui depix empty; reading live asset");
+      }
+
+      await waitForFiatJobSlot({
+        forKind: "pay-convert",
+        timeoutMs: 90_000,
+        preemptQuiet: true,
+      });
+
+      // Prefer live ASP sats — UI/ack floors from prior pay-convert are stale.
+      let preSats = balanceSats ?? 0;
+      if (wallet) {
+        try {
+          const raw = await wallet.getBalance();
+          if (
+            raw &&
+            typeof raw === "object" &&
+            typeof (raw as { available?: unknown }).available === "number"
+          ) {
+            const liveSats = Math.floor((raw as { available: number }).available);
+            if (liveSats < preSats) {
+              console.warn("[basic] pay-convert prefer live sats over UI", {
+                ui: preSats,
+                live: liveSats,
+                need,
+              });
+            }
+            preSats = liveSats;
+          }
+        } catch (e) {
+          console.warn("[basic] pay-convert live sats read failed", e);
+        }
+      }
+      if (preSats >= need) return preSats;
+
+      // Same as Exit: never fund from lastGood alone — ASP can show empty
+      // assets while UI still shows R$ / USDT (→ Insufficient funds).
+      const liveAtomic = await readLiveSpendableAtomic();
+      if (!(liveAtomic > 0n)) {
         throw new Error(
-          `No ${fiatStableForNetwork(networkId).displayCode} balance to convert`,
+          `${code} is not spendable yet (network still settling). Wait a few seconds and try again.`,
         );
       }
-      const { depixDisplayToAtomic: toAtomic } = await import("./depixAssets");
-      const atomic = toAtomic(display, networkId);
-      await runJob("pay-convert", "depix-to-btc", atomic);
-      void satsNeeded;
+      const liveDisplay = depixAtomicToDisplay(liveAtomic, networkId);
+      clearOptimisticDepix();
+      lastGoodDepixRef.current = liveDisplay;
+      setDepixDisplay(liveDisplay);
+
+      let spot = btcBrl;
+      if (spot == null || !(spot > 0)) {
+        spot = await fetchFiatSpot(networkId);
+        if (spot != null && spot > 0) setBtcBrl(spot);
+      }
+
+      // Partial DePix→BTC leaves stable remnant that needs a ≥dust sats carrier
+      // on change. With only ~dust sats (typical Fiat wallet), partial convert
+      // fails with "Insufficient funds". Convert full live balance then.
+      const dust = DEFAULT_MIN_VTXO_SATS;
+      const canPartial = preSats >= dust * 2;
+
+      let atomic: bigint;
+      let mode: "full-low-sats" | "full-no-spot" | "targeted" | "full-capped";
+      if (!canPartial) {
+        atomic = liveAtomic;
+        mode = "full-low-sats";
+      } else if (spot != null && spot > 0) {
+        const paddedSats = padSatsForDepixSwap(need, networkId);
+        const targetSats = Math.ceil(paddedSats * 1.03);
+        const displayNeeded =
+          Math.round(((targetSats / 100_000_000) * spot) * 100) / 100;
+        const giveDisplay =
+          displayNeeded > 0 && displayNeeded < liveDisplay
+            ? displayNeeded
+            : liveDisplay;
+        const targeted = depixDisplayToAtomic(giveDisplay, networkId);
+        if (targeted > 0n && targeted < liveAtomic) {
+          atomic = targeted;
+          mode = "targeted";
+        } else {
+          atomic = liveAtomic;
+          mode = "full-capped";
+        }
+      } else {
+        atomic = liveAtomic;
+        mode = "full-no-spot";
+      }
+
+      if (!(atomic > 0n)) {
+        throw new Error(`No ${code} balance to convert`);
+      }
+
+      console.warn("[basic] pay-convert plan", {
+        need,
+        preSats,
+        canPartial,
+        mode,
+        liveDisplay,
+        atomic: String(atomic),
+        quiet: Boolean(opts?.quiet),
+      });
+
+      // Optimistic home floor so UI can proceed while ASP settles.
+      ensureBalanceAtLeast(preSats + need);
+
+      // Chat pay uses quiet so the bubble owns progress (no global CONVERTING).
+      const filled = await runJob("pay-convert", "depix-to-btc", atomic, {
+        quiet: opts?.quiet ?? true,
+        throwOnError: true,
+      });
+      if (!filled) {
+        throw new Error("Conversion incomplete");
+      }
+
+      // Optimistic spend of converted stable (partial or full).
+      const spentDisplay = depixAtomicToDisplay(atomic, networkId);
+      if (spentDisplay > 0) {
+        if (spentDisplay < liveDisplay) {
+          applyLocalDepixSpend(spentDisplay);
+        } else {
+          applyLocalDepixSpend(liveDisplay);
+        }
+      }
+
+      // Poll spendable with cancellable sleep (no Promise.race on watchers).
+      if (!wallet) {
+        lastSatsRef.current = preSats + need;
+        return preSats + need;
+      }
+      const deadline = Date.now() + 75_000;
+      let best = preSats;
+      while (Date.now() < deadline) {
+        try {
+          const raw = await wallet.getBalance();
+          const avail =
+            raw && typeof raw === "object" && typeof (raw as { available?: unknown }).available === "number"
+              ? Math.floor((raw as { available: number }).available)
+              : 0;
+          if (avail > best) best = avail;
+          if (avail >= need) {
+            ensureBalanceAtLeast(avail);
+            lastSatsRef.current = avail;
+            return avail;
+          }
+        } catch (e) {
+          console.warn("[basic] pay-convert balance poll failed", e);
+        }
+        await new Promise<void>((r) => setTimeout(r, 750));
+      }
+
+      // ASP slow: trust optimistic floor if convert filled.
+      if (best >= need) {
+        lastSatsRef.current = best;
+        return best;
+      }
+      ensureBalanceAtLeast(preSats + need);
+      lastSatsRef.current = preSats + need;
+      console.warn("[basic] pay-convert settle timeout; using optimistic floor", {
+        need,
+        best,
+        preSats,
+      });
+      return Math.max(best, preSats + need);
+      } finally {
+        payConvertInFlightRef.current = false;
+      }
     },
-    [depixDisplay, runJob, networkId],
+    [
+      balanceSats,
+      depixDisplay,
+      btcBrl,
+      runJob,
+      networkId,
+      wallet,
+      ensureBalanceAtLeast,
+      applyLocalDepixSpend,
+      readLiveSpendableAtomic,
+      clearOptimisticDepix,
+      waitForFiatJobSlot,
+      holdAutoInboundForPay,
+    ],
   );
 
   // Clear "+ x sats pending" once live balance catches the exit target.
@@ -1080,6 +1887,54 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     return brlToSatsEstimate(depixDisplay, btcBrl);
   }, [fiatMode, depixDisplay, btcBrl]);
 
+  /**
+   * Home: pending auto-convert caption.
+   * Fiat — spendable sats above a single dust carrier (below *or* at/above
+   * minBase while auto-inbound has not cleared them — α68).
+   * Maxi — designated stable held below convert min (see maxi poll).
+   * Never use optimistic pay-convert floors during outbound hold.
+   */
+  const pendingConvertHint = useMemo((): string | null => {
+    if (converting) return null;
+    const minBase = fiatMinBaseSats(networkId);
+    const dust = DEFAULT_MIN_VTXO_SATS;
+    const stable = fiatStableForNetwork(networkId);
+
+    if (fiatMode) {
+      if (payConvertInFlightRef.current) return null;
+      if (Date.now() < suppressAutoInboundUntilRef.current) return null;
+      if (hasOutboundPayInFlight()) return null;
+      const sats = spendableSats;
+      if (sats == null) return null;
+      // Ignore only ≤ dust carrier. Show while excess remains (α67 hid ≥minBase
+      // so a stuck 1299 convert left Home with no caption).
+      if (!(sats > dust)) return null;
+      return sats < minBase
+        ? `+ ${sats.toLocaleString("en-US")} sats to be converted after minimum is reached`
+        : `+ ${sats.toLocaleString("en-US")} sats to be converted`;
+    }
+
+    if (bitcoinMaxiMode && maxiPendingDisplay != null && maxiPendingDisplay >= 0.01) {
+      const qty =
+        stable.decimals <= 2
+          ? maxiPendingDisplay.toLocaleString("en-US", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })
+          : String(maxiPendingDisplay);
+      return `+ ${qty} ${stable.ticker} to be converted after minimum is reached`;
+    }
+    return null;
+  }, [
+    fiatMode,
+    converting,
+    spendableSats,
+    balanceSats,
+    bitcoinMaxiMode,
+    maxiPendingDisplay,
+    networkId,
+  ]);
+
   const value = useMemo<FiatModeContextValue>(
     () => ({
       fiatMode,
@@ -1101,6 +1956,8 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       applyLocalDepixReceive,
       maybeAutoSwapInboundSats,
       convertDepixToSatsForPay,
+      holdAutoInboundForPay,
+      pendingConvertHint,
     }),
     [
       fiatMode,
@@ -1120,6 +1977,8 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       applyLocalDepixReceive,
       maybeAutoSwapInboundSats,
       convertDepixToSatsForPay,
+      holdAutoInboundForPay,
+      pendingConvertHint,
       networkId,
     ],
   );

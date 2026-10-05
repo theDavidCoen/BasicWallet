@@ -1,11 +1,12 @@
 import * as Clipboard from "expo-clipboard";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -40,6 +41,8 @@ export function NostrIdentityScreen() {
     about: "",
   });
   const [saving, setSaving] = useState(false);
+  const [npubCopied, setNpubCopied] = useState(false);
+  const npubCopiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -56,6 +59,9 @@ export function NostrIdentityScreen() {
   useFocusEffect(
     useCallback(() => {
       void reload();
+      return () => {
+        if (npubCopiedTimer.current) clearTimeout(npubCopiedTimer.current);
+      };
     }, [reload]),
   );
 
@@ -75,7 +81,21 @@ export function NostrIdentityScreen() {
   async function onCopyNpub() {
     if (!identity?.npub) return;
     await Clipboard.setStringAsync(identity.npub);
-    Alert.alert("Copied", "npub copied to clipboard.");
+    setNpubCopied(true);
+    if (npubCopiedTimer.current) clearTimeout(npubCopiedTimer.current);
+    npubCopiedTimer.current = setTimeout(() => setNpubCopied(false), 1500);
+  }
+
+  async function onShareNpub() {
+    if (!identity?.npub) return;
+    try {
+      await Share.share({ message: identity.npub });
+    } catch (e) {
+      Alert.alert(
+        "Could not share",
+        e instanceof Error ? e.message : "Unknown error",
+      );
+    }
   }
 
   if (loading) {
@@ -120,7 +140,16 @@ export function NostrIdentityScreen() {
           Social identity, payments,{"\n"}and encrypted multi-wallet backup.
         </Text>
 
-        <Field label="npub" value={midEllipsis(identity.npub, 12, 8)} editable={false} />
+        <Pressable
+          style={styles.field}
+          onPress={() => void onCopyNpub()}
+          accessibilityRole="button"
+          accessibilityHint="Copies npub to clipboard"
+        >
+          <Text style={styles.label}>npub</Text>
+          <Text style={styles.value}>{midEllipsis(identity.npub, 12, 8)}</Text>
+          <Text style={styles.copyHint}>{npubCopied ? "Copied" : "Tap to copy"}</Text>
+        </Pressable>
         <Editable
           label="NIP-05"
           value={profile.nip05}
@@ -162,8 +191,8 @@ export function NostrIdentityScreen() {
           onPress={() => navigation.navigate("AdvancedBackup")}
         />
 
-        <Pressable style={[ui.primaryBtn, { marginTop: 16 }]} onPress={() => void onCopyNpub()}>
-          <Text style={ui.primaryBtnText}>Copy npub</Text>
+        <Pressable style={[ui.primaryBtn, { marginTop: 16 }]} onPress={() => void onShareNpub()}>
+          <Text style={ui.primaryBtnText}>Share npub</Text>
         </Pressable>
 
         <Text
@@ -174,25 +203,6 @@ export function NostrIdentityScreen() {
         </Text>
       </ScrollView>
     </ScreenChrome>
-  );
-}
-
-function Field({
-  label,
-  value,
-  editable,
-}: {
-  label: string;
-  value: string;
-  editable: boolean;
-}) {
-  return (
-    <View style={styles.field}>
-      <Text style={styles.label}>{label}</Text>
-      <Text style={styles.value} selectable={editable}>
-        {value || "—"}
-      </Text>
-    </View>
   );
 }
 
@@ -260,6 +270,12 @@ const styles = StyleSheet.create({
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 14,
     color: colors.fg,
+  },
+  copyHint: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.hint,
+    marginTop: 8,
   },
   input: {
     fontFamily: "JetBrainsMono_400Regular",

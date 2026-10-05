@@ -19,9 +19,12 @@ type NavTarget =
   | "NostrIdentity"
   | "ArchivedWallets"
   | "Contacts"
+  | "PayHub"
   | "ResetApp"
   | "Logs"
   | "Privacy"
+  | "Notifications"
+  | "CursorAgentSettings"
   | "ConnectedNode"
   | "ArkadeSettings"
   | "PairBluetooth"
@@ -45,13 +48,18 @@ const BLOCKS: Block[] = [
 
   { kind: "section", title: "Account" },
   { kind: "row", row: { label: "Privacy", on: "Privacy" } },
-  { kind: "row", row: { label: "Nostr identity", on: "NostrIdentity" } },
+  { kind: "row", row: { label: "Notifications", on: "Notifications" } },
   { kind: "row", row: { label: "Archived wallets", on: "ArchivedWallets" } },
-  { kind: "row", row: { label: "Contacts", on: "Contacts" } },
   { kind: "row", row: { label: "Duress PIN", stub: true } },
 
   { kind: "section", title: "Provider Settings" },
   { kind: "row", row: { label: "Arkade", on: "ArkadeSettings" } },
+  { kind: "row", row: { label: "Cursor", on: "CursorAgentSettings" } },
+
+  { kind: "section", title: "Nostr" },
+  { kind: "row", row: { label: "Nostr Identity", on: "NostrIdentity" } },
+  { kind: "row", row: { label: "Chat & Pay", on: "PayHub" } },
+  { kind: "row", row: { label: "Contacts", on: "Contacts" } },
 
   { kind: "section", title: "Advanced settings" },
   { kind: "row", row: { label: "Logs", on: "Logs" } },

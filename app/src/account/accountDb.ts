@@ -165,6 +165,81 @@ function migrate(database: SQLite.SQLiteDatabase): void {
   database.execSync(
     `CREATE INDEX IF NOT EXISTS idx_contact_idents_contact ON contact_identifiers (contact_id);`,
   );
+
+  // Pay in Chat — encrypted local history (recoverable from Nostr, not Bluetooth pair).
+  database.execSync(`
+    CREATE TABLE IF NOT EXISTS chat_thread (
+      contact_id TEXT PRIMARY KEY NOT NULL,
+      peer_pubkey TEXT,
+      last_message_at INTEGER,
+      unread_count INTEGER NOT NULL DEFAULT 0,
+      archived INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+  try {
+    database.execSync(
+      `ALTER TABLE chat_thread ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`,
+    );
+  } catch {
+    /* already present */
+  }
+  database.execSync(`
+    CREATE TABLE IF NOT EXISTS chat_message (
+      id TEXT PRIMARY KEY NOT NULL,
+      contact_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      body_text TEXT,
+      amount_sats INTEGER,
+      fiat_caption TEXT,
+      memo TEXT,
+      status TEXT,
+      request_id TEXT,
+      payment_id TEXT,
+      nostr_event_id TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      pay_to_json TEXT
+    );
+  `);
+  database.execSync(
+    `CREATE INDEX IF NOT EXISTS chat_message_contact_time ON chat_message (contact_id, created_at);`,
+  );
+  database.execSync(
+    `CREATE INDEX IF NOT EXISTS chat_message_nostr ON chat_message (nostr_event_id);`,
+  );
+  database.execSync(
+    `CREATE INDEX IF NOT EXISTS chat_message_request ON chat_message (contact_id, request_id);`,
+  );
+  database.execSync(`
+    CREATE TABLE IF NOT EXISTS chat_outbox (
+      id TEXT PRIMARY KEY NOT NULL,
+      payload_json TEXT NOT NULL,
+      recipient_pubkey TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at INTEGER,
+      last_error TEXT,
+      contact_id TEXT,
+      local_message_id TEXT
+    );
+  `);
+  try {
+    database.execSync(`ALTER TABLE chat_message ADD COLUMN pay_to_json TEXT`);
+  } catch {
+    /* already present */
+  }
+  try {
+    database.execSync(`ALTER TABLE chat_outbox ADD COLUMN contact_id TEXT`);
+  } catch {
+    /* already present */
+  }
+  try {
+    database.execSync(`ALTER TABLE chat_outbox ADD COLUMN local_message_id TEXT`);
+  } catch {
+    /* already present */
+  }
 }
 
 export function accountKvGet(networkId: ArkadeNetworkId, key: string): string | null {
