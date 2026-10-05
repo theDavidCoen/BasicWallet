@@ -19,7 +19,7 @@ Use at your own risk. There is no warranty.
 
 ## Download
 
-Latest release: **[v0.8.1](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.8.1)** (arm64-v8a APK + SHA256).
+Latest release: **[v0.8.4](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.8.4)** (arm64-v8a APK + SHA256).
 
 All builds: [Releases](https://github.com/theDavidCoen/BasicWallet/releases). Prefer verifying the checksum before install.
 
@@ -36,6 +36,7 @@ Basic (`app.basic.wallet`) is an experimental mobile wallet built with **Expo / 
 | **Lightning** | User-linked node (e.g. BTCPay / LNDHub) and Arkade↔Lightning **intents** (not Boltz) |
 | **Backup** | Passkey-oriented onboarding, Advanced Backup via Nostr and/or home server |
 | **Contacts** | Local encrypted contacts, share over Nostr gift wraps |
+| **Ask Cursor** | Optional on-device Nostr bot (Cursor Cloud Agents) under Chat & Pay for shopping / pay flows |
 | **Bluetooth pair** | Move an account to a nearby phone from the welcome screen (encrypted Bluetooth; no QR/NFC) |
 | **Ops hygiene** | Reproducible Android APK recipe, minimal permissions, SQLCipher for account DB |
 
@@ -61,7 +62,8 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 - **Pair with Bluetooth** — move wallets / nsec to a nearby phone on the welcome screen (lobby code + biometrics; passkeys stay on Device 1)
 - **Manage a Nostr identity**; Advanced Backup (Nostr relays and/or home server), including Fiat/Maxi prefs in the Path C package
 - Maintain **contacts** (npub, NIP-05, BIP-353, etc.) and share a contact over Nostr
-- **Pay in Chat** — 1:1 Nostr threads with text plus send/request payment cards (Home **Chat & Pay** hub or a contact; classic Send stays separate)
+- **Pay in Chat** — 1:1 Nostr threads with text plus send/request payment cards (Home **Chat & Pay** hub or Settings → Nostr → Chat & Pay; classic Send stays separate)
+- **Ask Cursor** — paste a Cursor API key in Settings → Provider Settings → Cursor; then use **Ask Cursor** in Chat & Pay (owner-only bot; shopping MCPs stay on your Cursor Dashboard)
 - **Closed-app alerts** (Android, opt-in) — opaque tray wake (“New Pay message”) for Pay in Chat / contact share while the app is closed; never amounts or memos; classic receives still catch up on open
 - Prefer mainnet or Mutinynet (and optional custom ASP) from Settings
 

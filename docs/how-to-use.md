@@ -40,9 +40,20 @@ Settings → About shows version + git commit for the APK you installed.
 
 ### Pay in Chat
 
-- **Chat & Pay** on Home (or open a contact) → 1:1 thread over Nostr gift wraps.
+- **Chat & Pay** on Home, or Settings → Nostr → Chat & Pay (or open a contact) → 1:1 thread over Nostr gift wraps.
 - Composer for text; **Request** / **Send** for payment cards in the thread (Arkade; classic Send stays for paste / QR / multisend).
 - Unread activity can surface as a Home banner; history is local (encrypted) and recoverable from Nostr when identity/relays allow.
+
+### Ask Cursor
+
+Optional AI helper in Chat & Pay (experimental). Needs a Nostr identity first.
+
+1. Settings → Nostr → **Nostr Identity** — create or import if you do not have one.
+2. Settings → Provider Settings → **Cursor** — paste your Cursor API key (from the Cursor Dashboard). Basic validates it and activates an on-device bot; shopping MCPs such as Bitrefill stay on your Cursor Cloud / Dashboard (never entered in Basic).
+3. Open **Chat & Pay** (Home or Settings → Nostr → Chat & Pay) → **Ask Cursor**.
+4. Chat with suggestion chips or free text. When the bot posts a pay card, **Confirm** + biometrics pays from your selected Arkade wallet. The bot thread has no Request/Send composer actions.
+
+Disable anytime from Settings → Provider Settings → Cursor. Only your identity npub can message the bot.
 
 ### Settings (highlights)
 
@@ -50,13 +61,15 @@ Settings → About shows version + git commit for the APK you installed.
 |-----|---------|
 | Bitcoin Maxi Mode | Auto-swap inbound alt-assets → sats when Fiat Mode is off (default ON) |
 | Fiat Mode | Enter/exit stable unit mode; pick available stable card |
-| Contacts | Private directory; Nostr share |
-| Chat & Pay | Pay in Chat hub (threads + open contacts) |
 | Notifications | Android opt-in closed-app alerts (opaque “New Pay message”; default off) |
-| Backup | Passkey status, Nostr package, home server |
+| **Provider Settings → Cursor** | Cursor API key → activate Ask Cursor in Chat & Pay |
+| **Nostr → Nostr Identity** | Create / import / share npub |
+| **Nostr → Chat & Pay** | Pay in Chat hub (Ask Cursor + human threads) |
+| **Nostr → Contacts** | Private directory; Nostr share |
+| Backup | Passkey status, Nostr package, home server (Advanced) |
 | Restore | Seed / nsec package / home server |
 | Pair with Bluetooth | Move this account to a nearby phone on the welcome screen (Advanced) |
-| Network / ASP | Mainnet, Mutinynet, optional custom ASP |
+| Network / ASP | Mainnet, Mutinynet, optional custom ASP (Arkade settings) |
 | About | Version, commit, ASP info |
 
 Long-press empty chrome on Home, or tap the rate footer when shown, also opens Settings.
