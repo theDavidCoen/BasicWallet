@@ -5,25 +5,28 @@ import { sendOpaqueWake } from "./fcm.js";
 
 const KIND_GIFT_WRAP = 1059;
 
+/** NIP-17 gift-wraps randomize created_at into the past (up to ~2 days). */
+const NIP17_CREATED_LOOKBACK_SEC = 2 * 24 * 3600 + 3600;
+
 /** How often to tear down + resubscribe (WS can die silently on some relays). */
 const RESUBSCRIBE_MS = 5 * 60_000;
-/** Poll `#p` as backup when live push misses (strfry/paywall quirks). */
+/** Poll `#p` as backup when live push misses. */
 const POLL_MS = 15_000;
-const POLL_LOOKBACK_SEC = 120;
 
 type WatchHandle = {
   pool: SimplePool;
   closer: SubCloser;
   urls: string[];
   pubkey: string;
+  /** After EOSE, live EVENTs may trigger FCM. */
+  liveReady: boolean;
 };
 
 /**
- * Multiplexed live subscriptions: one SubCloser per registered pubkey.
- * Sidecar never unwraps gift-wraps — only sees kind + #p metadata.
+ * Watch kind 1059 `#p` for registered pubkeys. Never unwraps.
  *
- * Prefers HOME_RELAY (internal strfry WS when configured). Polls `#p` as
- * backup so missed live EVENT frames still wake FCM.
+ * NIP-17 wraps backdate created_at, so filters must use a multi-day lookback.
+ * Historical hits seed `seenEventIds` without FCM; only new ids wake devices.
  */
 export class GiftWrapWatcher {
   private handles = new Map<string, WatchHandle>();
@@ -34,6 +37,7 @@ export class GiftWrapWatcher {
   private resubTimer: ReturnType<typeof setInterval> | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private pollPool: SimplePool | null = null;
+  private seeded = false;
 
   constructor(
     private readonly store: RegistrationStore,
@@ -43,7 +47,6 @@ export class GiftWrapWatcher {
     this.coalesceMs = opts.coalesceMs;
   }
 
-  /** Start periodic resubscribe + `#p` poll backup. */
   startMaintenance(): void {
     if (!this.resubTimer) {
       this.resubTimer = setInterval(() => {
@@ -71,6 +74,12 @@ export class GiftWrapWatcher {
       }, POLL_MS);
       this.pollTimer.unref?.();
     }
+    void this.seedSeenFromHistory().catch((e) => {
+      console.warn(
+        "[notifier] seed seen failed",
+        e instanceof Error ? e.message : String(e),
+      );
+    });
   }
 
   syncFromStore(): void {
@@ -84,7 +93,6 @@ export class GiftWrapWatcher {
     }
   }
 
-  /** Drop all handles and open fresh subscriptions from the store. */
   forceResubscribeAll(): void {
     for (const pubkey of [...this.handles.keys()]) {
       this.stopOne(pubkey);
@@ -107,13 +115,54 @@ export class GiftWrapWatcher {
 
   private relayUrls(reg: Registration): string[] {
     void reg;
-    const home = this.homeRelay.trim() || "wss://relay.davidcoen.it";
-    return [home];
+    return [this.homeRelay.trim() || "wss://relay.davidcoen.it"];
+  }
+
+  private lookbackSince(): number {
+    return Math.floor(Date.now() / 1000) - NIP17_CREATED_LOOKBACK_SEC;
+  }
+
+  private rememberId(id: string): void {
+    this.seenEventIds.add(id);
+    if (this.seenEventIds.size > 2000) {
+      const drop = [...this.seenEventIds].slice(0, 400);
+      for (const x of drop) this.seenEventIds.delete(x);
+    }
+  }
+
+  /** Mark existing wraps as seen so restart/poll does not spam FCM. */
+  private async seedSeenFromHistory(): Promise<void> {
+    if (this.seeded) return;
+    const urls = this.relayUrls({} as Registration);
+    const pool = this.pollPool ?? new SimplePool({ enableReconnect: true });
+    this.pollPool = pool;
+    const since = this.lookbackSince();
+    let n = 0;
+    for (const reg of this.store.list()) {
+      const evs = await pool.querySync(urls, {
+        kinds: [KIND_GIFT_WRAP],
+        "#p": [reg.pubkey],
+        since,
+        limit: 80,
+      });
+      for (const ev of evs) {
+        this.rememberId(ev.id);
+        n += 1;
+      }
+    }
+    this.seeded = true;
+    console.log("[notifier] seeded seen events", n);
   }
 
   private start(reg: Registration, urls: string[]): void {
     const pool = new SimplePool({ enableReconnect: true });
-    const since = Math.floor(Date.now() / 1000) - 60;
+    const handle: WatchHandle = {
+      pool,
+      closer: null as unknown as SubCloser,
+      urls,
+      pubkey: reg.pubkey,
+      liveReady: false,
+    };
     let closer: SubCloser;
     try {
       closer = pool.subscribe(
@@ -121,10 +170,14 @@ export class GiftWrapWatcher {
         {
           kinds: [KIND_GIFT_WRAP],
           "#p": [reg.pubkey],
-          since,
+          since: this.lookbackSince(),
         },
         {
           onevent: (ev) => {
+            if (!handle.liveReady) {
+              this.rememberId(ev.id);
+              return;
+            }
             void this.onEvent(reg.pubkey, ev, "live").catch((e) => {
               console.warn(
                 "[notifier] onEvent error",
@@ -133,7 +186,12 @@ export class GiftWrapWatcher {
               );
             });
           },
+          oneose: () => {
+            handle.liveReady = true;
+            console.log("[notifier] live ready", shortPubkey(reg.pubkey));
+          },
           onclose: (reasons) => {
+            handle.liveReady = false;
             console.warn(
               "[notifier] sub closed",
               shortPubkey(reg.pubkey),
@@ -155,7 +213,8 @@ export class GiftWrapWatcher {
       }
       return;
     }
-    this.handles.set(reg.pubkey, { pool, closer, urls, pubkey: reg.pubkey });
+    handle.closer = closer;
+    this.handles.set(reg.pubkey, handle);
     console.log(
       "[notifier] watching",
       shortPubkey(reg.pubkey),
@@ -167,19 +226,21 @@ export class GiftWrapWatcher {
   }
 
   private async pollCatchUp(): Promise<void> {
-    const urls = [this.homeRelay.trim() || "wss://relay.davidcoen.it"];
+    if (!this.seeded) await this.seedSeenFromHistory();
+    const urls = this.relayUrls({} as Registration);
     const pool = this.pollPool ?? new SimplePool({ enableReconnect: true });
     this.pollPool = pool;
-    const since = Math.floor(Date.now() / 1000) - POLL_LOOKBACK_SEC;
+    const since = this.lookbackSince();
     for (const reg of this.store.list()) {
       try {
         const evs = await pool.querySync(urls, {
           kinds: [KIND_GIFT_WRAP],
           "#p": [reg.pubkey],
           since,
-          limit: 20,
+          limit: 40,
         });
         for (const ev of evs) {
+          if (this.seenEventIds.has(ev.id)) continue;
           await this.onEvent(reg.pubkey, ev, "poll");
         }
       } catch (e) {
@@ -199,12 +260,7 @@ export class GiftWrapWatcher {
   ): Promise<void> {
     if (ev.kind !== KIND_GIFT_WRAP) return;
     if (this.seenEventIds.has(ev.id)) return;
-    this.seenEventIds.add(ev.id);
-    // Bound memory: keep last ~500 ids.
-    if (this.seenEventIds.size > 500) {
-      const drop = [...this.seenEventIds].slice(0, 100);
-      for (const id of drop) this.seenEventIds.delete(id);
-    }
+    this.rememberId(ev.id);
 
     const now = Date.now();
     const last = this.lastPingAt.get(pubkey) ?? 0;
