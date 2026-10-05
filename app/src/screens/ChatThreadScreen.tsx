@@ -19,6 +19,7 @@ import {
   AppState,
   FlatList,
   InteractionManager,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -27,6 +28,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
 import { ChatPaymentCard } from "../components/chat/ChatPaymentCard";
@@ -96,9 +98,13 @@ function formatTime(ms: number): string {
   }
 }
 
+/** Matches ScreenChrome root `paddingBottom` (safe bottom + 16). */
+const SCREEN_CHROME_BOTTOM_EXTRA = 16;
+
 export function ChatThreadScreen() {
   const navigation = useNavigation<RootNav>();
   const route = useRoute<RouteProp<RootStackParamList, "ChatThread">>();
+  const insets = useSafeAreaInsets();
   const contactId = route.params.contactId;
   const seedDraft = route.params.seedDraft;
   const contact = useMemo(() => getContact(contactId), [contactId]);
@@ -130,6 +136,7 @@ export function ChatThreadScreen() {
   const [hasIdentity, setHasIdentity] = useState(true);
   const [archived, setArchived] = useState(false);
   const [spot, setSpot] = useState<number | null>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const seededRef = useRef(false);
 
@@ -285,6 +292,42 @@ export function ChatThreadScreen() {
     }, 80);
     return () => clearTimeout(t);
   }, [messages.length]);
+
+  // Android edge-to-edge (`edgeToEdgeEnabled=true`) + transparent nav bar:
+  // windowSoftInputMode=adjustResize does not shrink the RN root, and
+  // KeyboardAvoidingView with behavior=undefined leaves the composer under
+  // Gboard. Same Keyboard height pad pattern as InteractiveBottomSheet.
+  useEffect(() => {
+    const showEvt =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const onShow = Keyboard.addListener(showEvt, (e) => {
+      setKeyboardHeight(Math.max(0, e.endCoordinates?.height ?? 0));
+    });
+    const onHide = Keyboard.addListener(hideEvt, () => setKeyboardHeight(0));
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (keyboardHeight <= 0) return;
+    const t = setTimeout(() => {
+      listRef.current?.scrollToEnd({ animated: true });
+    }, 50);
+    return () => clearTimeout(t);
+  }, [keyboardHeight]);
+
+  // Subtract ScreenChrome bottom pad so we do not double-count safe area.
+  const androidComposerLift =
+    Platform.OS === "android" && keyboardHeight > 0
+      ? Math.max(
+          0,
+          keyboardHeight - (insets.bottom + SCREEN_CHROME_BOTTOM_EXTRA),
+        )
+      : 0;
 
   async function onSendText() {
     const body = draft.trim();
@@ -694,7 +737,10 @@ export function ChatThreadScreen() {
   return (
     <ScreenChrome logoScale={0.77}>
       <KeyboardAvoidingView
-        style={styles.flex}
+        style={[
+          styles.flex,
+          androidComposerLift > 0 && { paddingBottom: androidComposerLift },
+        ]}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={8}
       >
