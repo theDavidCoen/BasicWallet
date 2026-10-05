@@ -1894,92 +1894,110 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             preSend: preSendTotalRef.current,
             optimistic: optimisticSpendTotalRef.current,
           });
-        }
-      } else if (!suppressed || !ack || bal.total <= ack.total) {
-        if (ack && !suppressed && bal.total + 1 < ack.total) {
-          const awaitingRecv =
-            incomingWatchBoostRef.current > 0 || posUiHoldRef.current > 0;
-          const postOpen = Date.now() < openNoticeQuietUntilRef.current;
-          const floor = lastNotifyFloorRef.current;
-          const doubleInflated =
-            bal.total > 0 &&
-            floor != null &&
-            floor > 0 &&
-            Math.abs(bal.total - floor) <= 2 &&
-            Math.abs(ack.total - 2 * floor) <= 2;
-          const notice = lastFundsNoticeRef.current;
-          const adopt = lastPersistAdoptRef.current;
-          const credit = getCatchUpCreditForWallet(
-            catchUpCreditByWalletRef.current,
-            walletId,
-          );
-          const falseInbound = decideFalseInboundRollback({
-            now: Date.now(),
-            liveTotal: bal.total,
-            ackTotal: ack.total,
-            noticeAmount: notice?.amount ?? null,
-            noticeAt: notice?.at ?? null,
-            noticeKind: notice?.kind ?? null,
-            catchUpCreditSats: credit?.sats ?? null,
-            notifyFloor: floor,
-            persistAdoptAmount:
-              adopt && adopt.walletId === walletId ? adopt.amount : null,
-            persistAdoptAt:
-              adopt && adopt.walletId === walletId ? adopt.at : null,
-            awaitingRecv,
-            windowMs: FALSE_INBOUND_ROLLBACK_MS,
+        } else if (
+          postSend.reason === "floor-heal" &&
+          ack != null &&
+          bal.total + 1 < ack.total
+        ) {
+          // Xiaomi 2026-10-05 +1911: floor-heal writes ack but must not hide the reverse.
+          console.warn("[basic] persistBalance floor-heal ack to live", {
+            live: bal.total,
+            priorAck: ack.total,
+            nextAck: ackTotal,
           });
-          if (falseInbound.rollback) {
-            console.warn("[basic] persistBalance rollback false inbound", {
-              live: bal.total,
-              ackTotal: ack.total,
-              amount: falseInbound.amount,
-              reason: falseInbound.reason,
+        }
+      }
+
+      // False-inbound rollback must run even when floor-heal already wrote ack.
+      // #20 lived only in the writeAck else-branch; catch-up spikes then reversed
+      // via floor-heal left FundsNotice + local-recv on screen (Xiaomi +1911/−1911).
+      if (ack && !suppressed && bal.total + 1 < ack.total) {
+        const awaitingRecv =
+          incomingWatchBoostRef.current > 0 || posUiHoldRef.current > 0;
+        const postOpen = Date.now() < openNoticeQuietUntilRef.current;
+        const floor = lastNotifyFloorRef.current;
+        const doubleInflated =
+          bal.total > 0 &&
+          floor != null &&
+          floor > 0 &&
+          Math.abs(bal.total - floor) <= 2 &&
+          Math.abs(ack.total - 2 * floor) <= 2;
+        const notice = lastFundsNoticeRef.current;
+        const adopt = lastPersistAdoptRef.current;
+        const credit = getCatchUpCreditForWallet(
+          catchUpCreditByWalletRef.current,
+          walletId,
+        );
+        const falseInbound = decideFalseInboundRollback({
+          now: Date.now(),
+          liveTotal: bal.total,
+          ackTotal: ack.total,
+          noticeAmount: notice?.amount ?? null,
+          noticeAt: notice?.at ?? null,
+          noticeKind: notice?.kind ?? null,
+          catchUpCreditSats: credit?.sats ?? null,
+          notifyFloor: floor,
+          persistAdoptAmount:
+            adopt && adopt.walletId === walletId ? adopt.amount : null,
+          persistAdoptAt:
+            adopt && adopt.walletId === walletId ? adopt.at : null,
+          awaitingRecv,
+          windowMs: FALSE_INBOUND_ROLLBACK_MS,
+        });
+        if (falseInbound.rollback) {
+          console.warn("[basic] persistBalance rollback false inbound", {
+            live: bal.total,
+            ackTotal: ack.total,
+            amount: falseInbound.amount,
+            reason: falseInbound.reason,
+            afterWriteAck: postSend.writeAck,
+            postSendReason: postSend.reason,
+          });
+          if (falseInbound.healAck) {
+            lastAckRef.current = bal;
+            lastNotifyFloorRef.current = bal.total;
+            void writeLastAckBalance(networkId, walletId, bal);
+          }
+          if (falseInbound.dismissNotice) {
+            setFundsNotice((prev) => {
+              if (!prev) return prev;
+              if (Math.abs(prev.amount - falseInbound.amount) > 1) return prev;
+              return null;
             });
-            if (falseInbound.healAck) {
-              lastAckRef.current = bal;
-              lastNotifyFloorRef.current = bal.total;
-              void writeLastAckBalance(networkId, walletId, bal);
+            const n = lastFundsNoticeRef.current;
+            if (n && Math.abs(n.amount - falseInbound.amount) <= 1) {
+              lastFundsNoticeRef.current = null;
             }
-            if (falseInbound.dismissNotice) {
-              setFundsNotice((prev) => {
-                if (!prev) return prev;
-                if (Math.abs(prev.amount - falseInbound.amount) > 1) return prev;
-                return null;
-              });
-              const n = lastFundsNoticeRef.current;
-              if (n && Math.abs(n.amount - falseInbound.amount) <= 1) {
-                lastFundsNoticeRef.current = null;
-              }
-            }
-            if (falseInbound.clearCatchUpCredit) {
-              setCatchUpCreditForWallet(
-                catchUpCreditByWalletRef.current,
+          }
+          if (falseInbound.clearCatchUpCredit) {
+            setCatchUpCreditForWallet(
+              catchUpCreditByWalletRef.current,
+              walletId,
+              null,
+            );
+          }
+          if (falseInbound.dropOptimistic) {
+            try {
+              const dropped = dropOptimisticArkadeReceive(
+                networkId,
                 walletId,
-                null,
+                falseInbound.amount,
+                { maxAgeMs: FALSE_INBOUND_ROLLBACK_MS },
               );
+              if (dropped) setActivityEpoch((n) => n + 1);
+            } catch (e) {
+              console.warn("[basic] drop optimistic receive failed", e);
             }
-            if (falseInbound.dropOptimistic) {
-              try {
-                const dropped = dropOptimisticArkadeReceive(
-                  networkId,
-                  walletId,
-                  falseInbound.amount,
-                  { maxAgeMs: FALSE_INBOUND_ROLLBACK_MS },
-                );
-                if (dropped) setActivityEpoch((n) => n + 1);
-              } catch (e) {
-                console.warn("[basic] drop optimistic receive failed", e);
-              }
-            }
-            if (
-              adopt &&
-              adopt.walletId === walletId &&
-              Math.abs(adopt.amount - falseInbound.amount) <= 1
-            ) {
-              lastPersistAdoptRef.current = null;
-            }
-          } else if (doubleInflated || (!awaitingRecv && postOpen)) {
+          }
+          if (
+            adopt &&
+            adopt.walletId === walletId &&
+            Math.abs(adopt.amount - falseInbound.amount) <= 1
+          ) {
+            lastPersistAdoptRef.current = null;
+          }
+        } else if (!postSend.writeAck) {
+          if (doubleInflated || (!awaitingRecv && postOpen)) {
             console.warn("[basic] persistBalance heal ack above stale live", {
               live: bal.total,
               ackTotal: ack.total,

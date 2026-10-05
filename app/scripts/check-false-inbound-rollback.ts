@@ -147,6 +147,29 @@ console.log("falseInboundRollback scenarios\n");
   assert("no rollback", !r.rollback);
 }
 
+{
+  // Xiaomi 2026-10-05 15:08 CEST on chatwithai: catch-up +1911 → FundsNotice → −1911.
+  // Helper must still decide rollback; WalletProvider must not skip it after floor-heal writeAck.
+  console.log("9) Xiaomi catch-up +1911/−1911 (notice-reverse)");
+  const r = decideFalseInboundRollback(
+    base({
+      liveTotal: 9495,
+      ackTotal: 11406,
+      noticeAmount: 1911,
+      noticeAt: 20_000,
+      noticeKind: "arkade",
+      catchUpCreditSats: 1911,
+      notifyFloor: 11406,
+      persistAdoptAmount: 1911,
+      persistAdoptAt: 18_000,
+    }),
+  );
+  assert("rollback", r.rollback);
+  assert("dismissNotice", r.dismissNotice);
+  assert("amount 1911", r.amount === 1911);
+  assert("reason notice-reverse", r.reason === "notice-reverse");
+}
+
 console.log(
   failed === 0 ? "\nAll scenarios passed." : `\n${failed} scenario(s) failed.`,
 );
