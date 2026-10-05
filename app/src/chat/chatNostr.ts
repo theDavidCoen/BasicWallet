@@ -58,59 +58,57 @@ export async function publishChatEnvelope(
 
   const wrap = wrapEvent(pair.sk, { publicKey: recipient }, JSON.stringify(envelope));
   const urls = await resolveRelays(opts?.relays);
+  const homeUrl =
+    urls.find((u) => u.toLowerCase().includes("relay.davidcoen.it")) ?? HOME_RELAY_HINT;
   const pool = new SimplePool();
   const okRelays: string[] = [];
   const failedRelays: { url: string; error: string }[] = [];
 
   try {
-    const pubs = pool.publish(urls, wrap);
-    // First successful relay unblocks the publisher (α72); drain the rest before close.
-    await new Promise<void>((resolve, reject) => {
-      let pending = pubs.length;
-      let anyOk = false;
-      if (pending === 0) {
-        reject(new Error("No relays"));
-        return;
-      }
-      pubs.forEach((p, i) => {
-        const url = urls[i]!;
-        void p.then(
-          () => {
-            if (!okRelays.includes(url)) okRelays.push(url);
-            anyOk = true;
-            resolve();
-          },
-          (err: unknown) => {
-            failedRelays.push({
-              url,
-              error: err instanceof Error ? err.message : String(err),
-            });
-            pending -= 1;
-            if (pending === 0 && !anyOk) {
-              reject(
-                new Error(
-                  failedRelays[0]?.error
-                    ? `Publish failed: ${failedRelays[0].error}`
-                    : "Publish failed on all relays",
-                ),
-              );
-            }
-          },
-        );
+    // Closed-app push watches home only. Require home OK before treating as sent;
+    // α72 first-success on public relays left the sidecar blind (2026-10-05 QA).
+    const homePubs = pool.publish([homeUrl], wrap);
+    const homeSettled = await Promise.allSettled(homePubs);
+    const homeOk = homeSettled.some((r) => r.status === "fulfilled");
+    if (homeOk) {
+      okRelays.push(homeUrl);
+    } else {
+      const err = homeSettled.find((r) => r.status === "rejected") as PromiseRejectedResult | undefined;
+      failedRelays.push({
+        url: homeUrl,
+        error: err?.reason instanceof Error ? err.reason.message : String(err?.reason ?? "home rejected"),
       });
-    });
-    await Promise.allSettled(pubs);
+      throw new Error(
+        `Publish failed on home relay (${homeUrl}): ${failedRelays[0]?.error ?? "unknown"}`,
+      );
+    }
+
+    // Fan-out to the rest (best-effort); do not block UX on public relays.
+    const rest = urls.filter((u) => u !== homeUrl);
+    if (rest.length) {
+      const restPubs = pool.publish(rest, wrap);
+      const restSettled = await Promise.allSettled(restPubs);
+      restSettled.forEach((r, i) => {
+        const url = rest[i]!;
+        if (r.status === "fulfilled") {
+          if (!okRelays.includes(url)) okRelays.push(url);
+        } else {
+          failedRelays.push({
+            url,
+            error: r.reason instanceof Error ? r.reason.message : String(r.reason),
+          });
+        }
+      });
+    }
   } finally {
-    pool.close(urls);
+    pool.close(urls.includes(homeUrl) ? urls : [homeUrl, ...urls]);
   }
 
-  if (!okRelays.length) {
-    throw new Error(
-      failedRelays[0]?.error
-        ? `Publish failed: ${failedRelays[0].error}`
-        : "Publish failed on all relays",
-    );
-  }
+  console.warn("[basic] chat publish ok", {
+    eventId: wrap.id.slice(0, 16),
+    okRelays,
+    failedRelays: failedRelays.map((f) => f.url),
+  });
 
   return { okRelays, failedRelays, eventId: wrap.id };
 }

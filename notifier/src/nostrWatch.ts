@@ -7,6 +7,9 @@ const KIND_GIFT_WRAP = 1059;
 
 /** How often to tear down + resubscribe (WS can die silently on some relays). */
 const RESUBSCRIBE_MS = 5 * 60_000;
+/** Poll `#p` as backup when live push misses (strfry/paywall quirks). */
+const POLL_MS = 15_000;
+const POLL_LOOKBACK_SEC = 120;
 
 type WatchHandle = {
   pool: SimplePool;
@@ -19,15 +22,18 @@ type WatchHandle = {
  * Multiplexed live subscriptions: one SubCloser per registered pubkey.
  * Sidecar never unwraps gift-wraps — only sees kind + #p metadata.
  *
- * Prefers HOME_RELAY first (Basic free kinds live there). Extra relays from
- * registration are optional; flaky public relays must not stall home.
+ * Prefers HOME_RELAY (internal strfry WS when configured). Polls `#p` as
+ * backup so missed live EVENT frames still wake FCM.
  */
 export class GiftWrapWatcher {
   private handles = new Map<string, WatchHandle>();
   private lastPingAt = new Map<string, number>();
+  private seenEventIds = new Set<string>();
   private readonly coalesceMs: number;
   private readonly homeRelay: string;
   private resubTimer: ReturnType<typeof setInterval> | null = null;
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private pollPool: SimplePool | null = null;
 
   constructor(
     private readonly store: RegistrationStore,
@@ -37,21 +43,34 @@ export class GiftWrapWatcher {
     this.coalesceMs = opts.coalesceMs;
   }
 
-  /** Start periodic resubscribe so dead sockets recover without a process crash. */
+  /** Start periodic resubscribe + `#p` poll backup. */
   startMaintenance(): void {
-    if (this.resubTimer) return;
-    this.resubTimer = setInterval(() => {
-      try {
-        console.log("[notifier] resubscribe tick");
-        this.forceResubscribeAll();
-      } catch (e) {
-        console.warn(
-          "[notifier] resubscribe failed",
-          e instanceof Error ? e.message : String(e),
-        );
-      }
-    }, RESUBSCRIBE_MS);
-    this.resubTimer.unref?.();
+    if (!this.resubTimer) {
+      this.resubTimer = setInterval(() => {
+        try {
+          console.log("[notifier] resubscribe tick");
+          this.forceResubscribeAll();
+        } catch (e) {
+          console.warn(
+            "[notifier] resubscribe failed",
+            e instanceof Error ? e.message : String(e),
+          );
+        }
+      }, RESUBSCRIBE_MS);
+      this.resubTimer.unref?.();
+    }
+    if (!this.pollTimer) {
+      this.pollPool = new SimplePool({ enableReconnect: true });
+      this.pollTimer = setInterval(() => {
+        void this.pollCatchUp().catch((e) => {
+          console.warn(
+            "[notifier] poll catch-up failed",
+            e instanceof Error ? e.message : String(e),
+          );
+        });
+      }, POLL_MS);
+      this.pollTimer.unref?.();
+    }
   }
 
   syncFromStore(): void {
@@ -87,8 +106,6 @@ export class GiftWrapWatcher {
   }
 
   private relayUrls(reg: Registration): string[] {
-    // Closed-app push only needs the home relay (free kinds 1059/30078).
-    // Multiplexing flaky public relays caused silent missed live events in QA.
     void reg;
     const home = this.homeRelay.trim() || "wss://relay.davidcoen.it";
     return [home];
@@ -108,7 +125,7 @@ export class GiftWrapWatcher {
         },
         {
           onevent: (ev) => {
-            void this.onEvent(reg.pubkey, ev).catch((e) => {
+            void this.onEvent(reg.pubkey, ev, "live").catch((e) => {
               console.warn(
                 "[notifier] onEvent error",
                 shortPubkey(reg.pubkey),
@@ -149,8 +166,46 @@ export class GiftWrapWatcher {
     );
   }
 
-  private async onEvent(pubkey: string, ev: Event): Promise<void> {
+  private async pollCatchUp(): Promise<void> {
+    const urls = [this.homeRelay.trim() || "wss://relay.davidcoen.it"];
+    const pool = this.pollPool ?? new SimplePool({ enableReconnect: true });
+    this.pollPool = pool;
+    const since = Math.floor(Date.now() / 1000) - POLL_LOOKBACK_SEC;
+    for (const reg of this.store.list()) {
+      try {
+        const evs = await pool.querySync(urls, {
+          kinds: [KIND_GIFT_WRAP],
+          "#p": [reg.pubkey],
+          since,
+          limit: 20,
+        });
+        for (const ev of evs) {
+          await this.onEvent(reg.pubkey, ev, "poll");
+        }
+      } catch (e) {
+        console.warn(
+          "[notifier] poll query failed",
+          shortPubkey(reg.pubkey),
+          e instanceof Error ? e.message : String(e),
+        );
+      }
+    }
+  }
+
+  private async onEvent(
+    pubkey: string,
+    ev: Event,
+    source: "live" | "poll",
+  ): Promise<void> {
     if (ev.kind !== KIND_GIFT_WRAP) return;
+    if (this.seenEventIds.has(ev.id)) return;
+    this.seenEventIds.add(ev.id);
+    // Bound memory: keep last ~500 ids.
+    if (this.seenEventIds.size > 500) {
+      const drop = [...this.seenEventIds].slice(0, 100);
+      for (const id of drop) this.seenEventIds.delete(id);
+    }
+
     const now = Date.now();
     const last = this.lastPingAt.get(pubkey) ?? 0;
     if (now - last < this.coalesceMs) {
@@ -159,6 +214,7 @@ export class GiftWrapWatcher {
         shortPubkey(pubkey),
         "event",
         ev.id.slice(0, 8),
+        source,
       );
       return;
     }
@@ -169,11 +225,18 @@ export class GiftWrapWatcher {
 
     try {
       await sendOpaqueWake({ fcmToken: reg.fcmToken });
-      console.log("[notifier] fcm sent", shortPubkey(pubkey), "event", ev.id.slice(0, 8));
+      console.log(
+        "[notifier] fcm sent",
+        shortPubkey(pubkey),
+        "event",
+        ev.id.slice(0, 8),
+        source,
+        "clen",
+        (ev.content || "").length,
+      );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.warn("[notifier] fcm send failed", shortPubkey(pubkey), msg);
-      // Drop dead tokens so we do not keep failing.
       if (/registration-token-not-registered|invalid-registration-token|not-found/i.test(msg)) {
         this.store.remove({ fcmToken: reg.fcmToken });
         this.stopOne(pubkey);
@@ -201,6 +264,18 @@ export class GiftWrapWatcher {
     if (this.resubTimer) {
       clearInterval(this.resubTimer);
       this.resubTimer = null;
+    }
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+    if (this.pollPool) {
+      try {
+        this.pollPool.close([this.homeRelay]);
+      } catch {
+        /* ignore */
+      }
+      this.pollPool = null;
     }
     for (const pubkey of [...this.handles.keys()]) {
       this.stopOne(pubkey);
