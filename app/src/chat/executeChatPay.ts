@@ -54,7 +54,7 @@ export type ChatPayWalletHooks = {
   refreshActivity?: () => Promise<void>;
 };
 
-function parsePayTo(json: string | null | undefined): string | null {
+function parsePayToArk(json: string | null | undefined): string | null {
   if (!json) return null;
   try {
     const payTo = JSON.parse(json) as { kind?: string; value?: string };
@@ -67,30 +67,69 @@ function parsePayTo(json: string | null | undefined): string | null {
   return null;
 }
 
+function parsePayToBolt11(json: string | null | undefined): string | null {
+  if (!json) return null;
+  try {
+    const payTo = JSON.parse(json) as { kind?: string; value?: string };
+    if (payTo.kind === "bolt11" && typeof payTo.value === "string") {
+      const v = payTo.value.trim();
+      if (v.length > 0) return v;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+export type ChatPayTarget =
+  | { kind: "ark"; address: string; source: "contact" | "request" }
+  | { kind: "bolt11"; invoice: string; source: "request" };
+
+/**
+ * Resolve pay destination for chat Send / Pay.
+ * Request-attached bolt11 (bot Bitrefill invoices) wins over contact ark.
+ */
+export function resolveChatPayTarget(opts: {
+  contactId: string;
+  requestId?: string | null;
+}): ChatPayTarget {
+  const contact = getContact(opts.contactId);
+  if (!contact) throw new Error("Contact not found.");
+
+  if (opts.requestId) {
+    const msg = findMessageByRequestId(opts.contactId, opts.requestId);
+    const bolt11 = parsePayToBolt11(msg?.payToJson);
+    if (bolt11) {
+      return { kind: "bolt11", invoice: bolt11, source: "request" };
+    }
+    const fromReq = parsePayToArk(msg?.payToJson);
+    if (fromReq) {
+      silentlyUpsertContactArkFromChat(opts.contactId, fromReq);
+      return { kind: "ark", address: fromReq, source: "request" };
+    }
+  }
+
+  const stored = contactArkAddress(contact);
+  if (stored && isValidArkAddress(stored)) {
+    return { kind: "ark", address: stored, source: "contact" };
+  }
+
+  throw new Error(
+    "No ark address or Lightning invoice for this request. They need to share an ark… address (or include one on the request).",
+  );
+}
+
 export function resolveChatPayDestination(opts: {
   contactId: string;
   requestId?: string | null;
 }): { address: string; source: "contact" | "request" } {
-  const contact = getContact(opts.contactId);
-  if (!contact) throw new Error("Contact not found.");
-
-  const stored = contactArkAddress(contact);
-  if (stored && isValidArkAddress(stored)) {
-    return { address: stored, source: "contact" };
+  const target = resolveChatPayTarget(opts);
+  if (target.kind !== "ark") {
+    throw new Error(
+      "This request is a Lightning invoice. Pay it from the request card.",
+    );
   }
-
-  if (opts.requestId) {
-    const msg = findMessageByRequestId(opts.contactId, opts.requestId);
-    const fromReq = parsePayTo(msg?.payToJson);
-    if (fromReq) {
-      silentlyUpsertContactArkFromChat(opts.contactId, fromReq);
-      return { address: fromReq, source: "request" };
-    }
-  }
-
-  throw new Error(
-    "No ark address for this contact. They need to share an ark… address (or include one on the request).",
-  );
+  return { address: target.address, source: target.source };
 }
 
 export async function shareFreshArkForRequest(opts: {
@@ -245,10 +284,19 @@ export async function executeChatPay(opts: {
   const amount = Math.floor(opts.amountSats);
   if (!(amount > 0)) throw new Error("Enter a positive amount.");
 
-  const dest = resolveChatPayDestination({
+  const destTarget = resolveChatPayTarget({
     contactId: opts.contactId,
     requestId: opts.requestId,
   });
+  if (destTarget.kind !== "ark") {
+    throw new Error(
+      "This request is a Lightning invoice. Use the Lightning pay path.",
+    );
+  }
+  const dest = {
+    address: destTarget.address,
+    source: destTarget.source,
+  };
 
   const { wallet, walletId, networkId } = opts.hooks;
 

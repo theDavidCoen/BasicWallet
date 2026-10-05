@@ -23,6 +23,7 @@ import {
   executeChatPay,
   resolveChatPayDestination,
 } from "../chat/executeChatPay";
+import { ensureChatPayWallet } from "../chat/ensureChatPayWallet";
 import { ensureSatsForPay } from "../chat/ensureSatsForPay";
 import { freezeFiatCaptionFromSats } from "../chat/formatChatAmount";
 import type { ChatAsset } from "../chat/types";
@@ -194,8 +195,9 @@ export function ChatAmountScreen() {
         return;
       }
 
-      if (!wallet || selectedWallet?.kind !== "arkade") {
-        Alert.alert("Wallet", "Select an Arkade wallet to send.");
+      const payWallet = await ensureChatPayWallet({ wallet, selectedWallet });
+      if (!payWallet.ok) {
+        Alert.alert("Wallet", payWallet.message);
         return;
       }
 
@@ -265,8 +267,8 @@ export function ChatAmountScreen() {
 
         // Capture hooks for post-unmount background work.
         const hooks = {
-          wallet,
-          walletId: selectedWallet.id,
+          wallet: payWallet.wallet,
+          walletId: payWallet.walletId,
           networkId: network.id,
           spendable: spendable ?? null,
           beginOutboundSend,
@@ -295,7 +297,7 @@ export function ChatAmountScreen() {
             }
             const readLiveSpendableSats = async (): Promise<number | null> => {
               try {
-                const raw = await wallet.getBalance();
+                const raw = await payWallet.wallet.getBalance();
                 if (
                   raw &&
                   typeof raw === "object" &&

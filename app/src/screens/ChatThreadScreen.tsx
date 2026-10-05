@@ -57,8 +57,10 @@ import { newChatId } from "../chat/types";
 import { contactArkAddress, contactHasNostrId } from "../chat/contactPeer";
 import {
   executeChatPay,
-  resolveChatPayDestination,
+  resolveChatPayTarget,
 } from "../chat/executeChatPay";
+import { executeChatLightningPay } from "../chat/executeChatLightningPay";
+import { ensureChatPayWallet } from "../chat/ensureChatPayWallet";
 import { ensureSatsForPay } from "../chat/ensureSatsForPay";
 import { receivingFiatTitle } from "../chat/chatInboundFiat";
 import {
@@ -77,6 +79,7 @@ import { useFiatMode } from "../fiat/FiatModeProvider";
 import { hasNostrIdentity } from "../nostr/identityStore";
 import { requireUserPresence } from "../security/userPresence";
 import { useWallet } from "../wallet/WalletProvider";
+import type { BasicWallet } from "../wallet/hdWallet";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 import { DEFAULT_MIN_VTXO_SATS } from "../wallet/arkMultiSend";
@@ -349,21 +352,27 @@ export function ChatThreadScreen() {
 
   async function onPayRequest(msg: ChatMessage) {
     if (!msg.requestId || !msg.amountSats || actionBusy) return;
-    if (!wallet || selectedWallet?.kind !== "arkade") {
-      Alert.alert("Wallet", "Select an Arkade wallet to send.");
+
+    // Prefer currently selected Arkade wallet (Personal), even when React
+    // `wallet` is still null and Home is only showing a cached balance.
+    const payWallet = await ensureChatPayWallet({ wallet, selectedWallet });
+    if (!payWallet.ok) {
+      Alert.alert("Wallet", payWallet.message);
       return;
     }
+
+    let target: ReturnType<typeof resolveChatPayTarget>;
     try {
-      resolveChatPayDestination({
+      target = resolveChatPayTarget({
         contactId,
         requestId: msg.requestId,
       });
     } catch (e) {
       Alert.alert(
-        "No ark address",
+        "Cannot pay",
         e instanceof Error
           ? e.message
-          : "Add an ark address for this contact, or wait for them to include one on the request.",
+          : "Add an ark address for this contact, or wait for them to include a pay destination on the request.",
       );
       return;
     }
@@ -373,33 +382,133 @@ export function ChatThreadScreen() {
     const dustTarget = fiatMode ? need + DEFAULT_MIN_VTXO_SATS : need;
     const have = spendable ?? 0;
     const needConvert =
-      fiatMode && have < dustTarget && (depixDisplay ?? 0) > 0;
+      target.kind === "ark" &&
+      fiatMode &&
+      have < dustTarget &&
+      (depixDisplay ?? 0) > 0;
 
-    if (needConvert && !(depixDisplay != null && depixDisplay > 0)) {
-      Alert.alert(
-        "Insufficient balance",
-        "Not enough sats or stable balance to pay this request.",
-      );
+    // Biometrics first (same Confirm+bio UX as chat Send), then balance /
+    // convert checks — so Pay always reaches Confirm when a wallet is selected.
+    if (target.kind === "bolt11") {
+      await runPayRequestLightning(msg, target.invoice, payWallet, {
+        spendable,
+        need,
+        have,
+      });
       return;
     }
-
-    if (!needConvert && spendable != null && need > have) {
-      Alert.alert(
-        "Insufficient balance",
-        "Not enough sats to pay this request.",
-      );
-      return;
-    }
-
-    // One-shot like chat Send: biometrics → bubble progress → quiet convert/send.
-    await runPayRequest(msg, needConvert);
+    await runPayRequest(msg, needConvert, payWallet, {
+      spendable,
+      need,
+      have,
+    });
   }
 
-  async function runPayRequest(msg: ChatMessage, willConvert: boolean) {
+  async function runPayRequestLightning(
+    msg: ChatMessage,
+    bolt11: string,
+    payWallet: { wallet: BasicWallet; walletId: string },
+    bal: { spendable: number | null; need: number; have: number },
+  ) {
     if (!msg.requestId || !msg.amountSats) return;
-    if (!wallet || selectedWallet?.kind !== "arkade") return;
 
-    const spendable = balance?.available ?? balanceSats;
+    setActionBusy(msg.requestId);
+    setPayBusyLabel("Sending…");
+    let localPaymentId: string | null = null;
+    try {
+      const auth = await requireUserPresence("Confirm send");
+      if (!auth.ok) {
+        Alert.alert(
+          "Authentication required",
+          auth.reason || "Confirm with biometrics or App PIN to send.",
+        );
+        return;
+      }
+
+      if (bal.spendable != null && bal.need > bal.have) {
+        Alert.alert(
+          "Insufficient balance",
+          "Not enough sats to pay this request.",
+        );
+        return;
+      }
+
+      let fiatCaption: string | null = null;
+      if (fiatMode) {
+        const s = spot ?? (await fetchFiatSpot(network.id));
+        fiatCaption = freezeFiatCaptionFromSats(msg.amountSats, s, network.id);
+      }
+
+      const paymentId = newChatId("pay");
+      const local = insertChatMessage({
+        contactId,
+        kind: "payment",
+        direction: "out",
+        amountSats: msg.amountSats,
+        memo: msg.memo ?? null,
+        fiatCaption,
+        status: "sending",
+        paymentId,
+        requestId: msg.requestId,
+      });
+      localPaymentId = local.id;
+
+      await executeChatLightningPay({
+        contactId,
+        amountSats: msg.amountSats,
+        bolt11,
+        memo: msg.memo ?? undefined,
+        requestId: msg.requestId,
+        fiatCaption,
+        localMessageId: local.id,
+        paymentId,
+        hooks: {
+          wallet: payWallet.wallet,
+          walletId: payWallet.walletId,
+          networkId: network.id,
+          beginOutboundSend,
+          endOutboundSend,
+          applyLocalSpend,
+          bumpActivity,
+          refreshActivity,
+        },
+      });
+    } catch (e) {
+      if (localPaymentId) {
+        const cur = getChatMessage(localPaymentId);
+        if (cur?.status === "paid") {
+          console.warn("[basic] chat ln pay recovered as paid after error");
+        } else {
+          updateChatMessage(localPaymentId, { status: "failed" });
+          const again = getChatMessage(localPaymentId);
+          if (again?.status !== "paid") {
+            Alert.alert(
+              "Send failed",
+              e instanceof Error ? e.message : "Unknown error",
+            );
+          }
+        }
+      } else {
+        Alert.alert(
+          "Send failed",
+          e instanceof Error ? e.message : "Unknown error",
+        );
+      }
+    } finally {
+      setActionBusy(null);
+      setPayBusyLabel(null);
+    }
+  }
+
+  async function runPayRequest(
+    msg: ChatMessage,
+    willConvert: boolean,
+    payWallet: { wallet: BasicWallet; walletId: string },
+    bal: { spendable: number | null; need: number; have: number },
+  ) {
+    if (!msg.requestId || !msg.amountSats) return;
+
+    const spendable = bal.spendable;
     setActionBusy(msg.requestId);
     setPayBusyLabel(willConvert ? "Converting…" : "Sending…");
     let localPaymentId: string | null = null;
@@ -411,6 +520,21 @@ export function ChatThreadScreen() {
         Alert.alert(
           "Authentication required",
           auth.reason || "Confirm with biometrics or App PIN to send.",
+        );
+        return;
+      }
+
+      if (willConvert && !(depixDisplay != null && depixDisplay > 0)) {
+        Alert.alert(
+          "Insufficient balance",
+          "Not enough sats or stable balance to pay this request.",
+        );
+        return;
+      }
+      if (!willConvert && bal.spendable != null && bal.need > bal.have) {
+        Alert.alert(
+          "Insufficient balance",
+          "Not enough sats to pay this request.",
         );
         return;
       }
@@ -446,7 +570,7 @@ export function ChatThreadScreen() {
         quiet: true,
         readLiveSpendableSats: async () => {
           try {
-            const raw = await wallet.getBalance();
+            const raw = await payWallet.wallet.getBalance();
             if (
               raw &&
               typeof raw === "object" &&
@@ -474,8 +598,8 @@ export function ChatThreadScreen() {
         localMessageId: local.id,
         paymentId,
         hooks: {
-          wallet,
-          walletId: selectedWallet.id,
+          wallet: payWallet.wallet,
+          walletId: payWallet.walletId,
           networkId: network.id,
           spendable: ensured.spendable ?? spendable ?? null,
           beginOutboundSend,

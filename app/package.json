@@ -1,6 +1,6 @@
 {
   "name": "basic-wallet",
-  "version": "0.8.3",
+  "version": "0.8.3-chatwithai",
   "private": true,
   "main": "index.ts",
   "scripts": {
