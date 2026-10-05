@@ -17,6 +17,12 @@ If you run the app or study the repo, **verify the code yourself**. Read the sou
 
 Use at your own risk. There is no warranty.
 
+## Download
+
+Latest release: **[v0.8.0](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.8.0)** (arm64-v8a APK + SHA256).
+
+All builds: [Releases](https://github.com/theDavidCoen/BasicWallet/releases). Prefer verifying the checksum before install.
+
 ## What is Basic?
 
 Basic (`app.basic.wallet`) is an experimental mobile wallet built with **Expo / React Native**, focused on:
