@@ -26,6 +26,16 @@ export type ChatTextEnvelope = ChatEnvelopeBase & {
   body: string;
 };
 
+/**
+ * Optional post-pay fulfillment hints (Bitrefill invoice ids for redeem poll).
+ * Never put Bitrefill API keys here — only invoice_id / access_token from buy-products.
+ */
+export type PayRequestFulfillment = {
+  provider?: "bitrefill";
+  invoiceId?: string;
+  invoiceAccessToken?: string;
+};
+
 export type PayRequestEnvelope = ChatEnvelopeBase & {
   type: "basic.wallet.chat.pay_request";
   requestId: string;
@@ -34,6 +44,8 @@ export type PayRequestEnvelope = ChatEnvelopeBase & {
   asset: ChatAsset;
   expiresAt: number;
   preferredReceive?: { kind: "ark" | "bolt11" | "lnurl"; value?: string };
+  /** When set, wallet can poll MCP (via Cursor) after Pay settles and post codes/links. */
+  fulfillment?: PayRequestFulfillment;
 };
 
 export type PayRequestReplyEnvelope = ChatEnvelopeBase & {

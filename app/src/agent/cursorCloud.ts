@@ -198,6 +198,7 @@ export async function runCursorPrompt(opts: {
   apiKey: string;
   promptText: string;
   existingAgentId?: string | null;
+  timeoutMs?: number;
 }): Promise<{ agentId: string; run: CursorRun; resultText: string }> {
   const { apiKey, promptText } = opts;
   let agentId = opts.existingAgentId?.trim() || "";
@@ -224,7 +225,9 @@ export async function runCursorPrompt(opts: {
     run = created.run;
   }
 
-  const finished = await waitForRunResult(apiKey, agentId, run.id);
+  const finished = await waitForRunResult(apiKey, agentId, run.id, {
+    timeoutMs: opts.timeoutMs,
+  });
   const status = (finished.status || "").toUpperCase();
   if (status !== "FINISHED") {
     throw new Error(

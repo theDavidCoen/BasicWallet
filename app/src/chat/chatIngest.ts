@@ -29,6 +29,7 @@ import {
   updateChatMessage,
 } from "./chatStore";
 import { freezeFiatCaptionFromSats } from "./formatChatAmount";
+import { buildPayToJson } from "./payToJson";
 import type { ChatEnvelope } from "./types";
 
 function resolveContactId(
@@ -101,9 +102,17 @@ export async function ingestChatEnvelope(opts: {
       const pref = envelope.preferredReceive;
       const payToJson =
         pref?.kind === "ark" && pref.value
-          ? JSON.stringify({ kind: "ark", value: pref.value })
+          ? buildPayToJson({
+              kind: "ark",
+              value: pref.value,
+              fulfillment: envelope.fulfillment,
+            })
           : pref?.kind === "bolt11" && pref.value
-            ? JSON.stringify({ kind: "bolt11", value: pref.value })
+            ? buildPayToJson({
+                kind: "bolt11",
+                value: pref.value,
+                fulfillment: envelope.fulfillment,
+              })
             : null;
       if (pref?.kind === "ark" && pref.value) {
         silentlyUpsertContactArkFromChat(contactId, pref.value);

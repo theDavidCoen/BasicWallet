@@ -16,6 +16,7 @@ import {
   hydrateBotProcessedWraps,
   wasBotWrapProcessed,
 } from "./botRunner";
+import { resumePendingBotFulfills } from "./botFulfill";
 import {
   isBotEnabled,
   loadBotKeyPair,
@@ -192,6 +193,7 @@ export function resumeBotWatch(): void {
   stopBotWatch();
   startBotWatch();
   void catchUpBotWatch();
+  resumePendingBotFulfills();
 }
 
 function bindAppStateResume(): void {
@@ -216,6 +218,7 @@ export function queueBotWatchBoot(): void {
     if (await isBotEnabled()) {
       startBotWatch();
       void catchUpBotWatch();
+      resumePendingBotFulfills();
     } else {
       stopBotWatch();
     }

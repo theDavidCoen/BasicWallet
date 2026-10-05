@@ -4,6 +4,7 @@
 
 import { publishChatEnvelopeWithSk } from "../chat/chatNostr";
 import { ensureChatThread, insertChatMessage } from "../chat/chatStore";
+import { buildPayToJson } from "../chat/payToJson";
 import type { ChatEnvelope, ChatTextEnvelope, PayRequestEnvelope } from "../chat/types";
 import { CURSOR_BOT_CONTACT_ID } from "./botConstants";
 import { loadBotKeyPair, readBotMeta } from "./botIdentity";
@@ -85,9 +86,17 @@ export async function botReplyPayRequest(envelope: PayRequestEnvelope): Promise<
   const pref = envelope.preferredReceive;
   const payToJson =
     pref?.kind === "ark" && pref.value
-      ? JSON.stringify({ kind: "ark", value: pref.value })
+      ? buildPayToJson({
+          kind: "ark",
+          value: pref.value,
+          fulfillment: envelope.fulfillment,
+        })
       : pref?.kind === "bolt11" && pref.value
-        ? JSON.stringify({ kind: "bolt11", value: pref.value })
+        ? buildPayToJson({
+            kind: "bolt11",
+            value: pref.value,
+            fulfillment: envelope.fulfillment,
+          })
         : null;
 
   try {

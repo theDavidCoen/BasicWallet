@@ -10,12 +10,39 @@ import {
   type ChatTextEnvelope,
   type PayDeclineEnvelope,
   type PayRequestEnvelope,
+  type PayRequestFulfillment,
   type PayRequestReplyEnvelope,
   type PaymentReceiptEnvelope,
 } from "./types";
 
 function isAsset(v: unknown): v is ChatAsset {
   return v === "btc" || v === "depix" || v === "usdt";
+}
+
+function parseFulfillment(raw: unknown): PayRequestFulfillment | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as Record<string, unknown>;
+  const invoiceId =
+    typeof o.invoiceId === "string"
+      ? o.invoiceId.trim()
+      : typeof o.invoice_id === "string"
+        ? o.invoice_id.trim()
+        : "";
+  const invoiceAccessToken =
+    typeof o.invoiceAccessToken === "string"
+      ? o.invoiceAccessToken.trim()
+      : typeof o.invoice_access_token === "string"
+        ? o.invoice_access_token.trim()
+        : undefined;
+  if (!invoiceId) return undefined;
+  const provider =
+    o.provider === "bitrefill" || !o.provider ? "bitrefill" : undefined;
+  if (!provider) return undefined;
+  return {
+    provider,
+    invoiceId,
+    invoiceAccessToken: invoiceAccessToken || undefined,
+  };
 }
 
 export function parseChatEnvelope(raw: string): ChatEnvelope | null {
@@ -46,6 +73,10 @@ export function parseChatEnvelope(raw: string): ChatEnvelope | null {
         if (typeof r.amountSats !== "number" || !(r.amountSats > 0)) return null;
         if (!isAsset(r.asset)) return null;
         if (typeof r.expiresAt !== "number") return null;
+        const fulfillment = parseFulfillment(
+          (r as PayRequestEnvelope).fulfillment ??
+            (p as { fulfillment?: unknown }).fulfillment,
+        );
         return {
           v: 1,
           type: "basic.wallet.chat.pay_request",
@@ -55,6 +86,7 @@ export function parseChatEnvelope(raw: string): ChatEnvelope | null {
           asset: r.asset,
           expiresAt: r.expiresAt,
           preferredReceive: r.preferredReceive,
+          fulfillment,
           sentAt,
           threadContactHint: hint,
         };

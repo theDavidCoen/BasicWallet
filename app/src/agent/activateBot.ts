@@ -9,7 +9,8 @@ import {
   setBotEnabled,
   wipeBotIdentity,
 } from "./botIdentity";
-import { softPingBotReady } from "./botRunner";
+import { clearBotFulfillState } from "./botFulfill";
+import { clearBotProcessedWraps, softPingBotReady } from "./botRunner";
 import { stopBotWatch, syncBotWatchWithEnabledState } from "./botWatch";
 
 /**
@@ -41,6 +42,8 @@ export async function disableCursorBot(opts?: {
   if (opts?.wipeIdentity !== false) {
     removeCursorBotContactAndThread();
     await wipeBotIdentity();
+    await clearBotProcessedWraps();
+    await clearBotFulfillState();
   }
 
   if (opts?.clearApiKey) {
@@ -53,5 +56,7 @@ export async function wipeCursorBotForReset(): Promise<void> {
   stopBotWatch();
   removeCursorBotContactAndThread();
   await wipeBotIdentity();
+  await clearBotProcessedWraps();
+  await clearBotFulfillState();
   await clearCursorAgentCredentials();
 }

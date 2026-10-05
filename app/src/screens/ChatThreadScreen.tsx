@@ -72,6 +72,7 @@ import { contactDisplayName, contactInitials } from "../contacts/types";
 import { catchUpGiftWraps } from "../contacts/contactShareWatch";
 import { isCursorBotContact } from "../agent/botContact";
 import { CURSOR_HUB_CAPTION, CURSOR_SUGGESTION_CHIPS } from "../agent/botConstants";
+import { enqueueBotFulfillAfterPay } from "../agent/botFulfill";
 import { catchUpBotWatch } from "../agent/botWatch";
 import { getNetworkConfig } from "../config/network";
 import { fetchFiatSpot } from "../fiat/depixAssets";
@@ -473,6 +474,12 @@ export function ChatThreadScreen() {
           refreshActivity,
         },
       });
+      if (isBot) {
+        enqueueBotFulfillAfterPay({
+          contactId,
+          requestId: msg.requestId,
+        });
+      }
     } catch (e) {
       if (localPaymentId) {
         const cur = getChatMessage(localPaymentId);
@@ -610,6 +617,12 @@ export function ChatThreadScreen() {
           refreshActivity,
         },
       });
+      if (isBot) {
+        enqueueBotFulfillAfterPay({
+          contactId,
+          requestId: msg.requestId,
+        });
+      }
     } catch (e) {
       if (localPaymentId) {
         const cur = getChatMessage(localPaymentId);
