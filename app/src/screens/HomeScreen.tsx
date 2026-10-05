@@ -21,6 +21,7 @@ import {
 import { RestArkProvider } from "@arkade-os/sdk";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome, WalletAvatar } from "../components/ScreenChrome";
+import { PullResyncIndicator } from "../components/PullResyncIndicator";
 import { SyncProgressBar } from "../components/SyncProgressBar";
 import { getVmempoolBase } from "../config/explorers";
 import { getNetworkConfig } from "../config/network";
@@ -435,20 +436,36 @@ export function HomeScreen() {
     dragStartX: scanDragStart,
   } = scanMotion;
 
+  const pullY = useSharedValue(0);
+  const [pullResyncBusy, setPullResyncBusy] = useState(false);
+
   const onPullResyncJS = useCallback(() => {
-    void forceResync();
+    setPullResyncBusy(true);
+    void forceResync().finally(() => setPullResyncBusy(false));
   }, [forceResync]);
 
   const { pan, homeSwipe, pullResync } = useMemo(() => {
-    /** Swipe down from below the logo → force balance + activity resync (α95). */
+    /** Swipe down from below the logo → force balance + activity resync (α95/α96). */
     const pullDown = Gesture.Pan()
       .enabled(!activityOpen && !posOpen && !scanOpen && !fiatModeSheetOpen)
       .activeOffsetY(28)
       .failOffsetX([-36, 36])
+      .onUpdate((e) => {
+        "worklet";
+        pullY.value = Math.max(0, e.translationY);
+      })
       .onEnd((e) => {
         "worklet";
-        if (e.translationY > 72) {
+        const trigger = e.translationY > 72;
+        pullY.value = withSpring(0, SHEET_SPRING);
+        if (trigger) {
           runOnJS(onPullResyncJS)();
+        }
+      })
+      .onFinalize(() => {
+        "worklet";
+        if (pullY.value > 0) {
+          pullY.value = withSpring(0, SHEET_SPRING);
         }
       });
 
@@ -616,6 +633,7 @@ export function HomeScreen() {
     finishPosDismissJS,
     finishScanDismissJS,
     onPullResyncJS,
+    pullY,
     settlePosOpen,
     settleScanOpen,
     offY,
@@ -737,15 +755,18 @@ export function HomeScreen() {
               style={styles.center}
               accessibilityHint="Swipe down to resync balance and activity"
             >
-              <View style={styles.walletTagRow}>
-                <Text style={styles.walletTag}>
-                  {stripFiatModeLabelSuffix(selectedWallet?.label ?? "Personal")}
-                </Text>
-                {fiatMode ? (
-                  <View style={styles.fiatModeBadge} accessibilityLabel="Fiat Mode on">
-                    <Text style={styles.fiatModeBadgeLabel}>FIAT MODE</Text>
-                  </View>
-                ) : null}
+              <View style={styles.pullResyncAnchor}>
+                <PullResyncIndicator pullY={pullY} busy={pullResyncBusy} />
+                <View style={styles.walletTagRow}>
+                  <Text style={styles.walletTag}>
+                    {stripFiatModeLabelSuffix(selectedWallet?.label ?? "Personal")}
+                  </Text>
+                  {fiatMode ? (
+                    <View style={styles.fiatModeBadge} accessibilityLabel="Fiat Mode on">
+                      <Text style={styles.fiatModeBadgeLabel}>FIAT MODE</Text>
+                    </View>
+                  ) : null}
+                </View>
               </View>
               <View style={styles.balanceRow}>
                 <Pressable onPress={toggleBalanceHidden} style={styles.balancePress}>
@@ -927,6 +948,11 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     paddingBottom: 48,
+  },
+  /** Anchor so the pull spinner sits above the wallet tag without shifting layout. */
+  pullResyncAnchor: {
+    position: "relative",
+    alignItems: "center",
   },
   balanceRow: {
     flexDirection: "row",
