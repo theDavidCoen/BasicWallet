@@ -6,7 +6,11 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { AppState, type AppStateStatus, InteractionManager } from "react-native";
 import { Ramps } from "@arkade-os/sdk";
-import { commitArkadeActivityRows, recordOptimisticArkadeReceive } from "../account/activityStore";
+import {
+  commitArkadeActivityRows,
+  dropOptimisticArkadeReceive,
+  recordOptimisticArkadeReceive,
+} from "../account/activityStore";
 import { loadActivityRows } from "./activity";
 import {
   ACTIVITY_REMATERIALIZE_COOL_MS,
@@ -111,6 +115,10 @@ import {
   decidePostSendInbound,
   decidePostSendPersist,
 } from "./postSendBalanceGuard";
+import {
+  decideFalseInboundRollback,
+  FALSE_INBOUND_ROLLBACK_MS,
+} from "./falseInboundRollback";
 import { loadLndRestCredentials, clearLndRestIfWallet } from "../lightning/lndCredentials";
 import { lndChannelBalance } from "../lightning/lndRest";
 import type { LndRestConfig } from "../lightning/btcpayConfig";
@@ -686,6 +694,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const lastFundsNoticeRef = useRef<{
     amount: number;
     kind: FundsNotice["kind"];
+    at: number;
+  } | null>(null);
+  /**
+   * Last deferred persist-adopt credit (chat-prefer path). Used to roll back
+   * when ASP reverses the spike before / after FundsNotice (Xiaomi false +998).
+   */
+  const lastPersistAdoptRef = useRef<{
+    walletId: string;
+    amount: number;
     at: number;
   } | null>(null);
   /**
@@ -1801,6 +1818,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   balanceBaselineReadyRef.current = true;
                   lastAckRef.current = bal;
                   lastNotifyFloorRef.current = bal.total;
+                  lastPersistAdoptRef.current = {
+                    walletId,
+                    amount: totalDelta,
+                    at: Date.now(),
+                  };
                   setBalance(bal);
                   await writeCachedBalance(networkId, walletId, bal);
                   void writeLastAckBalance(networkId, walletId, bal);
@@ -1885,7 +1907,79 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             floor > 0 &&
             Math.abs(bal.total - floor) <= 2 &&
             Math.abs(ack.total - 2 * floor) <= 2;
-          if (doubleInflated || (!awaitingRecv && postOpen)) {
+          const notice = lastFundsNoticeRef.current;
+          const adopt = lastPersistAdoptRef.current;
+          const credit = getCatchUpCreditForWallet(
+            catchUpCreditByWalletRef.current,
+            walletId,
+          );
+          const falseInbound = decideFalseInboundRollback({
+            now: Date.now(),
+            liveTotal: bal.total,
+            ackTotal: ack.total,
+            noticeAmount: notice?.amount ?? null,
+            noticeAt: notice?.at ?? null,
+            noticeKind: notice?.kind ?? null,
+            catchUpCreditSats: credit?.sats ?? null,
+            notifyFloor: floor,
+            persistAdoptAmount:
+              adopt && adopt.walletId === walletId ? adopt.amount : null,
+            persistAdoptAt:
+              adopt && adopt.walletId === walletId ? adopt.at : null,
+            awaitingRecv,
+            windowMs: FALSE_INBOUND_ROLLBACK_MS,
+          });
+          if (falseInbound.rollback) {
+            console.warn("[basic] persistBalance rollback false inbound", {
+              live: bal.total,
+              ackTotal: ack.total,
+              amount: falseInbound.amount,
+              reason: falseInbound.reason,
+            });
+            if (falseInbound.healAck) {
+              lastAckRef.current = bal;
+              lastNotifyFloorRef.current = bal.total;
+              void writeLastAckBalance(networkId, walletId, bal);
+            }
+            if (falseInbound.dismissNotice) {
+              setFundsNotice((prev) => {
+                if (!prev) return prev;
+                if (Math.abs(prev.amount - falseInbound.amount) > 1) return prev;
+                return null;
+              });
+              const n = lastFundsNoticeRef.current;
+              if (n && Math.abs(n.amount - falseInbound.amount) <= 1) {
+                lastFundsNoticeRef.current = null;
+              }
+            }
+            if (falseInbound.clearCatchUpCredit) {
+              setCatchUpCreditForWallet(
+                catchUpCreditByWalletRef.current,
+                walletId,
+                null,
+              );
+            }
+            if (falseInbound.dropOptimistic) {
+              try {
+                const dropped = dropOptimisticArkadeReceive(
+                  networkId,
+                  walletId,
+                  falseInbound.amount,
+                  { maxAgeMs: FALSE_INBOUND_ROLLBACK_MS },
+                );
+                if (dropped) setActivityEpoch((n) => n + 1);
+              } catch (e) {
+                console.warn("[basic] drop optimistic receive failed", e);
+              }
+            }
+            if (
+              adopt &&
+              adopt.walletId === walletId &&
+              Math.abs(adopt.amount - falseInbound.amount) <= 1
+            ) {
+              lastPersistAdoptRef.current = null;
+            }
+          } else if (doubleInflated || (!awaitingRecv && postOpen)) {
             console.warn("[basic] persistBalance heal ack above stale live", {
               live: bal.total,
               ackTotal: ack.total,

@@ -516,6 +516,40 @@ export function recordOptimisticArkadeReceive(
   return id;
 }
 
+/**
+ * Drop a recent local-recv placeholder after a false inbound rollback
+ * (ASP spike adopted then reversed). Prefer catch-up-tagged rows.
+ */
+export function dropOptimisticArkadeReceive(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+  amountSats: number,
+  opts?: { maxAgeMs?: number; now?: number },
+): string | null {
+  const amount = Math.abs(Math.floor(amountSats));
+  if (!walletId || !(amount > 0)) return null;
+  const now = opts?.now ?? Date.now();
+  const maxAgeMs = opts?.maxAgeMs ?? 120_000;
+  const locals = readLocalPendingReceiveRows(networkId, walletId)
+    .filter((r) => {
+      if (Math.abs(r.amount - amount) > 1) return false;
+      if (r.createdAt > 0 && now - r.createdAt > maxAgeMs) return false;
+      return true;
+    })
+    .sort((a, b) => b.createdAt - a.createdAt);
+  if (!locals.length) return null;
+  const preferred =
+    locals.find((r) => (r.tags ?? []).includes(CATCH_UP_RECEIVE_TAG)) ?? locals[0];
+  const db = getAccountDb(networkId);
+  deleteActivityIdxRow(db, walletId, preferred.id);
+  console.warn("[basic] drop optimistic receive activity", {
+    walletId: walletId.slice(0, 8),
+    id: preferred.id.slice(0, 16),
+    amount,
+  });
+  return preferred.id;
+}
+
 /** Snapshot optimistic / pending receives so rematerialize does not wipe them. */
 function readLocalPendingReceiveRows(
   networkId: ArkadeNetworkId,

@@ -12,7 +12,8 @@
     "check:post-send-balance": "npx tsx scripts/check-post-send-balance-guard.ts",
     "check:activity-refresh": "npx tsx scripts/check-activity-refresh.ts",
     "check:chat-pay-settle": "npx tsx scripts/check-chat-pay-settle.ts",
-    "check:wallet-guards": "npm run check:catch-up-credit && npm run check:post-send-balance && npm run check:activity-refresh && npm run check:chat-pay-settle",
+    "check:false-inbound-rollback": "npx tsx scripts/check-false-inbound-rollback.ts",
+    "check:wallet-guards": "npm run check:catch-up-credit && npm run check:post-send-balance && npm run check:activity-refresh && npm run check:chat-pay-settle && npm run check:false-inbound-rollback",
     "prebuild:android": "expo prebuild --platform android --clean"
   },
   "dependencies": {
