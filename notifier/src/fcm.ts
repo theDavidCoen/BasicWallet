@@ -51,17 +51,24 @@ export function fcmStatus(): { ready: boolean; reason?: string } {
 
 /**
  * Opaque tray notification. Never include sats / memo / addresses / event content.
- * data.basic.wake = "nostr" so the app runs existing gift-wrap catch-up on open.
+ * data.basic.wake = "nostr" so the app runs gift-wrap catch-up on open.
+ * data.basic.eventId = wrap id (hex) for deep-link to the chat thread after unlock.
  */
 export async function sendOpaqueWake(opts: {
   fcmToken: string;
   title?: string;
   body?: string;
+  /** Kind 1059 gift-wrap event id (64 hex). Routing only — not shown in tray text. */
+  eventId?: string;
 }): Promise<void> {
   const status = fcmStatus();
   if (!status.ready || !messaging) {
     throw new Error(status.reason ?? "FCM not ready");
   }
+  const eventId =
+    typeof opts.eventId === "string" && /^[0-9a-f]{64}$/i.test(opts.eventId.trim())
+      ? opts.eventId.trim().toLowerCase()
+      : "";
   // High-priority notification+data so Play Services can show a tray entry
   // even when the app process is not running. Force-stop (stopped=true) still
   // blocks delivery on some OEMs (MIUI / One UI) — that is not fixable in FCM.
@@ -75,6 +82,7 @@ export async function sendOpaqueWake(opts: {
     data: {
       "basic.wake": "nostr",
       "basic.app": process.env.FCM_ANDROID_PACKAGE?.trim() || "app.basic.wallet",
+      ...(eventId ? { "basic.eventId": eventId } : {}),
     },
     android: {
       priority: "high",

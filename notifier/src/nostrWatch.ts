@@ -280,7 +280,7 @@ export class GiftWrapWatcher {
     if (!reg) return;
 
     try {
-      await sendOpaqueWake({ fcmToken: reg.fcmToken });
+      await sendOpaqueWake({ fcmToken: reg.fcmToken, eventId: ev.id });
       console.log(
         "[notifier] fcm sent",
         shortPubkey(pubkey),

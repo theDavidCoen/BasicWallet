@@ -7,7 +7,15 @@ import { AppState, Platform } from "react-native";
 import * as Notifications from "expo-notifications";
 import type { NavigationContainerRefWithCurrent } from "@react-navigation/native";
 import type { RootStackParamList } from "../navigation/types";
-import { catchUpContactShares, resumeContactShareWatch } from "../contacts/contactShareWatch";
+import {
+  catchUpGiftWrapByEventId,
+  catchUpGiftWraps,
+  resumeContactShareWatch,
+} from "../contacts/contactShareWatch";
+import {
+  findMessageByNostrEventId,
+  listUnreadChatThreads,
+} from "../chat/chatStore";
 import { readPushNotificationPrefs } from "./prefs";
 import { registerPushWithNotifier } from "./register";
 
@@ -36,29 +44,82 @@ function ensureHandler(): void {
   });
 }
 
+function readEventId(data: Record<string, unknown> | undefined): string {
+  const raw = data?.["basic.eventId"] ?? data?.basicEventId ?? data?.eventId;
+  if (typeof raw !== "string") return "";
+  const id = raw.trim().toLowerCase();
+  return /^[0-9a-f]{64}$/.test(id) ? id : "";
+}
+
+/**
+ * After catch-up: map wrap event → contact, else single unread thread, else null.
+ */
+async function resolvePushContactId(eventId: string): Promise<string | null> {
+  resumeContactShareWatch();
+  if (eventId) {
+    await catchUpGiftWrapByEventId(eventId);
+  }
+  // catchUpGiftWraps === catchUpContactShares (alias) — one force catch-up is enough.
+  await catchUpGiftWraps({ force: true });
+
+  if (eventId) {
+    const msg = findMessageByNostrEventId(eventId);
+    if (msg?.contactId) return msg.contactId;
+  }
+  const unread = listUnreadChatThreads();
+  if (unread.length === 1) return unread[0]!.contactId;
+  return null;
+}
+
+/**
+ * Navigate under AppLockGate overlay — user unlocks first, then sees the screen.
+ * Retries cover cold-start nav-not-ready and post-biometric paint.
+ */
 async function handleWakeNavigation(
   navigationRef: NavigationContainerRefWithCurrent<RootStackParamList>,
+  data?: Record<string, unknown>,
 ): Promise<void> {
-  // Existing demux — force catch-up after cold start from tray.
-  resumeContactShareWatch();
-  void catchUpContactShares({ force: true });
+  const eventId = readEventId(data);
+  let contactId: string | null = null;
+  try {
+    contactId = await resolvePushContactId(eventId);
+  } catch (e) {
+    console.warn("[basic] push resolve contact", e);
+  }
 
   const go = () => {
-    if (!navigationRef.isReady()) return;
+    if (!navigationRef.isReady()) return false;
     try {
-      navigationRef.navigate("PayHub");
+      if (contactId) {
+        navigationRef.navigate("ChatThread", { contactId });
+      } else {
+        navigationRef.navigate("PayHub");
+      }
+      return true;
     } catch (e) {
-      console.warn("[basic] push navigate PayHub", e);
+      console.warn("[basic] push navigate", e);
+      return false;
     }
   };
+
   go();
-  // Cold start: nav may not be ready on first tick.
   setTimeout(go, 400);
+  setTimeout(go, 1_200);
+  // After unlock + catch-up race: retry once more if eventId landed late.
+  if (eventId) {
+    setTimeout(() => {
+      const msg = findMessageByNostrEventId(eventId);
+      if (msg?.contactId) {
+        contactId = msg.contactId;
+      }
+      go();
+    }, 2_500);
+  }
 }
 
 /**
  * Call once when the root navigator mounts (wallet session).
- * Sets up tap → Pay hub + gift-wrap catch-up; refreshes registration if opt-in.
+ * Sets up tap → Chat thread (or Pay hub) + gift-wrap catch-up; refreshes registration if opt-in.
  */
 export function bindPushNotificationListeners(
   navigationRef: NavigationContainerRefWithCurrent<RootStackParamList>,
@@ -70,11 +131,12 @@ export function bindPushNotificationListeners(
 
   if (!responseSub) {
     responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data as Record<string, unknown> | undefined;
+      const data = response.notification.request.content.data as
+        | Record<string, unknown>
+        | undefined;
       const wake = data?.["basic.wake"] ?? data?.basicWake;
       if (wake === "nostr" || wake == null) {
-        // Treat unknown/opaque Pay channel taps as Nostr wake.
-        void handleWakeNavigation(navigationRef);
+        void handleWakeNavigation(navigationRef, data);
       }
     });
   }
@@ -104,10 +166,12 @@ export function bindPushNotificationListeners(
     try {
       const last = await Notifications.getLastNotificationResponseAsync();
       if (last) {
-        const data = last.notification.request.content.data as Record<string, unknown> | undefined;
+        const data = last.notification.request.content.data as
+          | Record<string, unknown>
+          | undefined;
         const wake = data?.["basic.wake"] ?? data?.basicWake;
         if (wake === "nostr" || last.notification.request.content.data) {
-          void handleWakeNavigation(navigationRef);
+          void handleWakeNavigation(navigationRef, data);
         }
       }
     } catch (e) {
