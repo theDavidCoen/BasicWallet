@@ -61,6 +61,7 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 - **Pair with Bluetooth** — move wallets / nsec to a nearby phone on the welcome screen (lobby code + biometrics; passkeys stay on Device 1)
 - **Manage a Nostr identity**; Advanced Backup (Nostr relays and/or home server), including Fiat/Maxi prefs in the Path C package
 - Maintain **contacts** (npub, NIP-05, BIP-353, etc.) and share a contact over Nostr
+- **Pay in Chat** — 1:1 Nostr threads with text, payment cards, and requests (opt-in Android push when enabled)
 - Prefer mainnet or Mutinynet (and optional custom ASP) from Settings
 
 Expect bugs, incomplete screens, and breaking changes between `0.x` alphas.
@@ -97,7 +98,6 @@ Release checksums may be PGP-signed with fingerprint `5351632CBBF23EF29F1815ACD2
 
 Ideas on the roadmap (design, Penpot, or partial code; not commitments):
 
-- **Pay in Chat** — chat-adjacent payment UX (Penpot page; product TBD)
 - **Multi-asset** — more stable corridors when intents exist (Fiat Mode already explores DePix/USDT)
 - **Hardware wallet & multisig** — colder signing paths beyond the soft wallet
 - **Passkey PRF hardening** — PRF already ships; harden defaults and edge cases
