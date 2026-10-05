@@ -29,7 +29,11 @@ import { colors } from "../theme/colors";
 
 type Props = {
   active?: boolean;
-  onOpenDetail: (activityId: string, walletId: string) => void;
+  onOpenDetail: (
+    activityId: string,
+    walletId: string,
+    seed?: StoredActivity,
+  ) => void;
 };
 
 /** Delay before allowing pull-to-refresh after the sheet opens. */
@@ -230,7 +234,15 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
                 : item.amount;
             return (
             <GHPressable
-              onPress={() => onOpenDetail(item.id, item.walletId)}
+              onPress={() => {
+                const t0 = Date.now();
+                onOpenDetail(item.id, item.walletId, item);
+                console.warn("[basic] activityDetail tap", {
+                  ms: Date.now() - t0,
+                  id: item.id.slice(0, 16),
+                  via: "sheet",
+                });
+              }}
               accessibilityRole="button"
               accessibilityLabel={`${item.title}, ${amountLabel}`}
             >

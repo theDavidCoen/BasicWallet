@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
+import { offerActivityDetailSeed } from "../navigation/activityDetailSeed";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
 import { readActivityFromDb, searchActivity, type StoredActivity } from "../account/activityStore";
@@ -196,12 +197,19 @@ export function ActivityScreen() {
                 : item.amount;
             return (
               <Pressable
-                onPress={() =>
+                onPress={() => {
+                  const t0 = Date.now();
+                  offerActivityDetailSeed(item);
                   navigation.navigate("ActivityDetail", {
                     activityId: item.id,
                     walletId: item.walletId,
-                  })
-                }
+                  });
+                  console.warn("[basic] activityDetail tap", {
+                    ms: Date.now() - t0,
+                    id: item.id.slice(0, 16),
+                    via: "stack",
+                  });
+                }}
                 accessibilityRole="button"
                 accessibilityLabel={`${item.title}, ${amountLabel}`}
               >

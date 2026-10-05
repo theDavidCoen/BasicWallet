@@ -38,6 +38,8 @@ import {
   type WalletFlowStep,
 } from "./walletFlow";
 import { ActivitySheetContent } from "../screens/ActivitySheetContent";
+import type { StoredActivity } from "../account/activityStore";
+import { clearActivityDetailSeed } from "./activityDetailSeed";
 import { ActivityDetailView } from "../screens/ActivityDetailScreen";
 import type { ActivityFlowStep } from "./activityFlow";
 import { WalletSwitcherSheetContent } from "../screens/WalletSwitcherSheetContent";
@@ -212,6 +214,9 @@ export function SheetHost({ children }: { children: ReactNode }) {
   const [activityDetailWalletId, setActivityDetailWalletId] = useState<string | null>(
     null,
   );
+  const [activityDetailSeed, setActivityDetailSeed] = useState<StoredActivity | null>(
+    null,
+  );
   const [posOpen, setPosOpen] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
   const [posSkipEnter, setPosSkipEnter] = useState(false);
@@ -254,6 +259,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
     setActivityStep("list");
     setActivityDetailId(null);
     setActivityDetailWalletId(null);
+    setActivityDetailSeed(null);
+    clearActivityDetailSeed();
   }, []);
 
   const dismissActivity = useCallback(() => {
@@ -317,6 +324,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
       setActivityStep("list");
       setActivityDetailId(null);
       setActivityDetailWalletId(null);
+      setActivityDetailSeed(null);
+      clearActivityDetailSeed();
       return true;
     }
     dismissActivityAnimated();
@@ -1023,10 +1032,11 @@ export function SheetHost({ children }: { children: ReactNode }) {
             !(activityDetailId && activityDetailWalletId)) ? (
             <ActivitySheetContent
               active={activityOpen && activityStep === "list"}
-              onOpenDetail={(activityId, walletId) => {
+              onOpenDetail={(activityId, walletId, seed) => {
                 if (!activityId || !walletId) return;
                 setActivityDetailId(activityId);
                 setActivityDetailWalletId(walletId);
+                setActivityDetailSeed(seed ?? null);
                 setActivityStep("detail");
               }}
             />
@@ -1037,10 +1047,13 @@ export function SheetHost({ children }: { children: ReactNode }) {
               presentation="sheet"
               activityId={activityDetailId}
               walletId={activityDetailWalletId}
+              seedRow={activityDetailSeed}
               onBack={() => {
                 setActivityStep("list");
                 setActivityDetailId(null);
                 setActivityDetailWalletId(null);
+                setActivityDetailSeed(null);
+                clearActivityDetailSeed();
               }}
             />
           ) : null}

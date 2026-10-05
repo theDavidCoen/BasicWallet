@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   ActivityIndicator,
   Keyboard,
@@ -32,6 +39,7 @@ import { ScreenChrome } from "../components/ScreenChrome";
 import { getNetworkConfig } from "../config/network";
 import { getCachedExitJobs } from "../exit/jobRunner";
 import { readRecoveryAddress } from "../exit/recoveryAddress";
+import { takeActivityDetailSeed } from "../navigation/activityDetailSeed";
 import { useSheets } from "../navigation/SheetHost";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { readBackupMeta } from "../nostr/backupPackage";
@@ -178,14 +186,28 @@ function DetailRow({
 export type ActivityDetailViewProps = {
   activityId: string;
   walletId?: string | null;
+  /** Cached list row — paint details immediately; hydrate from DB after. */
+  seedRow?: StoredActivity | null;
   /** stack = full screen; sheet = inside Activity bottom sheet */
   presentation?: "stack" | "sheet";
   onBack?: () => void;
 };
 
+function seedMatches(
+  seed: StoredActivity | null | undefined,
+  activityId: string,
+  walletId: string | null,
+): seed is StoredActivity {
+  if (!seed) return false;
+  if (seed.id !== activityId) return false;
+  if (walletId && seed.walletId !== walletId) return false;
+  return true;
+}
+
 export function ActivityDetailView({
   activityId,
   walletId: walletIdProp,
+  seedRow: seedRowProp,
   presentation = "stack",
   onBack,
 }: ActivityDetailViewProps) {
@@ -195,63 +217,104 @@ export function ActivityDetailView({
   const { selectedWallet, activityEpoch, bumpActivity } = useWallet();
   const network = getNetworkConfig();
   const walletId = walletIdProp ?? selectedWallet?.id ?? null;
-  const [row, setRow] = useState<StoredActivity | null>(null);
+  const [row, setRow] = useState<StoredActivity | null>(() => {
+    if (seedMatches(seedRowProp, activityId, walletIdProp ?? null)) {
+      return seedRowProp;
+    }
+    return takeActivityDetailSeed(activityId, walletIdProp);
+  });
+  const rowRef = useRef<StoredActivity | null>(row);
+  rowRef.current = row;
   const [notes, setNotes] = useState("");
   const [savedNotes, setSavedNotes] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => row == null);
+  // paintedFromSeed: true when first paint used list/nav seed (skip blanking spinner).
   const [saving, setSaving] = useState(false);
   const [saveHint, setSaveHint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [sentWith, setSentWith] = useState<string | null>(null);
+  const paintedFromSeedRef = useRef(row != null);
 
-  const load = useCallback(() => {
-    if (!walletId) {
-      setError("No wallet");
-      setRow(null);
-      return;
-    }
-    const hit = getStoredActivity(network.id, walletId, activityId);
-    setRow(hit);
-    if (!hit) {
-      setError("Activity not found");
-      return;
-    }
-    applyPendingSendStamps(network.id, walletId, [hit]);
-    const sentLabel = resolveSentWithForActivity(
-      network.id,
-      walletId,
-      activityId,
-      [
-        ...hit.txs.map((t) => t.boardingTxid),
-        ...hit.txs.map((t) => t.arkTxid),
-        ...hit.txs.map((t) => t.commitmentTxid),
-      ],
-    );
-    // Local unilateral exits are always from this device — stamp if missing.
-    let resolved = sentLabel;
-    if (
-      !resolved &&
-      (hit.tags.includes("exit") || hit.id.startsWith("exit:")) &&
-      hit.amount < 0
-    ) {
-      recordSentFromThisDevice(network.id, walletId, activityId);
-      resolved = resolveSentWithForActivity(
+  const load = useCallback(
+    (opts?: { background?: boolean }) => {
+      const t0 = Date.now();
+      if (!walletId) {
+        setError("No wallet");
+        if (!opts?.background) {
+          setRow(null);
+          rowRef.current = null;
+        }
+        return;
+      }
+      const hit = getStoredActivity(network.id, walletId, activityId);
+      if (!hit) {
+        if (!opts?.background || !rowRef.current) {
+          setError("Activity not found");
+          setRow(null);
+          rowRef.current = null;
+        }
+        console.warn("[basic] activityDetail load", {
+          ms: Date.now() - t0,
+          background: !!opts?.background,
+          hit: false,
+          id: activityId.slice(0, 16),
+        });
+        return;
+      }
+      setRow(hit);
+      rowRef.current = hit;
+      applyPendingSendStamps(network.id, walletId, [hit]);
+      const sentLabel = resolveSentWithForActivity(
         network.id,
         walletId,
         activityId,
-        [],
+        [
+          ...hit.txs.map((t) => t.boardingTxid),
+          ...hit.txs.map((t) => t.arkTxid),
+          ...hit.txs.map((t) => t.commitmentTxid),
+        ],
       );
-    }
-    const meta = getTxMeta(network.id, walletId, activityId);
-    const n = meta?.notes ?? "";
-    setNotes(n);
-    setSavedNotes(n);
-    setSentWith(resolved);
-    setError(null);
-  }, [walletId, network.id, activityId]);
+      // Local unilateral exits are always from this device — stamp if missing.
+      let resolved = sentLabel;
+      if (
+        !resolved &&
+        (hit.tags.includes("exit") || hit.id.startsWith("exit:")) &&
+        hit.amount < 0
+      ) {
+        recordSentFromThisDevice(network.id, walletId, activityId);
+        resolved = resolveSentWithForActivity(
+          network.id,
+          walletId,
+          activityId,
+          [],
+        );
+      }
+      const meta = getTxMeta(network.id, walletId, activityId);
+      const n = meta?.notes ?? "";
+      setNotes(n);
+      setSavedNotes(n);
+      setSentWith(resolved);
+      setError(null);
+      console.warn("[basic] activityDetail load", {
+        ms: Date.now() - t0,
+        background: !!opts?.background,
+        hit: true,
+        id: activityId.slice(0, 16),
+      });
+    },
+    [walletId, network.id, activityId],
+  );
 
   useEffect(() => {
+    // Seed already on screen — hydrate stamps/meta without blanking the UI.
+    if (paintedFromSeedRef.current || rowRef.current) {
+      paintedFromSeedRef.current = false;
+      const t = requestAnimationFrame(() => {
+        load({ background: true });
+      });
+      return () => cancelAnimationFrame(t);
+    }
     setLoading(true);
     load();
     setLoading(false);
@@ -862,11 +925,15 @@ export function ActivityDetailView({
 export function ActivityDetailScreen() {
   const route = useRoute<RouteProp<RootStackParamList, "ActivityDetail">>();
   const { selectedWallet } = useWallet();
+  const activityId = route.params.activityId;
+  const walletId = route.params.walletId ?? selectedWallet?.id;
+  const seedRow = takeActivityDetailSeed(activityId, walletId);
   return (
     <ActivityDetailView
       presentation="stack"
-      activityId={route.params.activityId}
-      walletId={route.params.walletId ?? selectedWallet?.id}
+      activityId={activityId}
+      walletId={walletId}
+      seedRow={seedRow}
     />
   );
 }

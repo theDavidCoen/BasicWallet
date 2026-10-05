@@ -1104,9 +1104,32 @@ export function getStoredActivity(
   walletId: string,
   activityId: string,
 ): StoredActivity | null {
-  return (
-    readActivityFromDb(networkId, { walletId, limit: 500 }).find((r) => r.id === activityId) ?? null
+  // Direct PK lookup — never scan/parse the full activity list on open.
+  // (Previously: readActivityFromDb(limit 500).find(...) which JSON.parse'd
+  // every txs_json/tags_json on Xiaomi with 100+ rows → multi-second tap lag.)
+  const id = activityId.trim();
+  if (!walletId || !id) return null;
+  const db = getAccountDb(networkId);
+  const r = db.getFirstSync<{
+    wallet_id: string;
+    activity_id: string;
+    amount_sats: number;
+    created_at: number;
+    settled: number;
+    kind: string;
+    title: string;
+    subtitle: string | null;
+    primary_txid: string | null;
+    tags_json: string | null;
+    txs_json: string | null;
+    fiat_amount: number | null;
+    fiat_code: string | null;
+    status: string | null;
+  }>(
+    `SELECT * FROM activity_idx WHERE wallet_id = ? AND activity_id = ? LIMIT 1`,
+    [walletId, id],
   );
+  return r ? mapDbRow(networkId, r) : null;
 }
 
 /**
