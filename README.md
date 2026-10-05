@@ -6,6 +6,8 @@ Basic is a personal vibe-coded playground: an Expo Android app used to prototype
 
 **How to use:** see [`docs/how-to-use.md`](./docs/how-to-use.md) (basic + advanced features and Home/Send shortcuts).
 
+**Translators / new languages:** see [`docs/i18n-translators.md`](./docs/i18n-translators.md).
+
 ## Warning: do not use in production
 
 - **Do not** store meaningful funds in Basic.
@@ -19,7 +21,7 @@ Use at your own risk. There is no warranty.
 
 ## Download
 
-Latest release: **[v0.8.4](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.8.4)** (arm64-v8a APK + SHA256).
+Latest release: **[v0.8.5](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.8.5)** (arm64-v8a APK + SHA256).
 
 All builds: [Releases](https://github.com/theDavidCoen/BasicWallet/releases). Prefer verifying the checksum before install.
 
@@ -37,6 +39,7 @@ Basic (`app.basic.wallet`) is an experimental mobile wallet built with **Expo / 
 | **Backup** | Passkey-oriented onboarding, Advanced Backup via Nostr and/or home server |
 | **Contacts** | Local encrypted contacts, share over Nostr gift wraps |
 | **Ask Cursor** | Optional on-device Nostr bot (Cursor Cloud Agents) under Chat & Pay for shopping / pay flows |
+| **Language** | Settings → Language: System default (OS → English fallback) or pin English / Italian / Portuguese |
 | **Bluetooth pair** | Move an account to a nearby phone from the welcome screen (encrypted Bluetooth; no QR/NFC) |
 | **Ops hygiene** | Reproducible Android APK recipe, minimal permissions, SQLCipher for account DB |
 
@@ -64,6 +67,7 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 - Maintain **contacts** (npub, NIP-05, BIP-353, etc.) and share a contact over Nostr
 - **Pay in Chat** — 1:1 Nostr threads with text plus send/request payment cards (Home **Chat & Pay** hub or Settings → Nostr → Chat & Pay; classic Send stays separate)
 - **Ask Cursor** — paste a Cursor API key in Settings → Provider Settings → Cursor; then use **Ask Cursor** in Chat & Pay (owner-only bot; shopping MCPs stay on your Cursor Dashboard)
+- **Language** — Settings → Language: follow the phone (unsupported OS languages fall back to English) or pin **English**, **Italiano**, or **Português**
 - **Closed-app alerts** (Android, opt-in) — opaque tray wake (“New Pay message”) for Pay in Chat / contact share while the app is closed; never amounts or memos; classic receives still catch up on open
 - Prefer mainnet or Mutinynet (and optional custom ASP) from Settings
 
@@ -78,7 +82,7 @@ Gestures (Activity pull, Home pull-down resync, POS/Scan swipes, Send Enter/Past
 | [`app/`](./app/) | Expo client (TypeScript) |
 | [`notifier/`](./notifier/) | Closed-app push sidecar (Nostr kind 1059 → opaque FCM); deploy beside strfry |
 | [`prototype/docs/`](./prototype/docs/) | Product / UX / Arkade tech specs |
-| [`docs/`](./docs/) | How to use, reproducible builds, passkey asset links, notes |
+| [`docs/`](./docs/) | How to use, i18n translators guide, reproducible builds, passkey asset links, notes |
 | [`scripts/`](./scripts/) | Release APK build helpers |
 | [`dist/`](./dist/) | Local release APKs + checksums (when built) |
 
@@ -114,6 +118,8 @@ Specs that drive this list: [`prototype/docs/ux-ui-spec.md`](./prototype/docs/ux
 ## Contributing / feedback
 
 Issues and thoughtful review are welcome. Prefer concrete findings (file + risk) over generic “looks fine.”
+
+To add or improve UI translations (folder layout, namespaces, System default, PR tips): [`docs/i18n-translators.md`](./docs/i18n-translators.md).
 
 If you only want a production-ready Arkade experience, use the official [arkade.money](https://arkade.money) wallet instead of Basic.
 

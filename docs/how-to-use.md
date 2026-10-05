@@ -55,10 +55,20 @@ Optional AI helper in Chat & Pay (experimental). Needs a Nostr identity first.
 
 Disable anytime from Settings → Provider Settings → Cursor. Only your identity npub can message the bot.
 
+### Language
+
+Settings → **Language**:
+
+- **System default** — follow the phone language. If the OS language is not one of English / Italian / Portuguese, the UI falls back to **English**.
+- Or pin **English**, **Italiano**, or **Português**.
+
+Translators and contributors adding a new locale: [`i18n-translators.md`](./i18n-translators.md).
+
 ### Settings (highlights)
 
 | Row | Purpose |
 |-----|---------|
+| **Language** | System default (OS → English fallback) or pin English / Italian / Portuguese |
 | Bitcoin Maxi Mode | Auto-swap inbound alt-assets → sats when Fiat Mode is off (default ON) |
 | Fiat Mode | Enter/exit stable unit mode; pick available stable card |
 | Notifications | Android opt-in closed-app alerts (opaque “New Pay message”; default off) |
