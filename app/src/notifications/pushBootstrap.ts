@@ -14,6 +14,9 @@ import { registerPushWithNotifier } from "./register";
 let handlerSet = false;
 let responseSub: Notifications.EventSubscription | null = null;
 let tokenSub: Notifications.EventSubscription | null = null;
+/** Debounce FCM token-refresh re-register (Expo can fire a burst → rate_limited). */
+let tokenRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+const TOKEN_REFRESH_DEBOUNCE_MS = 8_000;
 
 function ensureHandler(): void {
   if (handlerSet) return;
@@ -78,13 +81,16 @@ export function bindPushNotificationListeners(
 
   if (!tokenSub) {
     tokenSub = Notifications.addPushTokenListener(() => {
-      void (async () => {
-        const prefs = await readPushNotificationPrefs();
-        if (prefs.enabled) {
+      if (tokenRefreshTimer) clearTimeout(tokenRefreshTimer);
+      tokenRefreshTimer = setTimeout(() => {
+        tokenRefreshTimer = null;
+        void (async () => {
+          const prefs = await readPushNotificationPrefs();
+          if (!prefs.enabled) return;
           const r = await registerPushWithNotifier();
           if (!r.ok) console.warn("[basic] push re-register on token refresh", r.reason);
-        }
-      })();
+        })();
+      }, TOKEN_REFRESH_DEBOUNCE_MS);
     });
   }
 
@@ -114,5 +120,9 @@ export function bindPushNotificationListeners(
     responseSub = null;
     tokenSub?.remove();
     tokenSub = null;
+    if (tokenRefreshTimer) {
+      clearTimeout(tokenRefreshTimer);
+      tokenRefreshTimer = null;
+    }
   };
 }

@@ -62,7 +62,10 @@ export async function sendOpaqueWake(opts: {
   if (!status.ready || !messaging) {
     throw new Error(status.reason ?? "FCM not ready");
   }
-  const packageName = process.env.FCM_ANDROID_PACKAGE?.trim() || "app.basic.wallet";
+  // High-priority notification+data so Play Services can show a tray entry
+  // even when the app process is not running. Force-stop (stopped=true) still
+  // blocks delivery on some OEMs (MIUI / One UI) — that is not fixable in FCM.
+  // Do not set restrictedPackageName — it can drop delivery after force-stop.
   await messaging.send({
     token: opts.fcmToken,
     notification: {
@@ -71,15 +74,22 @@ export async function sendOpaqueWake(opts: {
     },
     data: {
       "basic.wake": "nostr",
+      "basic.app": process.env.FCM_ANDROID_PACKAGE?.trim() || "app.basic.wallet",
     },
     android: {
       priority: "high",
+      ttl: 86400,
       collapseKey: "basic-nostr-wake",
       notification: {
         channelId: "basic-pay",
         priority: "high",
+        defaultSound: true,
+        defaultVibrateTimings: true,
+        visibility: "private",
       },
-      restrictedPackageName: packageName,
+      fcmOptions: {
+        analyticsLabel: "basic_nostr_wake",
+      },
     },
   });
 }

@@ -9,14 +9,29 @@ import {
   hasNostrIdentity,
   loadNostrKeyPairForCrypto,
 } from "../nostr/identityStore";
+import { HOME_RELAY_HINT } from "../notifications/config";
 import type { ChatEnvelope } from "./types";
 
 export const CHAT_GIFT_WRAP_KIND = 1059;
 
+/**
+ * Relays for chat gift-wraps. Always include the home relay first so the
+ * closed-app push sidecar (watching wss://relay.davidcoen.it) sees kind 1059.
+ */
 async function resolveRelays(extra?: string[]): Promise<string[]> {
-  if (extra?.length) return mergeNostrRelays(extra);
   const meta = await readBackupMeta();
-  return mergeNostrRelays(meta?.relays);
+  const merged = mergeNostrRelays([
+    HOME_RELAY_HINT,
+    ...(extra ?? []),
+    ...(meta?.relays ?? []),
+  ]);
+  if (!merged.some((u) => u.toLowerCase().includes("relay.davidcoen.it"))) {
+    return mergeNostrRelays([HOME_RELAY_HINT, ...merged]);
+  }
+  // Home first for publish race (α72 first-success).
+  const home = merged.find((u) => u.toLowerCase().includes("relay.davidcoen.it"));
+  if (!home) return merged;
+  return [home, ...merged.filter((u) => u !== home)];
 }
 
 export type PublishChatResult = {

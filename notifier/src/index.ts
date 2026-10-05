@@ -29,12 +29,18 @@ function clientIp(req: express.Request): string {
 }
 
 function rateLimit(req: express.Request, res: express.Response, next: express.NextFunction): void {
+  // Prefer npub so two devices behind the same NAT (or missing XFF) do not share one bucket.
+  const bodyNpub =
+    req.body && typeof (req.body as { npub?: unknown }).npub === "string"
+      ? String((req.body as { npub: string }).npub).trim().slice(0, 128)
+      : "";
   const ip = clientIp(req);
+  const key = bodyNpub || ip;
   const now = Date.now();
-  let bucket = rateBuckets.get(ip);
+  let bucket = rateBuckets.get(key);
   if (!bucket || now >= bucket.resetAt) {
     bucket = { count: 0, resetAt: now + 60_000 };
-    rateBuckets.set(ip, bucket);
+    rateBuckets.set(key, bucket);
   }
   bucket.count += 1;
   if (bucket.count > REGISTER_RATE_PER_MIN) {
@@ -167,6 +173,7 @@ if (!fcmInit.ok) {
 }
 
 watcher.syncFromStore();
+watcher.startMaintenance();
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`[notifier] listening on http://${HOST}:${PORT}`);

@@ -139,6 +139,10 @@ export function NotificationsSettingsScreen() {
           <Text style={styles.hint}>
             Opaque only (“New Pay message”). Never amounts, memos, or addresses.
             Classic Bitcoin receives still catch up when you open the app — no tray.
+            {"\n\n"}
+            Tip: do not use system “Force stop”. Swipe away is fine. On Xiaomi /
+            Samsung, allow unrestricted battery for Basic so tray wake works
+            while the app is closed.
           </Text>
         </View>
         {busy ? (

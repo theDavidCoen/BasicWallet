@@ -7,6 +7,7 @@ import { SimplePool } from "nostr-tools/pool";
 import { wrapEvent } from "nostr-tools/nip17";
 import { decode, npubEncode } from "nostr-tools/nip19";
 import { mergeNostrRelays, readBackupMeta } from "../nostr/backupPackage";
+import { HOME_RELAY_HINT } from "../notifications/config";
 import {
   hasNostrIdentity,
   loadNostrKeyPairForCrypto,
@@ -53,9 +54,15 @@ export type ShareContactResult = {
 };
 
 async function resolveRelays(extra?: string[]): Promise<string[]> {
-  if (extra?.length) return mergeNostrRelays(extra);
   const meta = await readBackupMeta();
-  return mergeNostrRelays(meta?.relays);
+  const merged = mergeNostrRelays([
+    HOME_RELAY_HINT,
+    ...(extra ?? []),
+    ...(meta?.relays ?? []),
+  ]);
+  const home = merged.find((u) => u.toLowerCase().includes("relay.davidcoen.it"));
+  if (!home) return mergeNostrRelays([HOME_RELAY_HINT, ...merged]);
+  return [home, ...merged.filter((u) => u !== home)];
 }
 
 export function contactToSharePayload(contact: Contact): SharedContactPayload {
