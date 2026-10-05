@@ -98,13 +98,9 @@ function formatTime(ms: number): string {
   }
 }
 
-/** Matches ScreenChrome root `paddingBottom` (safe bottom + 16). */
-const SCREEN_CHROME_BOTTOM_EXTRA = 16;
-
 export function ChatThreadScreen() {
   const navigation = useNavigation<RootNav>();
   const route = useRoute<RouteProp<RootStackParamList, "ChatThread">>();
-  const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const contactId = route.params.contactId;
   const seedDraft = route.params.seedDraft;
