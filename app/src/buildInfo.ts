@@ -3,7 +3,7 @@
  * Bump with package.json / app.json on release.
  */
 
-export const APP_VERSION = "0.7.0-alpha.94";
+export const APP_VERSION = "0.7.0-alpha.95";
 
 /**
  * Short commit for Settings → About.
@@ -11,7 +11,7 @@ export const APP_VERSION = "0.7.0-alpha.94";
  * On a real release (David: crea release / release reale): set to `git rev-parse --short HEAD`.
  * See `.cursor/rules/basic-wallet-release-buildinfo.mdc` and Mind `basic-wallet`.
  */
-export const APP_GIT_COMMIT = "3bcebfb";
+export const APP_GIT_COMMIT = "4b7d655";
 
 export const APP_GITHUB_URL = "https://github.com/theDavidCoen/BasicWallet";
 export const APP_GITHUB_LABEL = "theDavidCoen/BasicWallet";
