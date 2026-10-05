@@ -26,6 +26,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -105,6 +106,7 @@ export function ChatThreadScreen() {
   const navigation = useNavigation<RootNav>();
   const route = useRoute<RouteProp<RootStackParamList, "ChatThread">>();
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const contactId = route.params.contactId;
   const seedDraft = route.params.seedDraft;
   const contact = useMemo(() => getContact(contactId), [contactId]);
@@ -136,7 +138,8 @@ export function ChatThreadScreen() {
   const [hasIdentity, setHasIdentity] = useState(true);
   const [archived, setArchived] = useState(false);
   const [spot, setSpot] = useState<number | null>(null);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  /** Android: Y of keyboard top in screen coords; null when closed. */
+  const [keyboardTopY, setKeyboardTopY] = useState<number | null>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const seededRef = useRef(false);
 
@@ -296,37 +299,45 @@ export function ChatThreadScreen() {
   // Android edge-to-edge (`edgeToEdgeEnabled=true`) + transparent nav bar:
   // windowSoftInputMode=adjustResize does not shrink the RN root, and
   // KeyboardAvoidingView with behavior=undefined leaves the composer under
-  // Gboard. Same Keyboard height pad pattern as InteractiveBottomSheet.
+  // Gboard. Use keyboard *top* (screenY), not height alone — Xiaomi/Gboard
+  // height is under-reported vs the real IME inset.
   useEffect(() => {
     const showEvt =
       Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
     const hideEvt =
       Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
     const onShow = Keyboard.addListener(showEvt, (e) => {
-      setKeyboardHeight(Math.max(0, e.endCoordinates?.height ?? 0));
+      const screenY = e.endCoordinates?.screenY;
+      const height = e.endCoordinates?.height ?? 0;
+      if (typeof screenY === "number" && screenY > 0) {
+        setKeyboardTopY(screenY);
+      } else if (height > 0) {
+        setKeyboardTopY(Math.max(0, windowHeight - height));
+      } else {
+        setKeyboardTopY(null);
+      }
     });
-    const onHide = Keyboard.addListener(hideEvt, () => setKeyboardHeight(0));
+    const onHide = Keyboard.addListener(hideEvt, () => setKeyboardTopY(null));
     return () => {
       onShow.remove();
       onHide.remove();
     };
-  }, []);
+  }, [windowHeight]);
 
   useEffect(() => {
-    if (keyboardHeight <= 0) return;
+    if (keyboardTopY == null) return;
     const t = setTimeout(() => {
       listRef.current?.scrollToEnd({ animated: true });
     }, 50);
     return () => clearTimeout(t);
-  }, [keyboardHeight]);
+  }, [keyboardTopY]);
 
-  // Subtract ScreenChrome bottom pad so we do not double-count safe area.
+  // Composer sits above ScreenChrome bottom pad; lift so its bottom meets
+  // the keyboard top (same screen-space idea as InteractiveBottomSheet).
+  const chromeBottomPad = insets.bottom + SCREEN_CHROME_BOTTOM_EXTRA;
   const androidComposerLift =
-    Platform.OS === "android" && keyboardHeight > 0
-      ? Math.max(
-          0,
-          keyboardHeight - (insets.bottom + SCREEN_CHROME_BOTTOM_EXTRA),
-        )
+    Platform.OS === "android" && keyboardTopY != null
+      ? Math.max(0, windowHeight - keyboardTopY - chromeBottomPad)
       : 0;
 
   async function onSendText() {
