@@ -39,6 +39,7 @@ import {
 } from "../exit/packageStore";
 import { getOpenWallet } from "../wallet/hdWallet";
 import { useWallet } from "../wallet/WalletProvider";
+import { AdaptiveText, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -49,6 +50,7 @@ function midEllipsis(s: string, left = 12, right = 8): string {
 
 export function UnilateralExitPrepareScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
   const network = getNetworkConfig();
   const { selectedWallet } = useWallet();
   const [sweep, setSweep] = useState("");
@@ -125,12 +127,12 @@ export function UnilateralExitPrepareScreen() {
   const onEstimate = useCallback(async () => {
     if (!walletId) return;
     if (!sweep.trim()) {
-      Alert.alert("Recovery address", "Set a recovery address in step 1 first.");
+      Alert.alert(t("exit.recoveryAddressTitle"), t("exit.setRecoveryStep1"));
       return;
     }
     const err = await validateExternalSweepAddress(sweep, network.id, walletId);
     if (err) {
-      Alert.alert("Address", err);
+      Alert.alert(t("exit.addressTitle"), err);
       return;
     }
     setBusy(true);
@@ -141,8 +143,8 @@ export function UnilateralExitPrepareScreen() {
       setQuote(q);
     } catch (e) {
       Alert.alert(
-        "Estimate failed",
-        e instanceof Error ? e.message : "Could not quote exit (indexer may be down).",
+        t("exit.estimateFailed"),
+        e instanceof Error ? e.message : t("exit.estimateFailedBody"),
       );
     } finally {
       setBusy(false);
@@ -154,12 +156,12 @@ export function UnilateralExitPrepareScreen() {
     if (!walletId || !quote) return;
     const err = await validateExternalSweepAddress(sweep, network.id, walletId);
     if (err) {
-      Alert.alert("Address", err);
+      Alert.alert(t("exit.addressTitle"), err);
       return;
     }
-    const auth = await requireExitAuth("Confirm prepare unilateral exit package");
+    const auth = await requireExitAuth(t("exit.confirmPrepare"));
     if (!auth.ok) {
-      Alert.alert("Cancelled", auth.reason);
+      Alert.alert(t("exit.cancelled"), auth.reason);
       return;
     }
     setBusy(true);
@@ -178,8 +180,8 @@ export function UnilateralExitPrepareScreen() {
       goFund(pkg.totals.recoveredSats, pkg.totals.fundingRequiredSats);
     } catch (e) {
       Alert.alert(
-        "Prepare failed",
-        e instanceof Error ? e.message : "Could not build exit package.",
+        t("exit.prepareFailed"),
+        e instanceof Error ? e.message : t("exit.prepareFailedBody"),
       );
     } finally {
       setBusy(false);
@@ -190,8 +192,8 @@ export function UnilateralExitPrepareScreen() {
   if (!walletId) {
     return (
       <ScreenChrome logoScale={0.77}>
-        <ExitStepHeader step={EXIT_STEP.prepare} title="PREPARE PACKAGE" />
-        <Text style={ui.caption}>Select an Arkade wallet first.</Text>
+        <ExitStepHeader step={EXIT_STEP.prepare} title={t("exit.prepareTitle")} />
+        <Text style={ui.caption}>{t("exit.selectArkadeFirst")}</Text>
       </ScreenChrome>
     );
   }
@@ -216,19 +218,19 @@ export function UnilateralExitPrepareScreen() {
       >
         <ExitStepHeader
           step={EXIT_STEP.prepare}
-          title="EXIT PACKAGE"
+          title={t("exit.exitPackageTitle")}
           caption={
             !sweep.trim()
-              ? "Set a recovery address in step 1 first."
+              ? t("exit.setRecoveryStep1")
               : packageReady
-                ? "Auto-prepare saved a package for your current balance. Continue to fund fees."
-                : "Auto-prepare is building or updating the package. Wait a moment, or estimate manually."
+                ? t("exit.packageReadyContinue")
+                : t("exit.packageBuilding")
           }
         />
 
         {sweep.trim() ? (
           <Text style={[ui.hint, { marginTop: 8 }]}>
-            Recovery (step 1): {midEllipsis(sweep.trim())}
+            {t("exit.recoveryStep1", { addr: midEllipsis(sweep.trim()) })}
           </Text>
         ) : (
           <Pressable
@@ -237,41 +239,52 @@ export function UnilateralExitPrepareScreen() {
               navigation.navigate("ExitRecoveryAddress", { from: "exit" })
             }
           >
-            <Text style={ui.secondaryBtnText}>Set recovery address</Text>
+            <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>{t("exit.setRecoveryAddress")}</AdaptiveText>
           </Pressable>
         )}
 
         {packageReady && stored ? (
           <View style={ui.cardMuted}>
             <Text style={styles.meta}>
-              Package ready
-              {stored.source === "auto"
-                ? " (auto)"
-                : stored.source === "manual"
-                  ? " (manual)"
-                  : ""}
+              {t("exit.packageReady", {
+                source:
+                  stored.source === "auto"
+                    ? t("exit.sourceAuto")
+                    : stored.source === "manual"
+                      ? t("exit.sourceManual")
+                      : "",
+              })}
             </Text>
             <Text style={styles.meta}>
-              Recover ~{stored.recoveredSats.toLocaleString("en-US")} sats
-              {stored.includedSats != null
-                ? ` from ${stored.includedSats.toLocaleString("en-US")} sats included`
-                : ""}
+              {t("exit.recoverApprox", {
+                sats: stored.recoveredSats.toLocaleString("en-US"),
+                from:
+                  stored.includedSats != null
+                    ? t("exit.fromIncluded", {
+                        sats: stored.includedSats.toLocaleString("en-US"),
+                      })
+                    : "",
+              })}
             </Text>
             {stored.coveredSats != null &&
             stored.includedSats != null &&
             stored.coveredSats > stored.includedSats ? (
               <Text style={[styles.meta, { color: colors.hint }]}>
-                {(stored.coveredSats - stored.includedSats).toLocaleString("en-US")}{" "}
-                sats in skipped VTXOs (not in this exit)
+                {t("exit.skippedVtxos", {
+                  sats: (stored.coveredSats - stored.includedSats).toLocaleString("en-US"),
+                })}
               </Text>
             ) : null}
             <Text style={styles.meta}>
-              Fee fund needed ~{stored.fundingRequiredSats.toLocaleString("en-US")} sats
-              {stored.txCount ? ` · ${stored.txCount} tx(s)` : ""}
+              {t("exit.feeFundNeeded", {
+                sats: stored.fundingRequiredSats.toLocaleString("en-US"),
+                txs: stored.txCount
+                  ? t("exit.txCountPart", { count: stored.txCount })
+                  : "",
+              })}
             </Text>
             <Text style={[styles.meta, { color: colors.hint, marginTop: 6 }]}>
-              Only the latest package is kept. Auto-prepare replaces it when your
-              balance changes.
+              {t("exit.onlyLatestPackage")}
             </Text>
           </View>
         ) : null}
@@ -279,7 +292,7 @@ export function UnilateralExitPrepareScreen() {
         {packageReady ? (
           <>
             <Pressable style={ui.primaryBtn} onPress={onContinueExisting}>
-              <Text style={ui.primaryBtnText}>Continue · fund fees</Text>
+              <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("exit.continueFundFees")}</AdaptiveText>
             </Pressable>
             <Pressable
               style={ui.secondaryBtn}
@@ -289,7 +302,7 @@ export function UnilateralExitPrepareScreen() {
               {phase === "estimating" ? (
                 <ActivityIndicator color={colors.fg} />
               ) : (
-                <Text style={ui.secondaryBtnText}>Rebuild · estimate first</Text>
+                <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>{t("exit.rebuildEstimate")}</AdaptiveText>
               )}
             </Pressable>
           </>
@@ -302,7 +315,7 @@ export function UnilateralExitPrepareScreen() {
             {phase === "estimating" ? (
               <ActivityIndicator color={colors.fg} />
             ) : (
-              <Text style={ui.secondaryBtnText}>Estimate</Text>
+              <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>{t("exit.estimate")}</AdaptiveText>
             )}
           </Pressable>
         )}
@@ -310,26 +323,37 @@ export function UnilateralExitPrepareScreen() {
         {quote ? (
           <View style={ui.cardMuted}>
             <Text style={styles.meta}>
-              Recover ~{quote.totals.recoveredSats.toLocaleString("en-US")} sats
+              {t("exit.recoverApproxShort", {
+                sats: quote.totals.recoveredSats.toLocaleString("en-US"),
+              })}
             </Text>
             <Text style={styles.meta}>
-              Fees ~{quote.totals.totalFeeSats.toLocaleString("en-US")} sats ·{" "}
-              {quote.totals.txCount} tx(s)
+              {t("exit.feesLine", {
+                fees: quote.totals.totalFeeSats.toLocaleString("en-US"),
+                count: quote.totals.txCount,
+              })}
             </Text>
             <Text style={styles.meta}>
-              Fee fund needed ~{quote.totals.fundingRequiredSats.toLocaleString("en-US")}{" "}
-              sats (step 3)
+              {t("exit.feeFundStep3", {
+                sats: quote.totals.fundingRequiredSats.toLocaleString("en-US"),
+              })}
             </Text>
             {quote.validUntil ? (
               <Text style={styles.meta}>
-                Valid until {new Date(quote.validUntil * 1000).toLocaleString()}
+                {t("exit.validUntil", {
+                  when: new Date(quote.validUntil * 1000).toLocaleString(),
+                })}
               </Text>
             ) : null}
             <Text style={[styles.meta, { marginTop: 8, color: colors.hint }]}>
-              VTXOs: {quote.vtxos.filter((v) => !v.skipped).length} included
-              {quote.vtxos.some((v) => v.skipped)
-                ? ` · ${quote.vtxos.filter((v) => v.skipped).length} skipped`
-                : ""}
+              {t("exit.vtxosLine", {
+                included: quote.vtxos.filter((v) => !v.skipped).length,
+                skipped: quote.vtxos.some((v) => v.skipped)
+                  ? t("exit.skippedPart", {
+                      count: quote.vtxos.filter((v) => v.skipped).length,
+                    })
+                  : "",
+              })}
             </Text>
           </View>
         ) : null}
@@ -343,17 +367,15 @@ export function UnilateralExitPrepareScreen() {
             {phase === "preparing" ? (
               <ActivityIndicator color="#000" />
             ) : (
-              <Text style={ui.primaryBtnText}>
-                {packageReady ? "Replace package · continue" : "Prepare package · continue"}
-              </Text>
+              <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>
+                {packageReady ? t("exit.replacePackage") : t("exit.preparePackageContinue")}
+              </AdaptiveText>
             )}
           </Pressable>
         ) : null}
 
         <Text style={[ui.hint, { marginTop: 10 }]}>
-          {packageReady
-            ? "Recover amount is after sweep fees; skipped uneconomic VTXOs stay listed in the package."
-            : "Prepare does not spend fee sats. You fund the fee address only in step 3."}
+          {packageReady ? t("exit.hintReady") : t("exit.hintPrepare")}
         </Text>
       </ScrollView>
     </ScreenChrome>

@@ -37,6 +37,7 @@ import {
 import type { ExitJobRecord } from "../exit/jobStore";
 import { getOpenWallet } from "../wallet/hdWallet";
 import { useWallet } from "../wallet/WalletProvider";
+import { AdaptiveText, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -53,29 +54,39 @@ function JobCard({
   onStop: () => void;
   onResume: () => void;
 }) {
+  const { t } = useI18n();
   const statusLabel =
     job.status === "running"
-      ? "running"
+      ? t("exit.statusRunning")
       : job.status === "stopped"
-        ? "paused"
-        : job.status;
+        ? t("exit.statusPaused")
+        : job.status === "failed"
+          ? t("exit.statusFailed")
+          : job.status === "completed"
+            ? t("exit.statusDone")
+            : job.status;
   const csv =
     job.status === "running" || job.status === "stopped"
-      ? csvLockSummaryFromEvents(job.events, {
-          networkId,
-          tipHeight,
-        })
+      ? csvLockSummaryFromEvents(
+          job.events,
+          {
+            networkId,
+            tipHeight,
+          },
+          t,
+        )
       : null;
   const progress = dedupeExitEventsForDisplay(job.events, 12);
   return (
     <View style={ui.cardMuted}>
       <Text style={styles.cardLabel}>
-        Exit · {statusLabel}
-        {" · "}
-        {job.recoveredSats.toLocaleString("en-US")} sats
+        {t("exit.jobExitStatus", {
+          status: statusLabel,
+          sats: job.recoveredSats.toLocaleString("en-US"),
+        })}
       </Text>
       <Text style={styles.cardBody}>
-        Sweep → {job.sweepAddress.slice(0, 18)}…
+        {t("exit.sweepTo", { addr: job.sweepAddress.slice(0, 18) })}
       </Text>
       {csv ? (
         <View style={styles.csvBox}>
@@ -88,34 +99,40 @@ function JobCard({
       ) : null}
       {progress.length > 0 ? (
         <View style={{ marginTop: 10 }}>
-          <Text style={styles.progressLabel}>Progress</Text>
+          <Text style={styles.progressLabel}>{t("exit.progress")}</Text>
           {progress.map((ev, i) => (
             <Text
               key={`${ev.stepIndex}-${i}-${ev.status}-${ev.txid ?? ""}`}
               style={styles.event}
             >
-              {formatExitEventLine(ev)}
+              {formatExitEventLine(ev, t)}
             </Text>
           ))}
         </View>
       ) : (
         <Text style={[styles.cardBody, { marginTop: 8 }]}>
-          {job.status === "running" ? "Starting…" : "No events yet"}
+          {job.status === "running" ? t("exit.starting") : t("exit.noEventsYet")}
         </Text>
       )}
       {job.status === "running" ? (
         <Pressable style={ui.secondaryBtn} onPress={onStop}>
-          <Text style={ui.secondaryBtnText}>Stop (resume later)</Text>
+          <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>
+            {t("exit.stopResumeLater")}
+          </AdaptiveText>
         </Pressable>
       ) : null}
       {job.status === "stopped" ? (
         <Pressable style={ui.primaryBtn} onPress={onResume}>
-          <Text style={ui.primaryBtnText}>Resume</Text>
+          <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>
+            {t("exit.resume")}
+          </AdaptiveText>
         </Pressable>
       ) : null}
       {job.status === "failed" ? (
         <Pressable style={ui.primaryBtn} onPress={onResume}>
-          <Text style={ui.primaryBtnText}>Retry exit</Text>
+          <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>
+            {t("exit.retryExit")}
+          </AdaptiveText>
         </Pressable>
       ) : null}
     </View>
@@ -135,25 +152,26 @@ function PendingSweepCard({
   sweeping: boolean;
   onSweep: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <View style={ui.cardMuted}>
       <Text style={styles.cardLabel}>
-        Remaining onchain · {sats.toLocaleString("en-US")} sats
+        {t("exit.remainingOnchain", { sats: sats.toLocaleString("en-US") })}
       </Text>
       <Text style={styles.cardBody}>
-        Your last exit package already finished, but{" "}
-        {sats.toLocaleString("en-US")} sats ({count} output
-        {count === 1 ? "" : "s"}) still sit onchain after the CSV unroll. They
-        are not at your recovery address yet. Tap below to broadcast the final
-        sweep.
+        {t("exit.pendingSweepBody", {
+          sats: sats.toLocaleString("en-US"),
+          count,
+          plural: count === 1 ? "" : "s",
+        })}
       </Text>
       {recovery ? (
         <Text style={[styles.cardBody, { color: colors.caption }]}>
-          Sweep → {recovery.slice(0, 18)}…
+          {t("exit.sweepTo", { addr: recovery.slice(0, 18) })}
         </Text>
       ) : (
         <Text style={[styles.cardBody, { color: colors.caption }]}>
-          Set a recovery address first.
+          {t("exit.setRecoveryFirst")}
         </Text>
       )}
       <Pressable
@@ -164,7 +182,9 @@ function PendingSweepCard({
         {sweeping ? (
           <ActivityIndicator color="#000" />
         ) : (
-          <Text style={ui.primaryBtnText}>Exit remaining funds</Text>
+          <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>
+            {t("exit.exitRemainingFunds")}
+          </AdaptiveText>
         )}
       </Pressable>
     </View>
@@ -173,6 +193,7 @@ function PendingSweepCard({
 
 export function UnilateralExitHubScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
   const network = getNetworkConfig();
   const { selectedWallet, wallet, bumpActivity } = useWallet();
   const {
@@ -238,7 +259,7 @@ export function UnilateralExitHubScreen() {
           if (!cancelled) setRecovery(rec);
           if (!selectedWallet || selectedWallet.kind !== "arkade") {
             if (!cancelled) {
-              setVtxoLine("Select an Arkade wallet");
+              setVtxoLine(t("exit.selectArkadeWallet"));
               setHasPkg(false);
               setPkgMeta(null);
               setPendingSweep({ sats: 0, count: 0 });
@@ -260,13 +281,16 @@ export function UnilateralExitHubScreen() {
             if (!cancelled) {
               setVtxoLine(
                 sum.count === 0
-                  ? "No local VTXOs cached yet"
-                  : `${sum.count} VTXO(s) · ${sum.totalSats.toLocaleString("en-US")} sats (local)`,
+                  ? t("exit.noLocalVtxos")
+                  : t("exit.vtxoLine", {
+                      count: sum.count,
+                      sats: sum.totalSats.toLocaleString("en-US"),
+                    }),
               );
               void unrolled;
             }
           } else if (!cancelled) {
-            setVtxoLine("Open wallet to refresh local VTXOs");
+            setVtxoLine(t("exit.openWalletVtxos"));
             setPendingSweep({ sats: 0, count: 0 });
           }
           const pkg = await hasExitPackage(network.id, selectedWallet.id);
@@ -295,8 +319,8 @@ export function UnilateralExitHubScreen() {
   useFocusEffect(
     useCallback(() => {
       if (!needsCsvClock) return;
-      const t = setInterval(() => setTick((n) => n + 1), 15_000);
-      return () => clearInterval(t);
+      const clock = setInterval(() => setTick((n) => n + 1), 15_000);
+      return () => clearInterval(clock);
     }, [needsCsvClock]),
   );
 
@@ -315,10 +339,10 @@ export function UnilateralExitHubScreen() {
         }
       };
       void pull();
-      const t = setInterval(() => void pull(), 30_000);
+      const tipPoll = setInterval(() => void pull(), 30_000);
       return () => {
         cancelled = true;
-        clearInterval(t);
+        clearInterval(tipPoll);
       };
     }, [needsCsvTip, network.esploraUrl]),
   );
@@ -326,9 +350,9 @@ export function UnilateralExitHubScreen() {
   function continueDraftExit() {
     if (!selectedWallet || selectedWallet.kind !== "arkade") return;
     void (async () => {
-      const auth = await requireExitAuth("Confirm continue unilateral exit");
+      const auth = await requireExitAuth(t("exit.confirmContinueExit"));
       if (!auth.ok) {
-        Alert.alert("Cancelled", auth.reason);
+        Alert.alert(t("exit.cancelled"), auth.reason);
         return;
       }
       setContinuing(true);
@@ -339,16 +363,18 @@ export function UnilateralExitHubScreen() {
         });
         await refresh();
       } catch (e) {
-        const msg = e instanceof Error ? e.message : "Unknown error";
+        const msg = e instanceof Error ? e.message : t("common.unknownError");
         if (msg.startsWith("PACKAGE_DONE:")) {
           Alert.alert(
-            "Package already finished",
+            t("exit.packageFinishedTitle"),
             hasPendingSweep
-              ? `This package only swept part of your funds. Use the Remaining onchain card (~${unrolledSats.toLocaleString("en-US")} sats).`
-              : "This exit already swept its package onchain. Prepare a new package if offchain VTXOs remain.",
+              ? t("exit.packageFinishedPartial", {
+                  sats: unrolledSats.toLocaleString("en-US"),
+                })
+              : t("exit.packageFinishedFull"),
           );
         } else {
-          Alert.alert("Could not continue exit", msg);
+          Alert.alert(t("exit.couldNotContinueExit"), msg);
         }
       } finally {
         setContinuing(false);
@@ -364,9 +390,9 @@ export function UnilateralExitHubScreen() {
     if (!selectedWallet || selectedWallet.kind !== "arkade") return;
 
     void (async () => {
-      const auth = await requireExitAuth("Confirm sweep remaining exit funds");
+      const auth = await requireExitAuth(t("exit.confirmSweepRemaining"));
       if (!auth.ok) {
-        Alert.alert("Cancelled", auth.reason);
+        Alert.alert(t("exit.cancelled"), auth.reason);
         return;
       }
       setSweeping(true);
@@ -385,11 +411,16 @@ export function UnilateralExitHubScreen() {
           setPendingSweep({ sats: 0, count: 0 });
           bumpActivity();
           Alert.alert(
-            "Sweep broadcast",
-            `Swept ${result.deliveredSats.toLocaleString("en-US")} sats to recovery (${result.vtxoCount} output${result.vtxoCount === 1 ? "" : "s"}).\nTx ${result.txid.slice(0, 18)}…`,
+            t("exit.sweepBroadcastTitle"),
+            t("exit.sweepBroadcastBody", {
+              sats: result.deliveredSats.toLocaleString("en-US"),
+              count: result.vtxoCount,
+              plural: result.vtxoCount === 1 ? "" : "s",
+              txid: result.txid.slice(0, 18),
+            }),
             [
               {
-                text: "OK",
+                text: t("exit.ok"),
                 onPress: () => {
                   navigation.navigate("Home");
                 },
@@ -401,12 +432,12 @@ export function UnilateralExitHubScreen() {
         }
         navigation.navigate("UnilateralExitPrepare");
       } catch (e) {
-        const msg = e instanceof Error ? e.message : "Unknown error";
+        const msg = e instanceof Error ? e.message : t("common.unknownError");
         if (msg.startsWith("NO_UNROLLED:")) {
           navigation.navigate("UnilateralExitPrepare");
           return;
         }
-        Alert.alert("Could not sweep remaining funds", msg);
+        Alert.alert(t("exit.couldNotSweep"), msg);
       } finally {
         setSweeping(false);
       }
@@ -422,10 +453,10 @@ export function UnilateralExitHubScreen() {
   }
 
   const caption = hasPendingSweep
-    ? "An earlier exit package finished, but some sats are still onchain waiting for the final recovery sweep."
+    ? t("exit.captionPendingSweep")
     : !hasActive && hasPkg
-      ? "A prepared exit package is on this device. Continue runs it in the background through all bumps, CSV waits, and sweeps."
-      : exitJobCaption(hubJobs);
+      ? t("exit.captionPreparedPackage")
+      : exitJobCaption(hubJobs, t);
 
   return (
     <ScreenChrome logoScale={0.77}>
@@ -434,7 +465,7 @@ export function UnilateralExitHubScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={ui.title}>EXIT</Text>
+        <Text style={ui.title}>{t("exit.title")}</Text>
         <Text style={ui.caption}>{caption}</Text>
 
         {hasPendingSweep ? (
@@ -465,7 +496,7 @@ export function UnilateralExitHubScreen() {
         ) : null}
 
         <View style={[ui.cardMuted, { marginTop: 16 }]}>
-          <Text style={styles.cardLabel}>Local readiness · {network.label}</Text>
+          <Text style={styles.cardLabel}>{t("exit.localReadiness", { network: network.label })}</Text>
           {busy ? (
             <ActivityIndicator color={colors.fg} style={{ marginTop: 8 }} />
           ) : (
@@ -473,13 +504,16 @@ export function UnilateralExitHubScreen() {
               <Text style={styles.cardBody}>{vtxoLine}</Text>
               <Text style={styles.cardBody}>
                 {recovery
-                  ? `Recovery · ${recovery.slice(0, 14)}…`
-                  : "No recovery address yet"}
+                  ? t("exit.recoveryShort", { addr: recovery.slice(0, 14) })
+                  : t("exit.noRecoveryYet")}
               </Text>
               <Text style={styles.cardBody}>
                 {hasPkg && pkgMeta
-                  ? `Draft package ready${pkgMeta.source === "auto" ? " (auto)" : ""} · ${pkgMeta.recoveredSats.toLocaleString("en-US")} sats`
-                  : "No draft exit package"}
+                  ? t("exit.draftPackageReady", {
+                      auto: pkgMeta.source === "auto" ? t("exit.draftAuto") : "",
+                      sats: pkgMeta.recoveredSats.toLocaleString("en-US"),
+                    })
+                  : t("exit.noDraftPackage")}
               </Text>
             </>
           )}
@@ -487,7 +521,7 @@ export function UnilateralExitHubScreen() {
 
         {!isArkade ? (
           <Text style={[ui.hint, { marginTop: 20 }]}>
-            Switch to an Arkade (seed) wallet to exit.
+            {t("exit.switchArkadeHint")}
           </Text>
         ) : (
           <>
@@ -500,7 +534,7 @@ export function UnilateralExitHubScreen() {
                 {continuing ? (
                   <ActivityIndicator color="#000" />
                 ) : (
-                  <Text style={ui.primaryBtnText}>Continue exit</Text>
+                  <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("exit.continueExit")}</AdaptiveText>
                 )}
               </Pressable>
             ) : null}
@@ -513,24 +547,25 @@ export function UnilateralExitHubScreen() {
               }
               onPress={startWizard}
             >
-              <Text
+              <AdaptiveText
                 style={
                   hasActive || (!hasPkg && !hasPendingSweep)
                     ? ui.primaryBtnText
                     : ui.secondaryBtnText
                 }
+                baseFontSize={15}
               >
                 {hasActive
-                  ? "Start another unilateral exit"
-                  : "Prepare new package"}
-              </Text>
+                  ? t("exit.startAnother")
+                  : t("exit.prepareNewPackage")}
+              </AdaptiveText>
             </Pressable>
 
             <Pressable
               style={ui.secondaryBtn}
               onPress={() => navigation.navigate("Home")}
             >
-              <Text style={ui.secondaryBtnText}>Home</Text>
+              <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>{t("exit.home")}</AdaptiveText>
             </Pressable>
           </>
         )}

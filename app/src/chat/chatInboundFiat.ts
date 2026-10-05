@@ -8,6 +8,7 @@
 
 import type { ArkadeNetworkId } from "../config/network";
 import { fiatStableForNetwork } from "../fiat/depixAssets";
+import { i18n } from "../i18n/i18n";
 import {
   listInboundPaymentsByStatus,
   updateChatMessage,
@@ -31,9 +32,9 @@ export function isAutoInboundBusy(): boolean {
 /** Title while inbound Fiat payment has no settled amount yet. */
 export function receivingFiatTitle(networkId: ArkadeNetworkId): string {
   const { displayCode } = fiatStableForNetwork(networkId);
-  if (displayCode === "USD") return "You are receiving $";
-  if (displayCode === "BRL") return "You are receiving R$";
-  return `You are receiving ${displayCode}`;
+  if (displayCode === "USD") return i18n.t("chat.receivingUsd");
+  if (displayCode === "BRL") return i18n.t("chat.receivingBrl");
+  return i18n.t("chat.receivingCode", { code: displayCode });
 }
 
 export function rememberRecentInboundFiatSettle(

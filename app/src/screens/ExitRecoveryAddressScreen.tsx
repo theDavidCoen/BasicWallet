@@ -30,11 +30,13 @@ import {
 import { dismissRecoveryReminder } from "../exit/recoveryReminder";
 import { requireExitAuth } from "../exit/gates";
 import { useWallet } from "../wallet/WalletProvider";
+import { AdaptiveText, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
 export function ExitRecoveryAddressScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
   const route = useRoute<RouteProp<RootStackParamList, "ExitRecoveryAddress">>();
   const from = route.params?.from;
   const network = getNetworkConfig();
@@ -72,16 +74,16 @@ export function ExitRecoveryAddressScreen() {
 
   async function onSave(nextDraft?: string) {
     const value = nextDraft !== undefined ? nextDraft : draft;
-    const auth = await requireExitAuth("Confirm recovery address");
+    const auth = await requireExitAuth(t("exit.confirmRecoveryAddress"));
     if (!auth.ok) {
-      Alert.alert("Cancelled", auth.reason);
+      Alert.alert(t("exit.cancelled"), auth.reason);
       return;
     }
     setBusy(true);
     try {
       const res = await writeRecoveryAddress(network.id, value, { walletId });
       if (!res.ok) {
-        Alert.alert("Address", res.error);
+        Alert.alert(t("exit.addressTitle"), res.error);
         return;
       }
       setDraft(value.trim());
@@ -90,13 +92,13 @@ export function ExitRecoveryAddressScreen() {
         scheduleAutoPrepareSoon("recovery-address-saved");
       }
       Alert.alert(
-        "Saved",
+        t("exit.savedTitle"),
         value.trim()
           ? inWizard
-            ? "Next: review the exit package. Auto-prepare may already have one ready (or will build it while the operator is reachable)."
-            : "Basic will auto-prepare an exit package in the background when your Arkade balance changes."
-          : "Recovery address cleared. Auto-prepare is paused.",
-        [{ text: "OK", onPress: () => routeAfterSave(!!value.trim()) }],
+            ? t("exit.savedWizardBody")
+            : t("exit.savedBody")
+          : t("exit.clearedBody"),
+        [{ text: t("exit.ok"), onPress: () => routeAfterSave(!!value.trim()) }],
       );
     } finally {
       setBusy(false);
@@ -114,34 +116,25 @@ export function ExitRecoveryAddressScreen() {
         {inWizard ? (
           <ExitStepHeader
             step={EXIT_STEP.recovery}
-            title="RECOVERY ADDRESS"
-            caption={
-              "Where exited funds should land: an address from an external Bitcoin wallet you control.\n\n" +
-              "After you start unilateral exit, Basic unrolls your VTXOs onchain, then a CSV locktime must expire before the sweep can pay this address. That wait is normal (ASP unilateralExitDelay; often tens of minutes on Mutinynet, longer on mainnet). Progress and the remaining lock show on the Exit screen.\n\n" +
-              "You do not need to sit and wait. After Start execute, keep using Basic as usual: receive, send, and board new funds. The exit continues in the background and finishes when the lock clears."
-            }
+            title={t("exit.recoveryTitle")}
+            caption={t("exit.recoveryWizardCaption")}
           />
         ) : (
           <>
-            <Text style={ui.title}>RECOVERY ADDRESS</Text>
-            <Text style={ui.caption}>
-              External Bitcoin address for unilateral exit. Funds land here after
-              onchain unroll and the CSV locktime. You can keep using the wallet
-              normally once exit has started; you do not have to wait on this screen.
-            </Text>
+            <Text style={ui.title}>{t("exit.recoveryTitle")}</Text>
+            <Text style={ui.caption}>{t("exit.recoveryCaption")}</Text>
           </>
         )}
 
         <Text style={[ui.hint, { marginTop: inWizard ? 4 : 8 }]}>
-          Network: {network.label}
+          {t("exit.networkLabel", { network: network.label })}
         </Text>
 
         <Text style={styles.warn}>
-          Do not use an Arkade boarding address (the onchain address you use to deposit into
-          Arkade). Boarding is for entering Arkade; recovery must be a different wallet.
+          {t("exit.recoveryWarn")}
         </Text>
 
-        <Text style={styles.label}>Onchain address (external wallet)</Text>
+        <Text style={styles.label}>{t("exit.onchainAddressLabel")}</Text>
         <TextInput
           value={draft}
           onChangeText={setDraft}
@@ -157,16 +150,16 @@ export function ExitRecoveryAddressScreen() {
           disabled={busy}
           onPress={() => void onSave()}
         >
-          <Text style={ui.primaryBtnText}>
-            {inWizard ? "Save · continue" : "Save"}
-          </Text>
+          <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>
+            {inWizard ? t("exit.saveContinue") : t("exit.save")}
+          </AdaptiveText>
         </Pressable>
         <Pressable
           style={ui.secondaryBtn}
           disabled={busy}
           onPress={() => void onSave("")}
         >
-          <Text style={ui.secondaryBtnText}>Clear</Text>
+          <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>{t("exit.clear")}</AdaptiveText>
         </Pressable>
       </ScrollView>
     </ScreenChrome>

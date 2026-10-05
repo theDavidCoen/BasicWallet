@@ -13,7 +13,6 @@ import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
 import { BackupPassphraseLiveRules } from "../components/BackupPassphraseLiveRules";
 import { PassphraseInput } from "../components/PassphraseInput";
-import { BACKUP_PASSPHRASE_HINT } from "../nostr/passphrasePolicy";
 import { backupPassphraseChecklist, validateBackupPassphrase } from "../nostr/passphrasePolicy";
 import {
   disableEncryptedBackup,
@@ -29,12 +28,14 @@ import {
   unlockBackupPassphraseSession,
 } from "../nostr/backupSync";
 import { requireUserPresence } from "../security/userPresence";
+import { AdaptiveText, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
 /** Penpot 12e — home server channel; Next → Backup Recap when enabling. */
 export function HomeServerBackupScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [username, setUsername] = useState("");
@@ -73,7 +74,7 @@ export function HomeServerBackupScreen() {
 
   async function onNext() {
     if (!url.trim()) {
-      Alert.alert("Server URL required", "Enter your home server or Nextcloud URL.");
+      Alert.alert(t("backup.serverUrlRequiredTitle"), t("backup.serverUrlRequiredBody"));
       return;
     }
     const creds = {
@@ -83,27 +84,27 @@ export function HomeServerBackupScreen() {
     };
     if (!homeCredsHaveAuth(creds)) {
       Alert.alert(
-        "Credentials required",
-        "Enter a Bearer access token, or a Nextcloud username + application password.",
+        t("backup.credentialsRequiredTitle"),
+        t("backup.credentialsRequiredBody"),
       );
       return;
     }
     if (creds.username && !creds.password) {
-      Alert.alert("App password required", "Nextcloud needs an application password with the username.");
+      Alert.alert(t("backup.appPasswordRequiredTitle"), t("backup.appPasswordRequiredBody"));
       return;
     }
     if (creds.password && !creds.username) {
-      Alert.alert("Username required", "Enter your Nextcloud username with the application password.");
+      Alert.alert(t("backup.usernameRequiredTitle"), t("backup.usernameRequiredBody"));
       return;
     }
 
     const check = validateBackupPassphrase(passphrase);
     if (!check.ok) {
-      Alert.alert("Invalid passphrase", check.message);
+      Alert.alert(t("backup.invalidPassphrase"), check.message);
       return;
     }
     if (passphrase !== confirm) {
-      Alert.alert("Mismatch", "Passphrase and confirmation do not match.");
+      Alert.alert(t("backup.mismatchTitle"), t("backup.mismatchBody"));
       return;
     }
 
@@ -122,8 +123,8 @@ export function HomeServerBackupScreen() {
       });
     } catch (e) {
       Alert.alert(
-        "Could not continue",
-        e instanceof Error ? e.message : "Unknown error",
+        t("backup.couldNotContinue"),
+        e instanceof Error ? e.message : t("common.unknownError"),
       );
     } finally {
       setBusy(false);
@@ -133,9 +134,9 @@ export function HomeServerBackupScreen() {
   async function onUpdateAndUpload() {
     setBusy(true);
     try {
-      const auth = await requireUserPresence("Confirm to update home server backup");
+      const auth = await requireUserPresence(t("backup.confirmUpdateHome"));
       if (!auth.ok) {
-        Alert.alert("Authentication required", "Backup was not updated.");
+        Alert.alert(t("backup.authRequired"), t("backup.backupNotUpdated"));
         return;
       }
       await unlockBackupPassphraseSession();
@@ -145,8 +146,8 @@ export function HomeServerBackupScreen() {
         const check = validateBackupPassphrase(passphrase);
         if (!check.ok) {
           Alert.alert(
-            "Passphrase needed",
-            "Session is locked. Enter your backup passphrase once, or unlock the app with biometrics.",
+            t("backup.passphraseNeededTitle"),
+            t("backup.passphraseNeededBody"),
           );
           return;
         }
@@ -161,13 +162,16 @@ export function HomeServerBackupScreen() {
       setBackupMeta(synced);
       setPassphrase("");
       Alert.alert(
-        "Backup updated",
-        `${synced.walletCount} wallet(s)` +
-          (synced.txMetaCount ? `, ${synced.txMetaCount} note(s)` : "") +
-          " re-packed and uploaded.",
+        t("backup.backupUpdatedTitle"),
+        t("backup.backupUpdatedHomeBody", {
+          wallets: synced.walletCount,
+          notes: synced.txMetaCount
+            ? t("backup.notesPart", { notes: synced.txMetaCount })
+            : "",
+        }),
       );
     } catch (e) {
-      Alert.alert("Update failed", e instanceof Error ? e.message : "Unknown error");
+      Alert.alert(t("backup.updateFailed"), e instanceof Error ? e.message : t("common.unknownError"));
     } finally {
       setBusy(false);
     }
@@ -176,9 +180,9 @@ export function HomeServerBackupScreen() {
   async function onDisable() {
     setBusy(true);
     try {
-      const auth = await requireUserPresence("Confirm to disable home server backup");
+      const auth = await requireUserPresence(t("backup.confirmDisableHome"));
       if (!auth.ok) {
-        Alert.alert("Authentication required", "Backup was not disabled.");
+        Alert.alert(t("backup.authRequired"), t("backup.backupNotDisabled"));
         return;
       }
       await disableEncryptedBackup();
@@ -188,12 +192,12 @@ export function HomeServerBackupScreen() {
       setConfirm("");
       setSessionReady(false);
       Alert.alert(
-        "Home backup disabled",
-        "Local encrypted package removed. Wallets on this device are unchanged. Server file is not deleted.",
+        t("backup.homeDisabledTitle"),
+        t("backup.homeDisabledBody"),
       );
       navigation.navigate("AdvancedBackup");
     } catch (e) {
-      Alert.alert("Could not disable", e instanceof Error ? e.message : "Unknown error");
+      Alert.alert(t("backup.couldNotDisable"), e instanceof Error ? e.message : t("common.unknownError"));
     } finally {
       setBusy(false);
     }
@@ -205,33 +209,29 @@ export function HomeServerBackupScreen() {
         contentContainerStyle={{ paddingBottom: 40 }}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={ui.title}>HOME SERVER</Text>
-        <Text style={ui.caption}>
-          Same encrypted package as Nostr.{"\n"}
-          Nextcloud WebDAV or Bearer token.
-        </Text>
+        <Text style={ui.title}>{t("backup.homeScreenTitle")}</Text>
+        <Text style={ui.caption}>{t("backup.homeCaption")}</Text>
 
         {homeEnabled ? (
           <>
             <Text style={[ui.hint, { marginTop: 20 }]}>
-              Home server backup is active.
-              {backupMeta?.homeUrl ? `\n${backupMeta.homeUrl}` : ""}
-              {"\n\n"}
-              {backupMeta?.lastPublishedAt
-                ? `Last upload: ${new Date(backupMeta.lastPublishedAt).toLocaleString()}`
-                : "Local package ready; upload on Update."}
-              {"\n\n"}
-              After you unlock the app (biometrics), wallet / note / Fiat Mode
-              changes sync to the server automatically.
+              {t("backup.homeActiveHint", {
+                urlLine: backupMeta?.homeUrl ? `\n${backupMeta.homeUrl}` : "",
+                uploadLine: backupMeta?.lastPublishedAt
+                  ? t("backup.lastUpload", {
+                      when: new Date(backupMeta.lastPublishedAt).toLocaleString(),
+                    })
+                  : t("backup.localPackageReady"),
+              })}
             </Text>
 
             {sessionReady ? (
               <Text style={[ui.hint, { marginTop: 16 }]}>
-                Session unlocked — Update uses the stored passphrase (no re-entry).
+                {t("backup.sessionUnlockedHome")}
               </Text>
             ) : (
               <>
-                <Text style={styles.label}>passphrase (session locked)</Text>
+                <Text style={styles.label}>{t("backup.passphraseSessionLocked")}</Text>
                 <PassphraseInput
                   value={passphrase}
                   onChangeText={setPassphrase}
@@ -248,7 +248,7 @@ export function HomeServerBackupScreen() {
               {busy ? (
                 <ActivityIndicator color="#000" />
               ) : (
-                <Text style={ui.primaryBtnText}>Update & upload</Text>
+                <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("backup.updateAndUpload")}</AdaptiveText>
               )}
             </Pressable>
 
@@ -260,73 +260,73 @@ export function HomeServerBackupScreen() {
               {busy ? (
                 <ActivityIndicator color={colors.fg} />
               ) : (
-                <Text style={ui.secondaryBtnText}>Disable home backup</Text>
+                <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>{t("backup.disableHome")}</AdaptiveText>
               )}
             </Pressable>
           </>
         ) : (
           <>
-            <Text style={styles.label}>server URL</Text>
+            <Text style={styles.label}>{t("backup.serverUrlLabel")}</Text>
             <TextInput
               style={styles.input}
               value={url}
               onChangeText={setUrl}
               autoCapitalize="none"
               autoCorrect={false}
-              placeholder="https://nextcloud.example"
+              placeholder={t("backup.serverUrlPlaceholder")}
               placeholderTextColor={colors.hint}
             />
             <Text style={[ui.hint, { marginTop: 6 }]}>
-              Origin is enough for Nextcloud (we append remote.php/dav/…). Or paste a full WebDAV file URL.
+              {t("backup.serverUrlHint")}
             </Text>
 
-            <Text style={[styles.section, { marginTop: 20 }]}>Nextcloud / WebDAV</Text>
-            <Text style={styles.label}>username</Text>
+            <Text style={[styles.section, { marginTop: 20 }]}>{t("backup.nextcloudSection")}</Text>
+            <Text style={styles.label}>{t("backup.usernameLabel")}</Text>
             <TextInput
               style={styles.input}
               value={username}
               onChangeText={setUsername}
               autoCapitalize="none"
               autoCorrect={false}
-              placeholder="username"
+              placeholder={t("backup.usernamePlaceholder")}
               placeholderTextColor={colors.hint}
             />
-            <Text style={styles.label}>application password</Text>
+            <Text style={styles.label}>{t("backup.appPasswordLabel")}</Text>
             <TextInput
               style={styles.input}
               value={appPassword}
               onChangeText={setAppPassword}
               autoCapitalize="none"
               autoCorrect={false}
-              placeholder="Nextcloud app password"
+              placeholder={t("backup.appPasswordPlaceholder")}
               placeholderTextColor={colors.hint}
               secureTextEntry
             />
 
-            <Text style={[styles.section, { marginTop: 20 }]}>Or access token</Text>
-            <Text style={styles.label}>Bearer token</Text>
+            <Text style={[styles.section, { marginTop: 20 }]}>{t("backup.orTokenSection")}</Text>
+            <Text style={styles.label}>{t("backup.bearerLabel")}</Text>
             <TextInput
               style={styles.input}
               value={token}
               onChangeText={setToken}
               autoCapitalize="none"
               autoCorrect={false}
-              placeholder="optional if using username + app password"
+              placeholder={t("backup.bearerPlaceholder")}
               placeholderTextColor={colors.hint}
               secureTextEntry
             />
 
-            <Text style={[styles.section, { marginTop: 28 }]}>Backup passphrase</Text>
+            <Text style={[styles.section, { marginTop: 28 }]}>{t("backup.passphraseSection")}</Text>
             <Text style={[ui.hint, { marginTop: 8, marginBottom: 4 }]}>
-              {BACKUP_PASSPHRASE_HINT}
+              {t("backup.passphraseHint")}
             </Text>
-            <Text style={styles.label}>passphrase</Text>
+            <Text style={styles.label}>{t("backup.passphraseLabel")}</Text>
             <PassphraseInput
               value={passphrase}
               onChangeText={setPassphrase}
               placeholder="••••••••••••"
             />
-            <Text style={styles.label}>confirm passphrase</Text>
+            <Text style={styles.label}>{t("backup.confirmPassphraseLabel")}</Text>
             <PassphraseInput
               value={confirm}
               onChangeText={setConfirm}
@@ -346,7 +346,7 @@ export function HomeServerBackupScreen() {
               {busy ? (
                 <ActivityIndicator color="#000" />
               ) : (
-                <Text style={ui.primaryBtnText}>Next</Text>
+                <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("backup.next")}</AdaptiveText>
               )}
             </Pressable>
           </>

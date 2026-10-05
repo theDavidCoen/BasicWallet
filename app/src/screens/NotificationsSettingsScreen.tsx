@@ -16,6 +16,7 @@ import {
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { AdaptiveText, useI18n } from "../i18n";
 import { hasNostrIdentity } from "../nostr/identityStore";
 import {
   ensureAndroidNotificationPermission,
@@ -29,6 +30,7 @@ import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
 export function NotificationsSettingsScreen() {
+  const { t } = useI18n();
   const [enabled, setEnabled] = useState(false);
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
@@ -43,16 +45,16 @@ export function NotificationsSettingsScreen() {
       const status = await getPermissionStatus();
       setPermLabel(
         status === "unavailable"
-          ? "Android only"
+          ? t("notifications.permAndroidOnly")
           : status === "granted"
-            ? "OS permission: granted"
+            ? t("notifications.permGranted")
             : status === "denied"
-              ? "OS permission: denied — enable in system settings"
-              : `OS permission: ${status}`,
+              ? t("notifications.permDenied")
+              : t("notifications.permStatus", { status }),
       );
       setReady(true);
     })();
-  }, []);
+  }, [t]);
 
   useFocusEffect(
     useCallback(() => {
@@ -64,7 +66,10 @@ export function NotificationsSettingsScreen() {
     async (next: boolean) => {
       if (busy) return;
       if (Platform.OS !== "android") {
-        Alert.alert("Android only", "Closed-app push ships on Android first. iOS later.");
+        Alert.alert(
+          t("notifications.alertAndroidOnlyTitle"),
+          t("notifications.alertAndroidOnlyBody"),
+        );
         return;
       }
       setBusy(true);
@@ -78,8 +83,8 @@ export function NotificationsSettingsScreen() {
 
         if (!(await hasNostrIdentity())) {
           Alert.alert(
-            "Nostr identity required",
-            "Create or import a Nostr identity first (Settings → Nostr identity).",
+            t("notifications.alertNostrRequiredTitle"),
+            t("notifications.alertNostrRequiredBody"),
           );
           return;
         }
@@ -87,10 +92,10 @@ export function NotificationsSettingsScreen() {
         const perm = await ensureAndroidNotificationPermission();
         if (!perm.granted) {
           Alert.alert(
-            "Permission needed",
-            "Allow notifications in system settings to wake Basic for Pay messages while the app is closed.",
+            t("notifications.alertPermissionTitle"),
+            t("notifications.alertPermissionBody"),
           );
-          setPermLabel("OS permission: denied — enable in system settings");
+          setPermLabel(t("notifications.permDenied"));
           return;
         }
 
@@ -100,8 +105,10 @@ export function NotificationsSettingsScreen() {
         if (!reg.ok) {
           // Keep local opt-in so boot can retry; surface the blocker clearly.
           Alert.alert(
-            "Registered locally",
-            `Could not reach the notifier yet:\n${reg.reason}\n\nTray wake needs Firebase credentials + a deployed sidecar. Classic catch-up on open still works.`,
+            t("notifications.alertRegisteredLocallyTitle"),
+            t("notifications.alertRegisteredLocallyBody", {
+              reason: reg.reason,
+            }),
           );
         }
         reload();
@@ -109,13 +116,15 @@ export function NotificationsSettingsScreen() {
         setBusy(false);
       }
     },
-    [busy, reload],
+    [busy, reload, t],
   );
 
   if (!ready) {
     return (
       <ScreenChrome logoScale={0.77}>
-        <Text style={ui.title}>NOTIFICATIONS</Text>
+        <AdaptiveText style={ui.title} baseFontSize={20}>
+          {t("notifications.title")}
+        </AdaptiveText>
         <ActivityIndicator color={colors.fg} style={{ marginTop: 24 }} />
       </ScreenChrome>
     );
@@ -123,11 +132,10 @@ export function NotificationsSettingsScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={ui.title}>NOTIFICATIONS</Text>
-      <Text style={ui.caption}>
-        Opt-in wake for Pay in Chat and contact share{"\n"}
-        while Basic is closed. Off by default.
-      </Text>
+      <AdaptiveText style={ui.title} baseFontSize={20}>
+        {t("notifications.title")}
+      </AdaptiveText>
+      <Text style={ui.caption}>{t("notifications.caption")}</Text>
 
       <Pressable
         style={styles.row}
@@ -135,15 +143,10 @@ export function NotificationsSettingsScreen() {
         disabled={busy || Platform.OS !== "android"}
       >
         <View style={styles.rowText}>
-          <Text style={styles.label}>Closed-app alerts</Text>
-          <Text style={styles.hint}>
-            Opaque only (“New Pay message”). Never amounts, memos, or addresses.
-            Classic Bitcoin receives still catch up when you open the app — no tray.
-            {"\n\n"}
-            Tip: do not use system “Force stop”. Swipe away is fine. On Xiaomi /
-            Samsung, allow unrestricted battery for Basic so tray wake works
-            while the app is closed.
-          </Text>
+          <AdaptiveText style={styles.label} baseFontSize={15}>
+            {t("notifications.closedAppAlerts")}
+          </AdaptiveText>
+          <Text style={styles.hint}>{t("notifications.closedAppHint")}</Text>
         </View>
         {busy ? (
           <ActivityIndicator color={colors.fg} />
@@ -160,12 +163,12 @@ export function NotificationsSettingsScreen() {
 
       <Text style={styles.meta}>{permLabel}</Text>
       {!hasIdentity ? (
-        <Text style={styles.meta}>Nostr identity: missing — required to register.</Text>
+        <Text style={styles.meta}>{t("notifications.nostrMissing")}</Text>
       ) : (
-        <Text style={styles.meta}>Nostr identity: ready (npub registered in background).</Text>
+        <Text style={styles.meta}>{t("notifications.nostrReady")}</Text>
       )}
       {Platform.OS !== "android" ? (
-        <Text style={styles.meta}>This build is not Android — toggle disabled.</Text>
+        <Text style={styles.meta}>{t("notifications.notAndroidBuild")}</Text>
       ) : null}
     </ScreenChrome>
   );

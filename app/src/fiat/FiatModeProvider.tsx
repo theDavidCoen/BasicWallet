@@ -32,6 +32,7 @@ import {
 } from "../chat/chatInboundFiat";
 import { hasOutboundPayInFlight } from "../chat/chatStore";
 import { getNetworkConfig } from "../config/network";
+import { useI18n } from "../i18n";
 import { DEFAULT_MIN_VTXO_SATS } from "../wallet/arkMultiSend";
 import { getOpenWalletMode } from "../wallet/hdWallet";
 import { useWallet } from "../wallet/WalletProvider";
@@ -212,6 +213,7 @@ async function readDepixAtomicFromVtxos(
 }
 
 export function FiatModeProvider({ children }: { children: ReactNode }) {
+  const { t } = useI18n();
   const {
     wallet,
     selectedWallet,
@@ -850,10 +852,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       // confirmExit's spendable-balance check clears the overlay.
       if (jobBusyRef.current) {
         if (opts?.throwOnError) {
-          throw new Error("A conversion is already in progress.");
+          throw new Error(t("fiat.alertBusyBody"));
         }
         if (!opts?.quiet) {
-          Alert.alert("Busy", "A conversion is already in progress.");
+          Alert.alert(t("fiat.alertBusyTitle"), t("fiat.alertBusyBody"));
         } else {
           console.warn("[basic] fiat job skip (busy)", kind);
         }
@@ -874,8 +876,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
         setConverting(true);
         setConvertingMessage(
           kind === "enter"
-            ? `Converting to ${fiatStableForNetwork(networkId).displayCode}…`
-            : "Converting to sats…",
+            ? t("fiat.convertingToStable", {
+                code: fiatStableForNetwork(networkId).displayCode,
+              })
+            : t("fiat.convertingToSats"),
         );
       } else {
         console.warn("[basic] fiat quiet job start", kind, String(amount));
@@ -924,7 +928,25 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
           signal: ac.signal,
           onProgress: (p: DepixSwapProgress) => {
             if (p.swapId) activeSwapIdRef.current = p.swapId;
-            if (!quiet) setConvertingMessage(p.message);
+            if (!quiet) {
+              const progressMsg =
+                p.phase === "quoting"
+                  ? t("fiat.progressPreparing")
+                  : p.phase === "funding"
+                    ? t("fiat.progressFunding")
+                    : p.phase === "filled"
+                      ? t("fiat.progressComplete")
+                      : p.phase === "cancelled"
+                        ? p.message === "Stopped"
+                          ? t("fiat.progressStopped")
+                          : t("fiat.progressCancelled")
+                        : p.phase === "waiting"
+                          ? p.message === "Stopping…"
+                            ? t("fiat.progressStopping")
+                            : t("fiat.progressWaiting")
+                          : p.message;
+              setConvertingMessage(progressMsg);
+            }
           },
         });
         activeSwapIdRef.current = result.swapId;
@@ -1144,7 +1166,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
           throw new Error("Conversion incomplete");
         }
         if (!quiet) {
-          Alert.alert("Conversion incomplete", "Your previous mode was kept.");
+          Alert.alert(
+            t("fiat.alertIncompleteTitle"),
+            t("fiat.alertIncompleteBody"),
+          );
         }
         return false;
       } catch (e) {
@@ -1159,9 +1184,9 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
             /funding needs .+wallet holds 0/i.test(msg) ||
             /funding needs .+,\s*wallet holds 0/i.test(msg);
           Alert.alert(
-            "Conversion failed",
+            t("fiat.alertFailedTitle"),
             fundingEmpty
-              ? `Stable balance is not spendable yet (ASP still settling). Wait a few seconds and try Exit again.\n\n${msg}`
+              ? t("fiat.alertFailedSettling", { msg })
               : msg,
           );
         }
@@ -1205,19 +1230,20 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       applyLocalDepixReceive,
       adoptLiveDepixDisplay,
       bumpActivity,
+      t,
     ],
   );
 
   const confirmEnter = useCallback(async (): Promise<boolean> => {
     if (!walletId || selectedWallet?.kind !== "arkade") {
-      Alert.alert("Fiat Mode", "Select an Arkade wallet first.");
+      Alert.alert(t("fiat.alertSelectArkadeTitle"), t("fiat.alertSelectArkadeBody"));
       return false;
     }
     if (state?.fiatMode || converting) return false;
     if (!isFiatModeSwapAvailable(networkId)) {
       Alert.alert(
-        "Fiat Mode unavailable",
-        "No stable swap card is pinned for this network.",
+        t("fiat.alertUnavailableTitle"),
+        t("fiat.alertUnavailableBody"),
       );
       return false;
     }
@@ -1225,8 +1251,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     const sats = balanceSats ?? 0;
     if (sats < minBase) {
       Alert.alert(
-        "Not enough sats",
-        `Need at least ${minBase.toLocaleString("en-US")} sats to enter Fiat Mode.`,
+        t("fiat.alertNotEnoughTitle"),
+        t("fiat.alertNotEnoughBody", {
+          minSats: minBase.toLocaleString("en-US"),
+        }),
       );
       return false;
     }
@@ -1244,6 +1272,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     balanceSats,
     runJob,
     networkId,
+    t,
   ]);
 
   const confirmExit = useCallback(async (): Promise<boolean> => {
@@ -1254,7 +1283,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     // Never fund from lastGood / optimistic display alone — ASP often returns
     // empty assets while UI still shows $59.xx → "funding needs N, wallet holds 0".
     setConverting(true);
-    setConvertingMessage("Checking spendable balance…");
+    setConvertingMessage(t("fiat.checkingSpendable"));
     try {
       const liveAtomic = await readLiveSpendableAtomic();
       if (!(liveAtomic > 0n)) {
@@ -1267,8 +1296,8 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
           return true;
         }
         Alert.alert(
-          "Balance not ready",
-          `${code} is not spendable yet (network still settling). Wait a few seconds and try Exit again.`,
+          t("fiat.alertBalanceNotReadyTitle"),
+          t("fiat.alertBalanceNotReadyBody", { code }),
         );
         return false;
       }
@@ -1288,7 +1317,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       setConverting(false);
       setConvertingMessage("");
       const msg = e instanceof Error ? e.message : String(e);
-      Alert.alert("Conversion failed", msg);
+      Alert.alert(t("fiat.alertFailedTitle"), msg);
       return false;
     }
   }, [
@@ -1301,6 +1330,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     clearOptimisticDepix,
     depixDisplay,
     patchState,
+    t,
   ]);
 
   const cancelConverting = useCallback(() => {
@@ -1909,9 +1939,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
       // Ignore only ≤ dust carrier. Show while excess remains (α67 hid ≥minBase
       // so a stuck 1299 convert left Home with no caption).
       if (!(sats > dust)) return null;
+      const satsLabel = sats.toLocaleString("en-US");
       return sats < minBase
-        ? `+ ${sats.toLocaleString("en-US")} sats to be converted after minimum is reached`
-        : `+ ${sats.toLocaleString("en-US")} sats to be converted`;
+        ? t("home.pendingConvertBelowMin", { sats: satsLabel })
+        : t("home.pendingConvert", { sats: satsLabel });
     }
 
     if (bitcoinMaxiMode && maxiPendingDisplay != null && maxiPendingDisplay >= 0.01) {
@@ -1922,7 +1953,10 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
               maximumFractionDigits: 2,
             })
           : String(maxiPendingDisplay);
-      return `+ ${qty} ${stable.ticker} to be converted after minimum is reached`;
+      return t("home.pendingConvertStableBelowMin", {
+        qty,
+        ticker: stable.ticker,
+      });
     }
     return null;
   }, [
@@ -1933,6 +1967,7 @@ export function FiatModeProvider({ children }: { children: ReactNode }) {
     bitcoinMaxiMode,
     maxiPendingDisplay,
     networkId,
+    t,
   ]);
 
   const value = useMemo<FiatModeContextValue>(

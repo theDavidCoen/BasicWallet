@@ -30,11 +30,13 @@ import { createFeeOnchainWallet, pollFeeBalance } from "../exit/feeWallet";
 import { loadExitPackage, readExitPackageMeta } from "../exit/packageStore";
 import type { ExitPackageMeta } from "../exit/packageStore";
 import { useWallet } from "../wallet/WalletProvider";
+import { AdaptiveText, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
 export function UnilateralExitFundScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
   const route = useRoute<RouteProp<RootStackParamList, "UnilateralExitFund">>();
   const expectedRecovered = route.params?.expectedRecoveredSats;
   const expectedFunding = route.params?.expectedFundingSats;
@@ -60,11 +62,11 @@ export function UnilateralExitFundScreen() {
       return;
     }
     if (!unlocked.current) {
-      const auth = await requireExitAuth("Confirm open exit package");
+      const auth = await requireExitAuth(t("exit.confirmOpenPackage"));
       if (!auth.ok) {
         setLoading(false);
-        Alert.alert("Cancelled", auth.reason, [
-          { text: "OK", onPress: () => navigation.goBack() },
+        Alert.alert(t("exit.cancelled"), auth.reason, [
+          { text: t("exit.ok"), onPress: () => navigation.goBack() },
         ]);
         return;
       }
@@ -79,9 +81,10 @@ export function UnilateralExitFundScreen() {
       const d = Math.abs(loaded.totals.recoveredSats - expectedRecovered);
       if (d > 1_000) {
         setMismatch(
-          `Stored package recovers ~${loaded.totals.recoveredSats.toLocaleString("en-US")} sats, ` +
-            `but prepare reported ~${expectedRecovered.toLocaleString("en-US")}. ` +
-            `A background auto-prepare may have overwritten it — go back and prepare again.`,
+          t("exit.mismatchRecovered", {
+            stored: loaded.totals.recoveredSats.toLocaleString("en-US"),
+            expected: expectedRecovered.toLocaleString("en-US"),
+          }),
         );
       } else {
         setMismatch(null);
@@ -90,7 +93,10 @@ export function UnilateralExitFundScreen() {
       const d = Math.abs(loaded.totals.fundingRequiredSats - expectedFunding);
       setMismatch(
         d > 1_000
-          ? `Fee need on disk ~${loaded.totals.fundingRequiredSats.toLocaleString("en-US")} vs prepare ~${expectedFunding.toLocaleString("en-US")}.`
+          ? t("exit.mismatchFunding", {
+              stored: loaded.totals.fundingRequiredSats.toLocaleString("en-US"),
+              expected: expectedFunding.toLocaleString("en-US"),
+            })
           : null,
       );
     } else {
@@ -154,7 +160,7 @@ export function UnilateralExitFundScreen() {
   const onCopyFee = useCallback(async () => {
     if (!feeAddress) return;
     await Clipboard.setStringAsync(feeAddress);
-    Alert.alert("Copied", "Fee address copied");
+    Alert.alert(t("exit.copiedTitle"), t("exit.feeAddressCopied"));
   }, [feeAddress]);
 
   if (loading) {
@@ -170,13 +176,13 @@ export function UnilateralExitFundScreen() {
   if (!walletId || !pkg) {
     return (
       <ScreenChrome logoScale={0.77}>
-        <ExitStepHeader step={EXIT_STEP.fundFees} title="FUND FEE ADDRESS" />
-        <Text style={ui.caption}>No stored package. Complete step 2 first.</Text>
+        <ExitStepHeader step={EXIT_STEP.fundFees} title={t("exit.fundTitle")} />
+        <Text style={ui.caption}>{t("exit.noPackageStep2")}</Text>
         <Pressable
           style={ui.primaryBtn}
           onPress={() => navigation.navigate("UnilateralExitPrepare")}
         >
-          <Text style={ui.primaryBtnText}>Go to prepare</Text>
+          <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("exit.goToPrepare")}</AdaptiveText>
         </Pressable>
       </ScreenChrome>
     );
@@ -192,41 +198,44 @@ export function UnilateralExitFundScreen() {
       >
         <ExitStepHeader
           step={EXIT_STEP.fundFees}
-          title="FUND FEE ADDRESS"
-          caption="This address is derived from your Arkade seed — it is yours. Send onchain sats here so Basic can pay miner fees when executing."
+          title={t("exit.fundTitle")}
+          caption={t("exit.fundCaption")}
         />
 
         <Text style={styles.metaCenter}>
-          Sweep → {pkg.sweepAddress.slice(0, 18)}… · recover ~
-          {pkg.totals.recoveredSats.toLocaleString("en-US")} sats
-          {meta?.source ? ` · ${meta.source}` : ""}
+          {t("exit.fundMeta", {
+            addr: pkg.sweepAddress.slice(0, 18),
+            sats: pkg.totals.recoveredSats.toLocaleString("en-US"),
+            source: meta?.source ? ` · ${meta.source}` : "",
+          })}
         </Text>
 
         {mismatch ? <Text style={styles.err}>{mismatch}</Text> : null}
 
         <View style={ui.cardMuted}>
-          <Text style={styles.label}>Your fee address</Text>
+          <Text style={styles.label}>{t("exit.yourFeeAddress")}</Text>
           <Text style={styles.mono} selectable>
             {feeAddress ?? "…"}
           </Text>
           <Text style={[styles.meta, { marginTop: 12 }]}>
-            Balance:{" "}
-            {feeBalance === null ? "…" : `${feeBalance.toLocaleString("en-US")} sats`}
-            {" · need "}
-            {needed.toLocaleString("en-US")}
-            {funded ? " · ready" : " · waiting for funds"}
+            {t("exit.feeBalanceLine", {
+              balance: feeBalance === null ? "…" : `${feeBalance.toLocaleString("en-US")} sats`,
+              needed: needed.toLocaleString("en-US"),
+              state: funded ? t("exit.feeReady") : t("exit.feeWaiting"),
+            })}
           </Text>
           <Pressable style={ui.secondaryBtn} onPress={() => void onCopyFee()}>
-            <Text style={ui.secondaryBtnText}>Copy fee address</Text>
+            <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>
+              {t("exit.copyFeeAddress")}
+            </AdaptiveText>
           </Pressable>
         </View>
 
         <Text style={styles.warn}>
-          Fund from an external wallet. When the balance covers the need, continue to Start
-          execute (step 4).
+          {t("exit.fundWarn")}
         </Text>
 
-        <Text style={styles.label}>Esplora API (optional override)</Text>
+        <Text style={styles.label}>{t("exit.esploraLabel")}</Text>
         <TextInput
           value={esploraOverride}
           onChangeText={setEsploraOverride}
@@ -242,7 +251,7 @@ export function UnilateralExitFundScreen() {
             style={ui.secondaryBtn}
             onPress={() => navigation.navigate("UnilateralExitPrepare")}
           >
-            <Text style={ui.secondaryBtnText}>Re-prepare package</Text>
+            <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>{t("exit.repreparePackage")}</AdaptiveText>
           </Pressable>
         ) : null}
 
@@ -255,13 +264,13 @@ export function UnilateralExitFundScreen() {
             })
           }
         >
-          <Text style={ui.primaryBtnText}>
+          <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>
             {mismatch
-              ? "Fix package first"
+              ? t("exit.fixPackageFirst")
               : funded
-                ? "Continue · start execute"
-                : "Waiting for fee funds…"}
-          </Text>
+                ? t("exit.continueStartExecute")
+                : t("exit.waitingFeeFunds")}
+          </AdaptiveText>
         </Pressable>
       </ScrollView>
     </ScreenChrome>

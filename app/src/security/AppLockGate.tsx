@@ -12,6 +12,7 @@ import * as ScreenCapture from "expo-screen-capture";
 import * as LocalAuthentication from "expo-local-authentication";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BasicLogo } from "../components/BasicLogo";
+import { AdaptiveText, useI18n } from "../i18n";
 import { UnlockPinPad } from "../screens/SetAppPinScreen";
 import { hasAppPin } from "./appPin";
 import { getOsBiometricsStatus } from "./osBiometrics";
@@ -40,6 +41,7 @@ import { colors } from "../theme/colors";
  */
 export function AppLockGate({ children }: { children: ReactNode }) {
   const insets = useSafeAreaInsets();
+  const { t } = useI18n();
   const { hasWallet, ready } = useWallet();
   const [lockEnabled, setLockEnabled] = useState(true);
   const [pinAvailable, setPinAvailable] = useState(false);
@@ -103,19 +105,17 @@ export function AppLockGate({ children }: { children: ReactNode }) {
           setMode("pin");
           return;
         }
-        setError(
-          "OS biometrics are off and no App PIN is set. Enable Face ID / fingerprint in system settings, or set an App PIN in Privacy.",
-        );
+        setError(t("privacy.bioOffNoPin"));
         return;
       }
       // Always disable OS/Knox device-PIN fallback. App PIN is in-app only.
       const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: "Unlock Basic",
-        cancelLabel: "Cancel",
+        promptMessage: t("privacy.unlockPrompt"),
+        cancelLabel: t("common.cancel"),
         disableDeviceFallback: true,
       });
       if (!result.success) {
-        setError("Authentication failed");
+        setError(t("privacy.authFailed"));
         // After cancel/fail, offer our PIN pad when configured.
         if (pinSet) setMode("pin");
         return;
@@ -134,7 +134,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
       setBusy(false);
       unlockingRef.current = false;
     }
-  }, [afterUnlock, refreshPinAvailable]);
+  }, [afterUnlock, refreshPinAvailable, t]);
 
   const enterLocked = useCallback(async () => {
     if (unlockedRef.current) return;
@@ -242,10 +242,10 @@ export function AppLockGate({ children }: { children: ReactNode }) {
           ) : (
             <>
               <BasicLogo scale={1.2} />
-              <Text style={styles.title}>UNLOCK</Text>
-              <Text style={styles.sub}>
-                Confirm it&apos;s you.{"\n"}Biometrics preferred.
-              </Text>
+              <AdaptiveText style={styles.title} baseFontSize={20}>
+                {t("privacy.unlockTitle")}
+              </AdaptiveText>
+              <Text style={styles.sub}>{t("privacy.unlockSub")}</Text>
 
               <Pressable
                 style={[styles.bioHit, busy && { opacity: 0.6 }]}
@@ -255,7 +255,9 @@ export function AppLockGate({ children }: { children: ReactNode }) {
                 {busy ? (
                   <ActivityIndicator color={colors.fg} />
                 ) : (
-                  <Text style={styles.bioLabel}>Touch / Face ID</Text>
+                  <AdaptiveText style={styles.bioLabel} baseFontSize={12}>
+                    {t("privacy.touchFaceId")}
+                  </AdaptiveText>
                 )}
               </Pressable>
 
@@ -269,12 +271,12 @@ export function AppLockGate({ children }: { children: ReactNode }) {
                     setMode("pin");
                   }}
                 >
-                  <Text style={styles.pinLinkText}>Use PIN instead</Text>
+                  <AdaptiveText style={styles.pinLinkText} baseFontSize={14}>
+                    {t("privacy.usePinInstead")}
+                  </AdaptiveText>
                 </Pressable>
               ) : (
-                <Text style={styles.hint}>
-                  Optional app PIN: Settings → Privacy → App PIN
-                </Text>
+                <Text style={styles.hint}>{t("privacy.optionalPinHint")}</Text>
               )}
             </>
           )}

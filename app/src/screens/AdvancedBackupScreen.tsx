@@ -13,12 +13,12 @@ import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
 import { mnemonicFromEntropy, randomEntropy32 } from "../onboarding/mnemonicFromEntropy";
 import {
-  PASSPHRASE_LOSS_CAPTION,
   readBackupMeta,
   type BackupPackageMeta,
 } from "../nostr/backupPackage";
 import { setBackupReminderPending } from "../wallet/backupReminder";
 import { getMnemonicSource } from "../wallet/mnemonicMeta";
+import { AdaptiveText, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 import { useWallet } from "../wallet/WalletProvider";
@@ -30,6 +30,7 @@ import { useWallet } from "../wallet/WalletProvider";
  */
 export function AdvancedBackupScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
   const { hasWallet, provisionFromMnemonic } = useWallet();
   const [meta, setMeta] = useState<BackupPackageMeta | null>(null);
   const [passkeyOn, setPasskeyOn] = useState(false);
@@ -56,7 +57,7 @@ export function AdvancedBackupScreen() {
       await setBackupReminderPending();
       navigation.reset({ index: 0, routes: [{ name: "Ready" }] });
     } catch (e) {
-      Alert.alert("Could not create wallet", e instanceof Error ? e.message : "Unknown error");
+      Alert.alert(t("backup.couldNotCreateWallet"), e instanceof Error ? e.message : t("common.unknownError"));
     } finally {
       setBusy(false);
     }
@@ -65,40 +66,32 @@ export function AdvancedBackupScreen() {
   return (
     <ScreenChrome logoScale={0.77}>
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-        <Text style={ui.title}>BACKUP</Text>
+        <Text style={ui.title}>{t("backup.title")}</Text>
         {passkeyOn ? (
-          <Text style={ui.caption}>
-            Passkey by default.{"\n"}Encrypted package for cross-OS restore.
-          </Text>
+          <Text style={ui.caption}>{t("backup.captionPasskey")}</Text>
         ) : !hasWallet ? (
-          <Text style={ui.caption}>
-            Choose a backup path now,{"\n"}or continue and set one up later.
-          </Text>
+          <Text style={ui.caption}>{t("backup.captionOnboarding")}</Text>
         ) : (
-          <Text style={ui.caption}>Encrypted package for cross-OS restore.</Text>
+          <Text style={ui.caption}>{t("backup.captionDefault")}</Text>
         )}
 
         <BackupCard
-          title="Passkey / OS cloud"
+          title={t("backup.passkeyTitle")}
           active={passkeyOn}
-          body={
-            passkeyOn
-              ? "Synced across devices via your OS passkey."
-              : "Not enabled on this device. Create with passkey or use another path."
-          }
+          body={passkeyOn ? t("backup.passkeyBodyOn") : t("backup.passkeyBodyOff")}
         />
 
         <BackupCard
-          title="Nostr relays"
+          title={t("backup.nostrTitle")}
           active={nostrOn}
-          body={"Encrypted backup over Nostr.\nPassphrase required — save offline."}
+          body={t("backup.nostrBody")}
           onPress={() => navigation.navigate("NostrBackup")}
         />
 
         <BackupCard
-          title="Home server"
+          title={t("backup.homeTitle")}
           active={homeOn}
-          body={"Encrypted backup to your server.\nPassphrase required — save offline."}
+          body={t("backup.homeBody")}
           onPress={() => navigation.navigate("HomeServerBackup")}
         />
 
@@ -107,14 +100,16 @@ export function AdvancedBackupScreen() {
             style={ui.cardMuted}
             onPress={() => navigation.navigate("ExportRecoveryPhrase")}
           >
-            <Text style={ui.cardTitle}>Export recovery phrase</Text>
+            <AdaptiveText style={ui.cardTitle} baseFontSize={14}>
+              {t("backup.exportPhraseTitle")}
+            </AdaptiveText>
             <Text style={[ui.caption, { textAlign: "left", marginBottom: 0 }]}>
-              24 words for this Arkade wallet.{"\n"}After biometrics / PIN.
+              {t("backup.exportPhraseBody")}
             </Text>
           </Pressable>
         ) : null}
 
-        <Text style={[ui.hint, { marginTop: 24 }]}>{PASSPHRASE_LOSS_CAPTION}</Text>
+        <Text style={[ui.hint, { marginTop: 24 }]}>{t("backup.passphraseLossCaption")}</Text>
 
         {!hasWallet ? (
           <Pressable
@@ -125,7 +120,9 @@ export function AdvancedBackupScreen() {
             {busy ? (
               <ActivityIndicator color="#000" />
             ) : (
-              <Text style={ui.primaryBtnText}>Continue without backup</Text>
+              <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>
+                {t("backup.continueWithoutBackup")}
+              </AdaptiveText>
             )}
           </Pressable>
         ) : null}
@@ -145,14 +142,17 @@ function BackupCard({
   active: boolean;
   onPress?: () => void;
 }) {
+  const { t } = useI18n();
   const content = (
     <>
       <View style={styles.cardHeader}>
-        <Text style={[ui.cardTitle, { marginBottom: 0, flex: 1 }]}>{title}</Text>
+        <AdaptiveText style={[ui.cardTitle, { marginBottom: 0, flex: 1 }]} baseFontSize={14}>
+          {title}
+        </AdaptiveText>
         {active ? (
           <View style={styles.activeRow}>
             <View style={styles.activeDot} />
-            <Text style={styles.activeLabel}>active</Text>
+            <Text style={styles.activeLabel}>{t("backup.active")}</Text>
           </View>
         ) : null}
       </View>

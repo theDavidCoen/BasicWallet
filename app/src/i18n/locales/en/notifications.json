@@ -1,0 +1,21 @@
+{
+  "title": "NOTIFICATIONS",
+  "caption": "Opt-in wake for Pay in Chat and contact share\nwhile Basic is closed. Off by default.",
+  "closedAppAlerts": "Closed-app alerts",
+  "closedAppHint": "Opaque only (“New Pay message”). Never amounts, memos, or addresses. Classic Bitcoin receives still catch up when you open the app — no tray.\n\nTip: do not use system “Force stop”. Swipe away is fine. On Xiaomi / Samsung, allow unrestricted battery for Basic so tray wake works while the app is closed.",
+  "permAndroidOnly": "Android only",
+  "permGranted": "OS permission: granted",
+  "permDenied": "OS permission: denied — enable in system settings",
+  "permStatus": "OS permission: %{status}",
+  "alertAndroidOnlyTitle": "Android only",
+  "alertAndroidOnlyBody": "Closed-app push ships on Android first. iOS later.",
+  "alertNostrRequiredTitle": "Nostr identity required",
+  "alertNostrRequiredBody": "Create or import a Nostr identity first (Settings → Nostr identity).",
+  "alertPermissionTitle": "Permission needed",
+  "alertPermissionBody": "Allow notifications in system settings to wake Basic for Pay messages while the app is closed.",
+  "alertRegisteredLocallyTitle": "Registered locally",
+  "alertRegisteredLocallyBody": "Could not reach the notifier yet:\n%{reason}\n\nTray wake needs Firebase credentials + a deployed sidecar. Classic catch-up on open still works.",
+  "nostrMissing": "Nostr identity: missing — required to register.",
+  "nostrReady": "Nostr identity: ready (npub registered in background).",
+  "notAndroidBuild": "This build is not Android — toggle disabled."
+}

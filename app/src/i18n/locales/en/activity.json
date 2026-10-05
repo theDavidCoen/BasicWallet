@@ -1,4 +1,17 @@
 {
   "title": "ACTIVITY",
-  "exportCsv": "CSV"
+  "exportCsv": "CSV",
+  "exportCsvA11y": "Export activity CSV",
+  "noWalletSelected": "No wallet selected",
+  "loadFailed": "Could not load activity",
+  "emptyArkade": "No activity yet.\nFund boarding or receive on Arkade.",
+  "emptyLightning": "No Lightning activity yet.\nCreate or pay an invoice.",
+  "captionSuffixArkade": " · boarding, receives, sends",
+  "captionSuffixLightning": " · Lightning invoices",
+  "searchPlaceholder": "Search notes / title…",
+  "clearSearchA11y": "Clear search",
+  "exportTitle": "Export",
+  "exportEmpty": "No activity to export.",
+  "exportFailedTitle": "Export failed",
+  "exportFailedBody": "Could not share CSV."
 }

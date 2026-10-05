@@ -33,6 +33,7 @@ import {
 import { ensureNostrIdentity, loadNostrKeyPairForCrypto } from "../nostr/identityStore";
 import { uploadHomeBackupCipher } from "../nostr/homeServerWebdav";
 import { requireUserPresence } from "../security/userPresence";
+import { AdaptiveText, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 import { useWallet } from "../wallet/WalletProvider";
@@ -43,6 +44,7 @@ import { hasMnemonic } from "../security/mnemonicStore";
 
 export function BackupRecapScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
   const route = useRoute<RouteProp<RootStackParamList, "BackupRecap">>();
   const params = route.params;
   const { hasWallet, provisionFromMnemonic, noteLocalSend } = useWallet();
@@ -76,15 +78,15 @@ export function BackupRecapScreen() {
       return;
     }
     try {
-      const auth = await requireUserPresence("Confirm to reveal backup secrets");
+      const auth = await requireUserPresence(t("backup.confirmRevealSecrets"));
       if (!auth.ok) {
-        Alert.alert("Authentication required", "Secrets were not shown.");
+        Alert.alert(t("backup.authRequired"), t("backup.secretsNotShown"));
         return;
       }
       await ensureNostrIdentity();
       const pair = await loadNostrKeyPairForCrypto();
       if (!pair?.nsec) {
-        Alert.alert("No identity", "Could not load nsec.");
+        Alert.alert(t("backup.noIdentityTitle"), t("backup.noIdentityBody"));
         return;
       }
       try {
@@ -97,8 +99,8 @@ export function BackupRecapScreen() {
       setRevealed(true);
     } catch (e) {
       Alert.alert(
-        "Could not reveal secrets",
-        e instanceof Error ? e.message : "Unknown error",
+        t("backup.couldNotReveal"),
+        e instanceof Error ? e.message : t("common.unknownError"),
       );
     }
   }
@@ -106,7 +108,7 @@ export function BackupRecapScreen() {
   async function onCopyNsec() {
     if (!nsec) return;
     await Clipboard.setStringAsync(nsec);
-    Alert.alert("Copied", "nsec copied. Clear the clipboard when you are done.");
+    Alert.alert(t("backup.copiedTitle"), t("backup.copiedNsecBody"));
   }
 
   async function onEnable() {
@@ -114,11 +116,11 @@ export function BackupRecapScreen() {
     try {
       const auth = await requireUserPresence(
         params.channel === "home"
-          ? "Confirm to enable home server backup"
-          : "Confirm to enable Nostr backup",
+          ? t("backup.confirmEnableHome")
+          : t("backup.confirmEnableNostr"),
       );
       if (!auth.ok) {
-        Alert.alert("Authentication required", "Backup was not enabled.");
+        Alert.alert(t("backup.authRequired"), t("backup.backupNotEnabled"));
         return;
       }
 
@@ -205,8 +207,8 @@ export function BackupRecapScreen() {
       navigation.replace("BackupEnabledSuccess", { channel: params.channel });
     } catch (e) {
       Alert.alert(
-        "Could not enable backup",
-        e instanceof Error ? e.message : "Unknown error",
+        t("backup.couldNotEnable"),
+        e instanceof Error ? e.message : t("common.unknownError"),
       );
     } finally {
       setBusy(false);
@@ -214,7 +216,7 @@ export function BackupRecapScreen() {
   }
 
   const enableLabel =
-    params.channel === "home" ? "Enable Home Backup" : "Enable Nostr Backup";
+    params.channel === "home" ? t("backup.enableHomeBackup") : t("backup.enableNostrBackup");
 
   return (
     <ScreenChrome logoScale={0.77}>
@@ -222,32 +224,30 @@ export function BackupRecapScreen() {
         contentContainerStyle={{ paddingBottom: 40 }}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={ui.title}>BACKUP RECAP</Text>
-        <Text style={ui.caption}>
-          Save your nsec and backup passphrase offline.{"\n"}
-          Together they encrypt your login package.{"\n"}
-          Lose either and you can lose access to wallets restored from this backup.
-        </Text>
+        <Text style={ui.title}>{t("backup.recapTitle")}</Text>
+        <Text style={ui.caption}>{t("backup.recapCaption")}</Text>
 
         <Pressable
           style={styles.revealRow}
           onPress={() => void onRevealSecrets()}
           accessibilityRole="button"
           accessibilityLabel={
-            revealed ? "Hide secrets" : "Reveal Secrets"
+            revealed ? t("backup.hideSecretsA11y") : t("backup.revealSecretsA11y")
           }
         >
-          <Text style={styles.revealLabel}>Reveal Secrets</Text>
+          <AdaptiveText style={styles.revealLabel} baseFontSize={14}>
+            {t("backup.revealSecrets")}
+          </AdaptiveText>
           <Text style={styles.chevron}>{revealed ? "⌃" : "⌄"}</Text>
         </Pressable>
 
         {revealed && nsec ? (
           <View style={styles.secretsCard}>
-            <Text style={styles.secretLabel}>nsec · tap to copy</Text>
+            <Text style={styles.secretLabel}>{t("backup.nsecTapCopy")}</Text>
             <Pressable
               onPress={() => void onCopyNsec()}
               accessibilityRole="button"
-              accessibilityLabel="Copy nsec"
+              accessibilityLabel={t("backup.copyNsecA11y")}
             >
               <Text style={styles.nsec} selectable={false}>
                 {nsec}
@@ -255,7 +255,7 @@ export function BackupRecapScreen() {
             </Pressable>
 
             <Text style={[styles.secretLabel, { marginTop: 16 }]}>
-              backup passphrase · copy manually
+              {t("backup.passphraseManualCopy")}
             </Text>
             <Text style={styles.passphrase} selectable>
               {params.passphrase}
@@ -271,7 +271,7 @@ export function BackupRecapScreen() {
           {busy ? (
             <ActivityIndicator color="#000" />
           ) : (
-            <Text style={ui.primaryBtnText}>{enableLabel}</Text>
+            <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{enableLabel}</AdaptiveText>
           )}
         </Pressable>
       </ScrollView>

@@ -1,4 +1,5 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { AdaptiveText, useI18n } from "../../i18n";
 import { colors } from "../../theme/colors";
 
 export function ChatRequestCard({
@@ -27,27 +28,31 @@ export function ChatRequestCard({
   primaryAmount?: string | null;
   secondaryAmount?: string | null;
 }) {
+  const { t } = useI18n();
   const pending =
     status === "pending" || status === "pending_out" || status === "sent";
   const statusLabel =
     status === "paid"
-      ? "paid"
+      ? t("chat.requestPaid")
       : status === "declined"
-        ? "declined"
+        ? t("chat.requestDeclined")
         : status === "expired"
-          ? "expired"
+          ? t("chat.requestExpired")
           : status === "pending_out"
-            ? "Waiting for network"
-            : "pending";
+            ? t("chat.requestWaitingNetwork")
+            : t("chat.requestPending");
   const primary =
     primaryAmount?.trim() || `${amountSats.toLocaleString("en-US")} sats`;
   const secondary = secondaryAmount?.trim() || null;
 
   return (
     <View style={[styles.card, outgoing ? styles.out : styles.in]}>
-      <Text style={[styles.kicker, outgoing && styles.kickerOut]}>
-        Request · {statusLabel}
-      </Text>
+      <AdaptiveText
+        style={[styles.kicker, outgoing && styles.kickerOut]}
+        baseFontSize={11}
+      >
+        {statusLabel}
+      </AdaptiveText>
       <Text style={[styles.amount, outgoing && styles.amountOut]}>{primary}</Text>
       {secondary ? (
         <Text style={[styles.secondary, outgoing && styles.secondaryOut]}>
@@ -66,26 +71,32 @@ export function ChatRequestCard({
             disabled={busy}
             onPress={onDecline}
             accessibilityRole="button"
-            accessibilityLabel="Decline"
+            accessibilityLabel={t("chat.decline")}
           >
-            <Text style={styles.declineText}>Decline</Text>
+            <AdaptiveText style={styles.declineText} baseFontSize={14}>
+              {t("chat.decline")}
+            </AdaptiveText>
           </Pressable>
           <Pressable
             style={styles.payBtn}
             disabled={busy}
             onPress={onPay}
             accessibilityRole="button"
-            accessibilityLabel="Pay"
+            accessibilityLabel={t("chat.pay")}
           >
             {busy ? (
               <View style={styles.busyCol}>
                 <ActivityIndicator color="#000" />
                 {busyLabel ? (
-                  <Text style={styles.busyText}>{busyLabel}</Text>
+                  <AdaptiveText style={styles.busyText} baseFontSize={10}>
+                    {busyLabel}
+                  </AdaptiveText>
                 ) : null}
               </View>
             ) : (
-              <Text style={styles.payText}>Pay</Text>
+              <AdaptiveText style={styles.payText} baseFontSize={14}>
+                {t("chat.pay")}
+              </AdaptiveText>
             )}
           </Pressable>
         </View>

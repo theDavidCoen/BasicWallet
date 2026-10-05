@@ -4,6 +4,7 @@ import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import * as ScreenCapture from "expo-screen-capture";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { AdaptiveText, useI18n } from "../i18n";
 import { hasAppPin } from "../security/appPin";
 import {
   getOsBiometricsStatus,
@@ -21,6 +22,7 @@ import { ui } from "../theme/ui";
 /** Penpot 05c Privacy — biometrics lock · app PIN · block screenshots. */
 export function PrivacyScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
   const [settings, setSettings] = useState<PrivacySettings | null>(null);
   const [pinSet, setPinSet] = useState(false);
   const [osBio, setOsBio] = useState<OsBiometricsStatus | null>(null);
@@ -55,32 +57,34 @@ export function PrivacyScreen() {
   if (!settings) {
     return (
       <ScreenChrome logoScale={0.77}>
-        <Text style={ui.title}>PRIVACY</Text>
+        <AdaptiveText style={ui.title} baseFontSize={20}>
+          {t("privacy.title")}
+        </AdaptiveText>
       </ScreenChrome>
     );
   }
 
   const osBioHint = !osBio
-    ? "Checking device…"
+    ? t("privacy.checkingDevice")
     : osBio.available
-      ? "OS Face ID / fingerprint: on"
+      ? t("privacy.osBioOn")
       : osBio.hasHardware
-        ? "OS biometrics: off — enable in system settings (recommended)"
-        : "This device has no biometric hardware — use App PIN";
+        ? t("privacy.osBioOff")
+        : t("privacy.osBioNone");
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={ui.title}>PRIVACY</Text>
-      <Text style={ui.caption}>
-        Unlock also opens Nostr backup sync{"\n"}for this session.
-      </Text>
+      <AdaptiveText style={ui.title} baseFontSize={20}>
+        {t("privacy.title")}
+      </AdaptiveText>
+      <Text style={ui.caption}>{t("privacy.caption")}</Text>
 
       <ToggleRow
-        label="Biometrics lock"
+        label={t("privacy.biometricsLock")}
         hint={
           osBio?.available
-            ? "Require biometrics when opening the app"
-            : `${osBioHint}. App PIN unlocks when biometrics are off.`
+            ? t("privacy.biometricsHintOn")
+            : t("privacy.biometricsHintOff", { osBioHint })
         }
         value={settings.biometricsLock}
         onChange={(v) => void apply({ biometricsLock: v })}
@@ -89,10 +93,10 @@ export function PrivacyScreen() {
       {osBio && !osBio.available ? (
         <Pressable style={styles.row} onPress={() => void openOsSecuritySettings()}>
           <View style={styles.rowText}>
-            <Text style={styles.label}>Enable OS biometrics</Text>
-            <Text style={styles.hint}>
-              Recommended. Opens system settings so you can enroll Face ID / fingerprint.
-            </Text>
+            <AdaptiveText style={styles.label} baseFontSize={15}>
+              {t("privacy.enableOsBiometrics")}
+            </AdaptiveText>
+            <Text style={styles.hint}>{t("privacy.enableOsBiometricsHint")}</Text>
           </View>
           <Text style={styles.chevron}>›</Text>
         </Pressable>
@@ -105,15 +109,17 @@ export function PrivacyScreen() {
         }
       >
         <View style={styles.rowText}>
-          <Text style={styles.label}>App PIN</Text>
+          <AdaptiveText style={styles.label} baseFontSize={15}>
+            {t("privacy.appPin")}
+          </AdaptiveText>
           <Text style={styles.hint}>
             {pinSet
               ? osBio?.available
-                ? "Set · tap to change. Unlock fallback when biometrics fail."
-                : "Set · required while OS biometrics are off."
+                ? t("privacy.appPinSetBioOn")
+                : t("privacy.appPinSetBioOff")
               : osBio?.available
-                ? "Not set · optional fallback when biometrics fail"
-                : "Not set · required while OS biometrics are off"}
+                ? t("privacy.appPinUnsetBioOn")
+                : t("privacy.appPinUnsetBioOff")}
           </Text>
         </View>
         <Text style={styles.chevron}>›</Text>
@@ -125,11 +131,13 @@ export function PrivacyScreen() {
           onPress={() => navigation.navigate("SetAppPin", { intent: "remove" })}
         >
           <View style={styles.rowText}>
-            <Text style={styles.label}>Remove app PIN</Text>
+            <AdaptiveText style={styles.label} baseFontSize={15}>
+              {t("privacy.removeAppPin")}
+            </AdaptiveText>
             <Text style={styles.hint}>
               {osBio?.available
-                ? "Biometrics-only unlock after removal"
-                : "Not recommended while OS biometrics are off"}
+                ? t("privacy.removeAppPinHintBioOn")
+                : t("privacy.removeAppPinHintBioOff")}
             </Text>
           </View>
           <Text style={styles.chevron}>›</Text>
@@ -137,8 +145,8 @@ export function PrivacyScreen() {
       ) : null}
 
       <ToggleRow
-        label="Block screenshots"
-        hint="FLAG_SECURE while Basic is open"
+        label={t("privacy.blockScreenshots")}
+        hint={t("privacy.blockScreenshotsHint")}
         value={settings.blockScreenshots}
         onChange={(v) => void apply({ blockScreenshots: v })}
       />
@@ -160,7 +168,9 @@ function ToggleRow({
   return (
     <Pressable style={styles.row} onPress={() => onChange(!value)}>
       <View style={styles.rowText}>
-        <Text style={styles.label}>{label}</Text>
+        <AdaptiveText style={styles.label} baseFontSize={15}>
+          {label}
+        </AdaptiveText>
         <Text style={styles.hint}>{hint}</Text>
       </View>
       <Switch

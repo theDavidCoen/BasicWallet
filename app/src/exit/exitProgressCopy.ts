@@ -4,6 +4,7 @@
 
 import type { ExecutorEvent } from "@arkade-os/sdk";
 import type { ArkadeNetworkId } from "../config/network";
+import type { TranslateFn } from "../i18n/i18n";
 
 /** Typical block interval for ETA (not consensus). */
 export function approxBlockIntervalSec(networkId: ArkadeNetworkId): number {
@@ -11,25 +12,39 @@ export function approxBlockIntervalSec(networkId: ArkadeNetworkId): number {
 }
 
 /** Human remaining time: days / hours / minutes (never bare "0s"). */
-export function formatRemainingDuration(totalSec: number): string {
+export function formatRemainingDuration(totalSec: number, t: TranslateFn): string {
   const s = Math.max(0, Math.ceil(totalSec));
   if (s < 60) {
-    return s <= 0 ? "less than 1 minute" : `about ${s} second${s === 1 ? "" : "s"}`;
+    return s <= 0
+      ? t("exit.durLessThanMinute")
+      : s === 1
+        ? t("exit.durAboutSecond", { count: s })
+        : t("exit.durAboutSeconds", { count: s });
   }
   const mins = Math.ceil(s / 60);
   if (mins < 60) {
-    return `about ${mins} minute${mins === 1 ? "" : "s"}`;
+    return mins === 1
+      ? t("exit.durAboutMinute", { count: mins })
+      : t("exit.durAboutMinutes", { count: mins });
   }
   const hours = Math.floor(mins / 60);
   const remMins = mins % 60;
   if (hours < 48) {
-    if (remMins === 0) return `about ${hours} hour${hours === 1 ? "" : "s"}`;
-    return `about ${hours}h ${remMins}m`;
+    if (remMins === 0) {
+      return hours === 1
+        ? t("exit.durAboutHour", { count: hours })
+        : t("exit.durAboutHours", { count: hours });
+    }
+    return t("exit.durHoursMins", { hours, mins: remMins });
   }
   const days = Math.floor(hours / 24);
   const remHours = hours % 24;
-  if (remHours === 0) return `about ${days} day${days === 1 ? "" : "s"}`;
-  return `about ${days}d ${remHours}h`;
+  if (remHours === 0) {
+    return days === 1
+      ? t("exit.durAboutDay", { count: days })
+      : t("exit.durAboutDays", { count: days });
+  }
+  return t("exit.durDaysHours", { days, hours: remHours });
 }
 
 export type CsvLockSummary = {
@@ -50,6 +65,7 @@ export function csvLockSummaryFromEvents(
     tipHeight?: number | null;
     nowSec?: number;
   },
+  t: TranslateFn,
 ): CsvLockSummary | null {
   const settled = new Set<number>();
   for (const e of events) {
@@ -87,42 +103,54 @@ export function csvLockSummaryFromEvents(
     const tip = opts.tipHeight;
     if (tip == null || !Number.isFinite(tip)) {
       return {
-        headline: `CSV lock · until block ${maturesAtHeight}`,
-        detail: "Fetching chain tip for blocks remaining…",
+        headline: t("exit.csvUntilBlock", { height: maturesAtHeight }),
+        detail: t("exit.csvFetchingTip"),
       };
     }
     const blocksLeft = Math.max(0, maturesAtHeight - tip);
     const etaSec = blocksLeft * approxBlockIntervalSec(opts.networkId);
     if (blocksLeft === 0) {
       return {
-        headline: "CSV lock · mature (0 blocks left)",
-        detail: "Sweep can broadcast on the next poll",
+        headline: t("exit.csvMature"),
+        detail: t("exit.csvSweepNextPoll"),
       };
     }
     return {
-      headline: `CSV lock · ${blocksLeft.toLocaleString("en-US")} block${blocksLeft === 1 ? "" : "s"} left`,
-      detail: `${formatRemainingDuration(etaSec)} · target height ${maturesAtHeight.toLocaleString("en-US")} (tip ${tip.toLocaleString("en-US")})`,
+      headline:
+        blocksLeft === 1
+          ? t("exit.csvBlocksLeft", { count: blocksLeft })
+          : t("exit.csvBlocksLeftPlural", { count: blocksLeft }),
+      detail: t("exit.csvEtaDetail", {
+        eta: formatRemainingDuration(etaSec, t),
+        height: maturesAtHeight.toLocaleString("en-US"),
+        tip: tip.toLocaleString("en-US"),
+      }),
     };
   }
 
   if (maturesAtTime != null) {
     const left = Math.max(0, maturesAtTime - nowSec);
-    // Time-based CSV (BIP68 seconds): no block count in the lock itself.
-    // Still give a rough block-equivalent for Mutinynet/mainnet pacing.
     const blockSec = approxBlockIntervalSec(opts.networkId);
     const approxBlocks = Math.max(0, Math.ceil(left / blockSec));
     return {
-      headline: `CSV lock · ${formatRemainingDuration(left)} remaining`,
+      headline: t("exit.csvTimeRemaining", {
+        eta: formatRemainingDuration(left, t),
+      }),
       detail:
         left <= 0
-          ? "Sweep can broadcast on the next poll"
-          : `~${approxBlocks.toLocaleString("en-US")} block${approxBlocks === 1 ? "" : "s"} at ~${blockSec}s/block (time-based lock)`,
+          ? t("exit.csvSweepNextPoll")
+          : approxBlocks === 1
+            ? t("exit.csvApproxBlocks", { count: approxBlocks, sec: blockSec })
+            : t("exit.csvApproxBlocksPlural", {
+                count: approxBlocks,
+                sec: blockSec,
+              }),
     };
   }
 
   return {
-    headline: "CSV lock · waiting",
-    detail: "Timelock details not in event yet",
+    headline: t("exit.csvWaiting"),
+    detail: t("exit.csvNoDetails"),
   };
 }
 
@@ -142,14 +170,18 @@ export function dedupeExitEventsForDisplay(
   return out.slice(-limit);
 }
 
-export function formatExitEventLine(ev: ExecutorEvent, nowSec = Date.now() / 1000): string {
+export function formatExitEventLine(
+  ev: ExecutorEvent,
+  t: TranslateFn,
+  nowSec = Date.now() / 1000,
+): string {
   const parts: string[] = [`#${ev.stepIndex}`, ev.kind, ev.status];
   if (ev.txid) parts.push(`${ev.txid.slice(0, 10)}…`);
   if (ev.reason) parts.push(ev.reason);
   if (ev.status === "waiting_csv") {
     if (ev.maturesAtTime != null) {
       const left = Math.max(0, ev.maturesAtTime - nowSec);
-      parts.push(formatRemainingDuration(left));
+      parts.push(formatRemainingDuration(left, t));
     } else if (ev.maturesAtHeight != null) {
       parts.push(`until block ${ev.maturesAtHeight}`);
     }
@@ -157,10 +189,13 @@ export function formatExitEventLine(ev: ExecutorEvent, nowSec = Date.now() / 100
   return parts.join(" · ");
 }
 
-export function exitJobCaption(jobs: { status: string; events: ExecutorEvent[] }[]): string {
+export function exitJobCaption(
+  jobs: { status: string; events: ExecutorEvent[] }[],
+  t: TranslateFn,
+): string {
   const active = jobs.filter((j) => j.status === "running" || j.status === "stopped");
   if (active.length === 0) {
-    return "Last resort if the Arkade operator is down or uncooperative. Start a unilateral exit when you need to sweep to your recovery address without the operator.";
+    return t("exit.captionIdle");
   }
   const running = active.filter((j) => j.status === "running");
   const stopped = active.filter((j) => j.status === "stopped");
@@ -169,12 +204,12 @@ export function exitJobCaption(jobs: { status: string; events: ExecutorEvent[] }
       j.events.some((e) => e.status === "waiting_csv"),
     );
     if (waitingCsv) {
-      return "Unilateral exit is waiting for the onchain CSV timelock. Cards show blocks left and a time estimate. You can leave this screen; progress continues in the background.";
+      return t("exit.captionWaitingCsv");
     }
-    return "Unilateral exit is broadcasting and confirming onchain transactions. You can leave this screen; progress continues in the background.";
+    return t("exit.captionBroadcasting");
   }
   if (stopped.length > 0) {
-    return "Unilateral exit paused. Tap Resume on a card to continue, or Start another unilateral exit for new funds.";
+    return t("exit.captionPaused");
   }
-  return "Unilateral exit status.";
+  return t("exit.captionStatus");
 }

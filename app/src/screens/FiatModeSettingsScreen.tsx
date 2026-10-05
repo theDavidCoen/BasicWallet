@@ -16,6 +16,7 @@ import {
   formatBrlDisplay,
   isFiatModeSwapAvailable,
 } from "../fiat/depixAssets";
+import { AdaptiveText, useI18n } from "../i18n";
 import type { RootNav } from "../navigation/types";
 import { requireUserPresence } from "../security/userPresence";
 import { useWallet } from "../wallet/WalletProvider";
@@ -61,6 +62,7 @@ function StableCard({ title, status, selected, soon, onSelect }: StableCardProps
 
 export function FiatModeSettingsScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
   const { selectedWallet } = useWallet();
   const network = getNetworkConfig();
   const swapOk = isFiatModeSwapAvailable(network.id);
@@ -90,16 +92,22 @@ export function FiatModeSettingsScreen() {
 
   const activeStatus =
     status === "converting"
-      ? "Converting…"
+      ? t("fiat.statusConverting")
       : fiatMode
-        ? `On${depixDisplay != null ? ` · ${formatBrlDisplay(depixDisplay, { networkId: network.id })}` : ""}`
+        ? depixDisplay != null
+          ? t("fiat.statusOnWithBalance", {
+              balance: formatBrlDisplay(depixDisplay, { networkId: network.id }),
+            })
+          : t("fiat.statusOn")
         : !swapOk
-          ? "Unavailable"
-          : "Off";
+          ? t("fiat.statusUnavailable")
+          : t("fiat.statusOff");
 
   const canConfirm =
     arkade && selected === activeId && !converting && !busy && (fiatMode || swapOk);
-  const confirmLabel = fiatMode ? "Exit Fiat Mode" : "Enter Fiat Mode";
+  const confirmLabel = fiatMode
+    ? t("fiat.exitFiatMode")
+    : t("fiat.enterFiatMode");
 
   const isMutiny = network.id === "mutinynet";
 
@@ -108,14 +116,14 @@ export function FiatModeSettingsScreen() {
     setBusy(true);
     try {
       if (fiatMode) {
-        const auth = await requireUserPresence("Confirm Exit Fiat Mode");
+        const auth = await requireUserPresence(t("fiat.confirmExitPresence"));
         if (!auth.ok) {
           return;
         }
         const ok = await confirmExit();
         if (ok) navigation.navigate("Home");
       } else {
-        const auth = await requireUserPresence("Confirm Enter Fiat Mode");
+        const auth = await requireUserPresence(t("fiat.confirmEnterPresence"));
         if (!auth.ok) {
           return;
         }
@@ -131,63 +139,80 @@ export function FiatModeSettingsScreen() {
   if (converting) {
     return (
       <ScreenChrome logoScale={0.77}>
-        <Text style={styles.title}>FIAT MODE</Text>
-        <Text style={styles.caption}>Converting… please wait.</Text>
+        <AdaptiveText style={styles.title} baseFontSize={18}>
+          {t("fiat.title")}
+        </AdaptiveText>
+        <Text style={styles.caption}>{t("fiat.convertingWait")}</Text>
       </ScreenChrome>
     );
   }
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={styles.title}>FIAT MODE</Text>
+      <AdaptiveText style={styles.title} baseFontSize={18}>
+        {t("fiat.title")}
+      </AdaptiveText>
+      <Text style={styles.caption}>{t("fiat.captionIntro")}</Text>
       <Text style={styles.caption}>
-        Fiat Mode lets this wallet hold a stable unit instead of bitcoin, so
-        everyday amounts feel familiar while you still use Bitcoin under the hood
-        on Arkade.
-      </Text>
-      <Text style={styles.caption}>
-        {isMutiny
-          ? "On Mutinynet, Fiat Mode uses USDT and shows USD. No KYC is applied."
-          : "On mainnet, Brazilian Real (BRL via DePix) is available. More stables can join later. No KYC is applied."}{" "}
-        You can leave Fiat Mode anytime and switch back to sats.
+        {isMutiny ? t("fiat.captionMutiny") : t("fiat.captionMainnet")}{" "}
+        {t("fiat.captionLeave")}
       </Text>
       <Text style={[styles.caption, styles.captionLast]}>
-        Select a stable below, then confirm on this page. Back cancels without
-        changing mode. Conversion cost is about {feePct}%, minimum {minSats} sats.
+        {t("fiat.captionSelect", { feePct, minSats })}
       </Text>
 
       {isMutiny ? (
         <>
           <StableCard
-            title="USDT (USD)"
+            title={t("fiat.cardUsdtUsd")}
             status={activeStatus}
             selected={selected === "usd"}
             onSelect={() => setSelected("usd")}
           />
-          <StableCard title="BRL (DePix)" status="N/A on Mutinynet" soon />
-          <StableCard title="Other stablecoin" status="Soon" soon />
+          <StableCard
+            title={t("fiat.cardBrlDepix")}
+            status={t("fiat.statusNaMutiny")}
+            soon
+          />
+          <StableCard
+            title={t("fiat.cardOtherStable")}
+            status={t("fiat.statusSoon")}
+            soon
+          />
         </>
       ) : (
         <>
           <StableCard
-            title="BRL (DePix)"
+            title={t("fiat.cardBrlDepix")}
             status={activeStatus}
             selected={selected === "brl"}
             onSelect={() => setSelected("brl")}
           />
-          <StableCard title="USDT" status="Soon" soon />
-          <StableCard title="Other stablecoin" status="Soon" soon />
+          <StableCard
+            title={t("fiat.cardUsdt")}
+            status={t("fiat.statusSoon")}
+            soon
+          />
+          <StableCard
+            title={t("fiat.cardOtherStable")}
+            status={t("fiat.statusSoon")}
+            soon
+          />
         </>
       )}
 
       {selected === activeId && swapOk ? (
         <View style={styles.feeCard}>
-          <Text style={styles.feeTitle}>What it costs to switch</Text>
+          <Text style={styles.feeTitle}>{t("fiat.feeTitle")}</Text>
           <Text style={styles.feeLine}>
-            About {(fiatFeeBps(network.id) / 100).toFixed(1)}% conversion fee
+            {t("fiat.feeLinePct", {
+              feePct: (fiatFeeBps(network.id) / 100).toFixed(1),
+            })}
           </Text>
           <Text style={styles.feeLine}>
-            Minimum {fiatMinBaseSats(network.id).toLocaleString("en-US")} sats
+            {t("fiat.feeLineMin", {
+              minSats: fiatMinBaseSats(network.id).toLocaleString("en-US"),
+            })}
           </Text>
         </View>
       ) : null}
@@ -199,19 +224,17 @@ export function FiatModeSettingsScreen() {
           accessibilityRole="button"
           accessibilityLabel={confirmLabel}
         >
-          <Text style={styles.primaryLabel}>{confirmLabel}</Text>
+          <AdaptiveText style={styles.primaryLabel} baseFontSize={15}>
+            {confirmLabel}
+          </AdaptiveText>
         </Pressable>
       ) : null}
 
       {!arkade ? (
-        <Text style={styles.footnote}>
-          Fiat Mode needs an Arkade wallet selected on Home.
-        </Text>
+        <Text style={styles.footnote}>{t("fiat.footnoteNeedsArkade")}</Text>
       ) : (
         <Text style={styles.footnote}>
-          {isMutiny
-            ? "USDT is the active Fiat Mode path on Mutinynet."
-            : "Cards will let you choose which stable to use. For now only BRL is active on mainnet."}
+          {isMutiny ? t("fiat.footnoteMutiny") : t("fiat.footnoteMainnet")}
         </Text>
       )}
     </ScreenChrome>

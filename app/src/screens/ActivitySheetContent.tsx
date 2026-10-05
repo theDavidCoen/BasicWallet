@@ -25,7 +25,7 @@ import { filterFiatModeActivityRows } from "../fiat/fiatActivityFilter";
 import { useFiatMode } from "../fiat/FiatModeProvider";
 import { useWallet } from "../wallet/WalletProvider";
 import { activityDepixAtomic, formatActivityAmountSigned, formatWhen, statusLabel } from "../wallet/activity";
-import { useI18n } from "../i18n";
+import { AdaptiveText, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 
 type Props = {
@@ -56,7 +56,7 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
   const loadFromDb = useCallback(() => {
     if (!selectedWallet) {
       setRows([]);
-      setError("No wallet selected");
+      setError(t("activity.noWalletSelected"));
       return;
     }
     try {
@@ -71,10 +71,10 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
       );
       void backfillMissingFiat(network.id);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load activity");
+      setError(e instanceof Error ? e.message : t("activity.loadFailed"));
       setRows([]);
     }
-  }, [selectedWallet, network.id, query, fiatMode, depixDisplay]);
+  }, [selectedWallet, network.id, query, fiatMode, depixDisplay, t]);
 
   useEffect(() => {
     setLoading(true);
@@ -130,7 +130,7 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
   async function onExportCsv() {
     if (exporting) return;
     if (rows.length === 0) {
-      Alert.alert("Export", "No activity to export.");
+      Alert.alert(t("activity.exportTitle"), t("activity.exportEmpty"));
       return;
     }
     setExporting(true);
@@ -142,8 +142,8 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
       });
     } catch (e) {
       Alert.alert(
-        "Export failed",
-        e instanceof Error ? e.message : "Could not share CSV.",
+        t("activity.exportFailedTitle"),
+        e instanceof Error ? e.message : t("activity.exportFailedBody"),
       );
     } finally {
       setExporting(false);
@@ -152,8 +152,8 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
 
   const emptyHint =
     selectedWallet?.kind === "lightning"
-      ? "No Lightning activity yet.\nCreate or pay an invoice."
-      : "No activity yet.\nFund boarding or receive on Arkade.";
+      ? t("activity.emptyLightning")
+      : t("activity.emptyArkade");
 
   return (
     <View style={styles.root}>
@@ -165,7 +165,7 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
           onPress={() => void onExportCsv()}
           disabled={exporting || loading}
           hitSlop={8}
-          accessibilityLabel="Export activity CSV"
+          accessibilityLabel={t("activity.exportCsvA11y")}
         >
           {exporting ? (
             <ActivityIndicator color={colors.fg} size="small" />
@@ -174,19 +174,22 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
           )}
         </Pressable>
       </View>
-      <Text style={styles.caption}>
-        {selectedWallet?.label ?? "Wallet"}
-        {selectedWallet?.kind === "lightning"
-          ? " · Lightning invoices"
-          : " · boarding, receives, sends"}
-      </Text>
+      <AdaptiveText style={styles.caption} baseFontSize={12} fit={false} numberOfLines={2}>
+        {selectedWallet
+          ? `${selectedWallet.label}${
+              selectedWallet.kind === "lightning"
+                ? t("activity.captionSuffixLightning")
+                : t("activity.captionSuffixArkade")
+            }`
+          : t("activity.noWalletSelected")}
+      </AdaptiveText>
 
       <View style={styles.searchWrap}>
         <TextInput
           style={styles.search}
           value={query}
           onChangeText={setQuery}
-          placeholder="Search notes / title…"
+          placeholder={t("activity.searchPlaceholder")}
           placeholderTextColor={colors.hint}
           autoCapitalize="none"
           autoCorrect={false}
@@ -196,7 +199,7 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
             style={styles.searchClear}
             onPress={() => setQuery("")}
             hitSlop={10}
-            accessibilityLabel="Clear search"
+            accessibilityLabel={t("activity.clearSearchA11y")}
           >
             <Text style={styles.searchClearLabel}>×</Text>
           </Pressable>
@@ -224,7 +227,11 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
             ) : undefined
           }
           contentContainerStyle={rows.length === 0 ? styles.emptyWrap : styles.list}
-          ListEmptyComponent={<Text style={styles.empty}>{error ?? emptyHint}</Text>}
+          ListEmptyComponent={
+            <AdaptiveText style={styles.empty} fit={false} numberOfLines={4} baseFontSize={14}>
+              {error ?? emptyHint}
+            </AdaptiveText>
+          }
           renderItem={({ item }) => {
             const amountLabel = formatActivityAmountSigned(item, network.id);
             const depix = activityDepixAtomic(item, network.id);

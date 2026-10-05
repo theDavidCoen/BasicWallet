@@ -25,7 +25,6 @@ import { getNetworkConfig } from "../config/network";
 import {
   decryptPackage,
   DEFAULT_NOSTR_RELAYS,
-  PASSPHRASE_LOSS_CAPTION,
   armBackupMetaAfterRestore,
   readCipherBlob,
   restoreContactsFromPackage,
@@ -41,6 +40,7 @@ import { syncContactsDirectoryNow } from "../contacts/contactsNostrSync";
 import { persistBackupPassphrase } from "../nostr/backupSync";
 import { hasMnemonic, storeMnemonic } from "../security/mnemonicStore";
 import { requireUserPresence } from "../security/userPresence";
+import { AdaptiveText, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 import { createHdWalletFromMnemonic } from "../wallet/hdWallet";
@@ -48,23 +48,6 @@ import { setMnemonicSource } from "../wallet/mnemonicMeta";
 import { useWallet } from "../wallet/WalletProvider";
 
 type Tab = "seed" | "nsec" | "server";
-
-const CAPTION_SEED_ONLY =
-  "Import one Arkade wallet from a BIP39 recovery phrase\n" +
-  "(12 or 24 words).";
-
-const CAPTION_SEED_PASSKEY_NOTE =
-  "\n\nA passkey alone is not enough to recover imported wallets after a fresh install. " +
-  "Export each wallet’s seed, or use Backup (Nostr / Home server) from onboarding.";
-
-const CAPTION_FULL =
-  "Restore with seed imports just a single Arkade wallet.\n" +
-  "With nsec and Server options you can restore encrypted\n" +
-  "packages with multiple wallets.";
-
-const CAPTION_FULL_PASSKEY_NOTE =
-  "\n\nA passkey alone does not restore non-PRF wallets after a fresh install. " +
-  "Prefer one of the backup methods below.";
 
 export type RestoreWalletMode = "seed" | "full";
 
@@ -88,6 +71,7 @@ export function RestoreWalletContent({
   onNostrIdentityOnly,
   embedded = false,
 }: Props) {
+  const { t } = useI18n();
   const seedOnly = mode === "seed";
   const { hasWallet, beginQuietImportSync, selectWallet } = useWallet();
 
@@ -103,32 +87,38 @@ export function RestoreWalletContent({
 
   // Sheet add-wallet: IMPORT. Settings → Arkade → Restore Wallet: RESTORE WALLET.
   const title = useMemo(() => {
-    if (!seedOnly) return "RESTORE";
-    return embedded ? "IMPORT WALLET" : "RESTORE WALLET";
-  }, [embedded, seedOnly]);
+    if (!seedOnly) return t("restore.title");
+    return embedded ? t("restore.titleImport") : t("restore.titleWallet");
+  }, [embedded, seedOnly, t]);
   const caption = useMemo(() => {
     if (seedOnly) {
-      return CAPTION_SEED_ONLY + (passkeyInstall ? CAPTION_SEED_PASSKEY_NOTE : "");
+      return (
+        t("restore.captionSeedOnly") +
+        (passkeyInstall ? t("restore.captionSeedPasskeyNote") : "")
+      );
     }
-    return CAPTION_FULL + (passkeyInstall ? CAPTION_FULL_PASSKEY_NOTE : "");
-  }, [passkeyInstall, seedOnly]);
+    return (
+      t("restore.captionFull") +
+      (passkeyInstall ? t("restore.captionFullPasskeyNote") : "")
+    );
+  }, [passkeyInstall, seedOnly, t]);
 
   async function onRestoreSeed() {
     const words = seed.trim().split(/\s+/).filter(Boolean);
     if (words.length !== 12 && words.length !== 24) {
-      Alert.alert("Invalid phrase", "Enter 12 or 24 BIP39 words.");
+      Alert.alert(t("restore.invalidPhraseTitle"), t("restore.invalidPhraseBody"));
       return;
     }
     setBusy(true);
     try {
-      const auth = await requireUserPresence("Confirm to restore Arkade wallet");
+      const auth = await requireUserPresence(t("restore.confirmRestoreSeed"));
       if (!auth.ok) {
-        Alert.alert("Authentication required", "Wallet was not restored.");
+        Alert.alert(t("restore.authRequired"), t("restore.walletNotRestored"));
         return;
       }
       await setMnemonicSource("device-only");
       const networkId = getNetworkConfig().id;
-      const label = hasWallet ? "Restored" : "Personal";
+      const label = hasWallet ? t("restore.labelRestored") : t("common.personal");
       const record = insertWallet(networkId, {
         kind: "arkade",
         label,
@@ -138,10 +128,10 @@ export function RestoreWalletContent({
       setSelectedWalletId(networkId, record.id);
       beginQuietImportSync();
       await selectWallet(record.id);
-      Alert.alert("Restored", "Arkade wallet imported.");
+      Alert.alert(t("restore.restoredTitle"), t("restore.restoredSeedBody"));
       onDone(seedOnly || hasWallet ? "Home" : "Ready");
     } catch (e) {
-      Alert.alert("Restore failed", e instanceof Error ? e.message : "Unknown error");
+      Alert.alert(t("restore.restoreFailed"), e instanceof Error ? e.message : t("common.unknownError"));
     } finally {
       setBusy(false);
     }
@@ -149,18 +139,18 @@ export function RestoreWalletContent({
 
   async function onRestoreNsec() {
     if (!nsec.trim()) {
-      Alert.alert("Required", "nsec is required.");
+      Alert.alert(t("restore.requiredTitle"), t("restore.nsecRequired"));
       return;
     }
     if (!passphrase) {
-      Alert.alert("Required", "Backup passphrase is required.");
+      Alert.alert(t("restore.requiredTitle"), t("restore.passphraseRequired"));
       return;
     }
     setBusy(true);
     try {
-      const auth = await requireUserPresence("Confirm to restore from Nostr package");
+      const auth = await requireUserPresence(t("restore.confirmRestoreNostr"));
       if (!auth.ok) {
-        Alert.alert("Authentication required", "Package was not restored.");
+        Alert.alert(t("restore.authRequired"), t("restore.packageNotRestored"));
         return;
       }
 
@@ -176,8 +166,8 @@ export function RestoreWalletContent({
       if (!blob) {
         await syncContactsDirectoryNow("restore-nsec-only");
         Alert.alert(
-          "Identity imported",
-          "No encrypted package on this device or relays. Use Seed for one Arkade wallet, or enable backup after create.",
+          t("restore.identityImportedTitle"),
+          t("restore.identityImportedBody"),
         );
         onNostrIdentityOnly?.();
         return;
@@ -205,7 +195,7 @@ export function RestoreWalletContent({
           insertWallet(networkId, {
             id: entry.id,
             kind,
-            label: entry.label || (i === 0 ? "Personal" : `Wallet ${i + 1}`),
+            label: entry.label || (i === 0 ? t("common.personal") : t("restore.walletN", { n: i + 1 })),
             tag: entry.tag,
           });
         await storeMnemonic(record.id, entry.mnemonic);
@@ -251,18 +241,22 @@ export function RestoreWalletContent({
 
       const labels = pkg.wallets.map((w) => w.label || "?").join(", ");
       Alert.alert(
-        "Restored",
-        `${pkg.wallets.length} wallet(s): ${labels}` +
-          (notesRestored ? `\n${notesRestored} note(s)` : "") +
-          (contactsRestored ? `\n${contactsRestored} contact(s)` : "") +
-          (prefsRestored ? `\n${prefsRestored} Fiat/Maxi pref(s)` : "") +
-          "\n\nNostr backup is on (same passphrase as restore).",
+        t("restore.restoredTitle"),
+        t("restore.restoredPackageBody", {
+          count: pkg.wallets.length,
+          labels,
+          notes: notesRestored ? t("restore.notesLine", { count: notesRestored }) : "",
+          contacts: contactsRestored
+            ? t("restore.contactsLine", { count: contactsRestored })
+            : "",
+          prefs: prefsRestored ? t("restore.prefsLine", { count: prefsRestored }) : "",
+        }),
       );
       onDone("Ready");
     } catch (e) {
       Alert.alert(
-        "Restore failed",
-        e instanceof Error ? e.message : "Wrong passphrase or corrupt package",
+        t("restore.restoreFailed"),
+        e instanceof Error ? e.message : t("restore.wrongPassphrase"),
       );
     } finally {
       setBusy(false);
@@ -271,7 +265,7 @@ export function RestoreWalletContent({
 
   async function onRestoreServer() {
     if (!serverUrl.trim()) {
-      Alert.alert("Required", "Enter the home server / Nextcloud URL.");
+      Alert.alert(t("restore.requiredTitle"), t("restore.serverUrlRequired"));
       return;
     }
     const creds = {
@@ -281,25 +275,25 @@ export function RestoreWalletContent({
     };
     if (!homeCredsHaveAuth(creds)) {
       Alert.alert(
-        "Credentials required",
-        "Enter username + application password, or a Bearer access token.",
+        t("restore.credentialsRequiredTitle"),
+        t("restore.credentialsRequiredBody"),
       );
       return;
     }
     if (!nsec.trim()) {
-      Alert.alert("Required", "nsec is required to unwrap the package.");
+      Alert.alert(t("restore.requiredTitle"), t("restore.nsecRequiredUnwrap"));
       return;
     }
     if (!passphrase) {
-      Alert.alert("Required", "Backup passphrase is required.");
+      Alert.alert(t("restore.requiredTitle"), t("restore.passphraseRequired"));
       return;
     }
 
     setBusy(true);
     try {
-      const auth = await requireUserPresence("Confirm to restore from home server");
+      const auth = await requireUserPresence(t("restore.confirmRestoreHome"));
       if (!auth.ok) {
-        Alert.alert("Authentication required", "Package was not restored.");
+        Alert.alert(t("restore.authRequired"), t("restore.packageNotRestored"));
         return;
       }
 
@@ -326,7 +320,7 @@ export function RestoreWalletContent({
           insertWallet(networkId, {
             id: entry.id,
             kind,
-            label: entry.label || (i === 0 ? "Personal" : `Wallet ${i + 1}`),
+            label: entry.label || (i === 0 ? t("common.personal") : t("restore.walletN", { n: i + 1 })),
             tag: entry.tag,
           });
         await storeMnemonic(record.id, entry.mnemonic);
@@ -374,18 +368,22 @@ export function RestoreWalletContent({
 
       const labels = pkg.wallets.map((w) => w.label || "?").join(", ");
       Alert.alert(
-        "Restored",
-        `${pkg.wallets.length} wallet(s): ${labels}` +
-          (notesRestored ? `\n${notesRestored} note(s)` : "") +
-          (contactsRestored ? `\n${contactsRestored} contact(s)` : "") +
-          (prefsRestored ? `\n${prefsRestored} Fiat/Maxi pref(s)` : "") +
-          "\n\nHome server backup is on (same URL + passphrase as restore).",
+        t("restore.restoredTitle"),
+        t("restore.restoredHomeBody", {
+          count: pkg.wallets.length,
+          labels,
+          notes: notesRestored ? t("restore.notesLine", { count: notesRestored }) : "",
+          contacts: contactsRestored
+            ? t("restore.contactsLine", { count: contactsRestored })
+            : "",
+          prefs: prefsRestored ? t("restore.prefsLine", { count: prefsRestored }) : "",
+        }),
       );
       onDone("Ready");
     } catch (e) {
       Alert.alert(
-        "Restore failed",
-        e instanceof Error ? e.message : "Download or decrypt failed",
+        t("restore.restoreFailed"),
+        e instanceof Error ? e.message : t("restore.downloadDecryptFailed"),
       );
     } finally {
       setBusy(false);
@@ -399,14 +397,18 @@ export function RestoreWalletContent({
 
       {!seedOnly ? (
         <View style={styles.seg}>
-          {(["seed", "nsec", "server"] as Tab[]).map((t) => (
+          {(["seed", "nsec", "server"] as Tab[]).map((tabKey) => (
             <Pressable
-              key={t}
-              style={[styles.segBtn, tab === t && styles.segOn]}
-              onPress={() => setTab(t)}
+              key={tabKey}
+              style={[styles.segBtn, tab === tabKey && styles.segOn]}
+              onPress={() => setTab(tabKey)}
             >
-              <Text style={[styles.segText, tab === t && styles.segTextOn]}>
-                {t === "seed" ? "Seed" : t === "nsec" ? "nsec" : "Server"}
+              <Text style={[styles.segText, tab === tabKey && styles.segTextOn]}>
+                {tabKey === "seed"
+                  ? t("restore.tabSeed")
+                  : tabKey === "nsec"
+                    ? t("restore.tabNsec")
+                    : t("restore.tabServer")}
               </Text>
             </Pressable>
           ))}
@@ -415,7 +417,7 @@ export function RestoreWalletContent({
 
       {seedOnly || tab === "seed" ? (
         <>
-          <Text style={styles.label}>Arkade recovery phrase</Text>
+          <Text style={styles.label}>{t("restore.seedLabel")}</Text>
           <TextInput
             style={[styles.input, { minHeight: 100 }]}
             value={seed}
@@ -423,7 +425,7 @@ export function RestoreWalletContent({
             multiline
             autoCapitalize="none"
             autoCorrect={false}
-            placeholder="12 or 24 words…"
+            placeholder={t("restore.seedPlaceholder")}
             placeholderTextColor={colors.hint}
           />
           <Pressable
@@ -434,11 +436,11 @@ export function RestoreWalletContent({
             {busy ? (
               <ActivityIndicator color="#000" />
             ) : (
-              <Text style={ui.primaryBtnText}>
+              <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>
                 {seedOnly && embedded
-                  ? "Import Arkade wallet"
-                  : "Restore Arkade from seed"}
-              </Text>
+                  ? t("restore.importArkadeWallet")
+                  : t("restore.restoreArkadeFromSeed")}
+              </AdaptiveText>
             )}
           </Pressable>
         </>
@@ -447,9 +449,9 @@ export function RestoreWalletContent({
       {!seedOnly && tab === "nsec" ? (
         <>
           <Text style={[ui.hint, { marginTop: 8, marginBottom: 4 }]}>
-            Multi-wallet encrypted package. Passphrase always required.
+            {t("restore.nsecHint")}
           </Text>
-          <Text style={styles.label}>nsec</Text>
+          <Text style={styles.label}>{t("restore.nsecLabel")}</Text>
           <TextInput
             style={[styles.input, styles.nsecInput]}
             value={nsec}
@@ -460,19 +462,19 @@ export function RestoreWalletContent({
             textContentType="none"
             secureTextEntry={false}
             multiline
-            placeholder="nsec1…"
+            placeholder={t("restore.nsecPlaceholder")}
             placeholderTextColor={colors.hint}
           />
           <Text style={[ui.hint, { marginTop: 6 }]}>
-            Must start with nsec1… (not npub). Export it before Reset if you have not already.
+            {t("restore.nsecMustStart")}
           </Text>
-          <Text style={styles.label}>backup passphrase · required</Text>
+          <Text style={styles.label}>{t("restore.passphraseRequiredLabel")}</Text>
           <PassphraseInput
             value={passphrase}
             onChangeText={setPassphrase}
             placeholder="••••••••••••"
           />
-          <Text style={[ui.hint, { marginTop: 12 }]}>{PASSPHRASE_LOSS_CAPTION}</Text>
+          <Text style={[ui.hint, { marginTop: 12 }]}>{t("restore.passphraseLossCaption")}</Text>
           <Pressable
             style={[ui.primaryBtn, busy && { opacity: 0.6 }]}
             disabled={busy}
@@ -481,7 +483,7 @@ export function RestoreWalletContent({
             {busy ? (
               <ActivityIndicator color="#000" />
             ) : (
-              <Text style={ui.primaryBtnText}>Restore package</Text>
+              <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("restore.restorePackage")}</AdaptiveText>
             )}
           </Pressable>
         </>
@@ -490,47 +492,47 @@ export function RestoreWalletContent({
       {!seedOnly && tab === "server" ? (
         <>
           <Text style={[ui.hint, { marginTop: 8 }]}>
-            Download the encrypted package via WebDAV (Nextcloud) or Bearer token, then unwrap with nsec + passphrase.
+            {t("restore.serverHint")}
           </Text>
-          <Text style={styles.label}>server URL</Text>
+          <Text style={styles.label}>{t("restore.serverUrlLabel")}</Text>
           <TextInput
             style={styles.input}
             value={serverUrl}
             onChangeText={setServerUrl}
             autoCapitalize="none"
-            placeholder="https://nextcloud.example"
+            placeholder={t("restore.serverUrlPlaceholder")}
             placeholderTextColor={colors.hint}
           />
-          <Text style={styles.label}>username</Text>
+          <Text style={styles.label}>{t("restore.usernameLabel")}</Text>
           <TextInput
             style={styles.input}
             value={serverUser}
             onChangeText={setServerUser}
             autoCapitalize="none"
-            placeholder="Nextcloud user"
+            placeholder={t("restore.usernamePlaceholder")}
             placeholderTextColor={colors.hint}
           />
-          <Text style={styles.label}>application password</Text>
+          <Text style={styles.label}>{t("restore.appPasswordLabel")}</Text>
           <TextInput
             style={styles.input}
             value={serverAppPassword}
             onChangeText={setServerAppPassword}
             autoCapitalize="none"
             secureTextEntry
-            placeholder="app password"
+            placeholder={t("restore.appPasswordPlaceholder")}
             placeholderTextColor={colors.hint}
           />
-          <Text style={styles.label}>or Bearer token</Text>
+          <Text style={styles.label}>{t("restore.orBearerLabel")}</Text>
           <TextInput
             style={styles.input}
             value={serverToken}
             onChangeText={setServerToken}
             autoCapitalize="none"
             secureTextEntry
-            placeholder="optional"
+            placeholder={t("restore.optionalPlaceholder")}
             placeholderTextColor={colors.hint}
           />
-          <Text style={styles.label}>nsec</Text>
+          <Text style={styles.label}>{t("restore.nsecLabel")}</Text>
           <TextInput
             style={[styles.input, styles.nsecInput]}
             value={nsec}
@@ -538,16 +540,16 @@ export function RestoreWalletContent({
             autoCapitalize="none"
             autoCorrect={false}
             multiline
-            placeholder="nsec1…"
+            placeholder={t("restore.nsecPlaceholder")}
             placeholderTextColor={colors.hint}
           />
-          <Text style={styles.label}>backup passphrase · required</Text>
+          <Text style={styles.label}>{t("restore.passphraseRequiredLabel")}</Text>
           <PassphraseInput
             value={passphrase}
             onChangeText={setPassphrase}
             placeholder="••••••••••••"
           />
-          <Text style={[ui.hint, { marginTop: 12 }]}>{PASSPHRASE_LOSS_CAPTION}</Text>
+          <Text style={[ui.hint, { marginTop: 12 }]}>{t("restore.passphraseLossCaption")}</Text>
           <Pressable
             style={[ui.primaryBtn, busy && { opacity: 0.6 }]}
             disabled={busy}
@@ -556,7 +558,7 @@ export function RestoreWalletContent({
             {busy ? (
               <ActivityIndicator color="#000" />
             ) : (
-              <Text style={ui.primaryBtnText}>Restore from server</Text>
+              <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("restore.restoreFromServer")}</AdaptiveText>
             )}
           </Pressable>
         </>
@@ -564,7 +566,7 @@ export function RestoreWalletContent({
 
       {!hasWallet && !seedOnly && onCreateInstead ? (
         <Text style={ui.footerLink} onPress={onCreateInstead}>
-          Create a new wallet instead
+          {t("restore.createInstead")}
         </Text>
       ) : null}
     </>

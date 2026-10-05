@@ -1,25 +1,27 @@
 import { StyleSheet, Text, View } from "react-native";
 import type { ChatMessageStatus } from "../../chat/types";
+import { AdaptiveText, useI18n } from "../../i18n";
 import { colors } from "../../theme/colors";
 
 function paymentTitle(
+  t: (scope: string) => string,
   outgoing: boolean,
   status: ChatMessageStatus | null | undefined,
   receivingLabel?: string | null,
 ): string {
   if (!outgoing) {
     if (status === "arriving") {
-      return receivingLabel?.trim() || "You are receiving…";
+      return receivingLabel?.trim() || t("chat.receivingEllipsis");
     }
-    if (status === "converting") return "Converting…";
-    return "You received";
+    if (status === "converting") return t("chat.converting");
+    return t("chat.youReceived");
   }
-  if (status === "converting") return "Converting…";
+  if (status === "converting") return t("chat.converting");
   if (status === "sending" || status === "pending" || status === "pending_out") {
-    return "Sending…";
+    return t("chat.sending");
   }
-  if (status === "failed") return "Send failed";
-  return "You sent";
+  if (status === "failed") return t("chat.sendFailed");
+  return t("chat.youSent");
 }
 
 export function ChatPaymentCard({
@@ -47,10 +49,11 @@ export function ChatPaymentCard({
   /** Hide amount while inbound Fiat is arriving/converting. */
   hideAmount?: boolean;
 }) {
+  const { t } = useI18n();
   const primary =
     primaryAmount?.trim() || `${amountSats.toLocaleString("en-US")} sats`;
   const secondary = secondaryAmount?.trim() || null;
-  const title = paymentTitle(outgoing, status, receivingLabel);
+  const title = paymentTitle(t, outgoing, status, receivingLabel);
   const inboundPending =
     !outgoing && (status === "arriving" || status === "converting");
   const inFlight =
@@ -65,16 +68,17 @@ export function ChatPaymentCard({
 
   return (
     <View style={[styles.card, outgoing ? styles.out : styles.in]}>
-      <Text
+      <AdaptiveText
         style={[
           styles.title,
           outgoing && styles.titleOut,
           failed && styles.titleFailed,
           inFlight && styles.titleInFlight,
         ]}
+        baseFontSize={12}
       >
         {title}
-      </Text>
+      </AdaptiveText>
       {showAmount ? (
         <Text style={[styles.amount, outgoing && styles.amountOut]}>{primary}</Text>
       ) : null}

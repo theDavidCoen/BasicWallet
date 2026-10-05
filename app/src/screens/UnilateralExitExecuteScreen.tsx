@@ -31,11 +31,13 @@ import { createFeeOnchainWallet, pollFeeBalance } from "../exit/feeWallet";
 import { loadExitPackage } from "../exit/packageStore";
 import { startExitJob } from "../exit/jobRunner";
 import { useWallet } from "../wallet/WalletProvider";
+import { AdaptiveText, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
 export function UnilateralExitExecuteScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
   const route = useRoute<RouteProp<RootStackParamList, "UnilateralExitExecute">>();
   const esploraOverride = route.params?.esploraUrl?.trim() || "";
   const network = getNetworkConfig();
@@ -57,12 +59,12 @@ export function UnilateralExitExecuteScreen() {
         }
         return;
       }
-      const auth = await requireExitAuth("Confirm open exit execute");
+      const auth = await requireExitAuth(t("exit.confirmOpenExecute"));
       if (!auth.ok) {
         if (!cancelled) {
           setLoading(false);
-          Alert.alert("Cancelled", auth.reason, [
-            { text: "OK", onPress: () => navigation.goBack() },
+          Alert.alert(t("exit.cancelled"), auth.reason, [
+            { text: t("exit.ok"), onPress: () => navigation.goBack() },
           ]);
         }
         return;
@@ -97,9 +99,9 @@ export function UnilateralExitExecuteScreen() {
 
   const onExport = useCallback(async () => {
     if (!pkg) return;
-    const auth = await requireExitAuth("Confirm export exit package");
+    const auth = await requireExitAuth(t("exit.confirmExport"));
     if (!auth.ok) {
-      Alert.alert("Cancelled", auth.reason);
+      Alert.alert(t("exit.cancelled"), auth.reason);
       return;
     }
     const json = serializeExitPackage(pkg);
@@ -110,21 +112,21 @@ export function UnilateralExitExecuteScreen() {
     if (!walletId || !pkg) return;
     if (!funded) {
       Alert.alert(
-        "Fund fees first",
-        "Go back to step 3 and fund your fee address before Start execute.",
+        t("exit.fundFeesFirstTitle"),
+        t("exit.fundFeesFirstBody"),
         [
           {
-            text: "Back to fund",
+            text: t("exit.backToFund"),
             onPress: () => navigation.navigate("UnilateralExitFund"),
           },
-          { text: "OK", style: "cancel" },
+          { text: t("exit.ok"), style: "cancel" },
         ],
       );
       return;
     }
-    const auth = await requireExitAuth("Confirm execute unilateral exit");
+    const auth = await requireExitAuth(t("exit.confirmExecute"));
     if (!auth.ok) {
-      Alert.alert("Cancelled", auth.reason);
+      Alert.alert(t("exit.cancelled"), auth.reason);
       return;
     }
     setStarting(true);
@@ -138,8 +140,8 @@ export function UnilateralExitExecuteScreen() {
       navigation.replace("UnilateralExitHub");
     } catch (e) {
       Alert.alert(
-        "Could not start exit",
-        e instanceof Error ? e.message : "Unknown error",
+        t("exit.couldNotStartExit"),
+        e instanceof Error ? e.message : t("common.unknownError"),
       );
       setStarting(false);
     }
@@ -158,13 +160,13 @@ export function UnilateralExitExecuteScreen() {
   if (!walletId || !pkg) {
     return (
       <ScreenChrome logoScale={0.77}>
-        <ExitStepHeader step={EXIT_STEP.execute} title="START EXECUTE" />
-        <Text style={ui.caption}>No stored package. Complete steps 1–3 first.</Text>
+        <ExitStepHeader step={EXIT_STEP.execute} title={t("exit.executeTitle")} />
+        <Text style={ui.caption}>{t("exit.noPackageSteps")}</Text>
         <Pressable
           style={ui.primaryBtn}
           onPress={() => navigation.navigate("ExitRecoveryAddress", { from: "exit" })}
         >
-          <Text style={ui.primaryBtnText}>Start from recovery</Text>
+          <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("exit.startFromRecovery")}</AdaptiveText>
         </Pressable>
       </ScreenChrome>
     );
@@ -179,29 +181,31 @@ export function UnilateralExitExecuteScreen() {
       >
         <ExitStepHeader
           step={EXIT_STEP.execute}
-          title="START EXECUTE"
-          caption="Starts the stored package onchain in the background. You can leave the exit screens; progress continues until Stop or completion."
+          title={t("exit.executeTitle")}
+          caption={t("exit.executeCaption")}
         />
 
         <View style={ui.cardMuted}>
           <Text style={styles.meta}>
-            Sweep → {pkg.sweepAddress.slice(0, 18)}…
+            {t("exit.sweepTo", { addr: pkg.sweepAddress.slice(0, 18) })}
           </Text>
           <Text style={styles.meta}>
-            Recover ~{pkg.totals.recoveredSats.toLocaleString("en-US")} sats
+            {t("exit.recoverApproxShort", {
+              sats: pkg.totals.recoveredSats.toLocaleString("en-US"),
+            })}
           </Text>
           <Text style={styles.meta}>
-            Fee balance:{" "}
-            {feeBalance === null ? "…" : `${feeBalance.toLocaleString("en-US")} sats`}
-            {" · need "}
-            {needed.toLocaleString("en-US")}
-            {funded ? " · ready" : " · shortfall"}
+            {t("exit.feeBalanceExecute", {
+              balance: feeBalance === null ? "…" : `${feeBalance.toLocaleString("en-US")} sats`,
+              needed: needed.toLocaleString("en-US"),
+              state: funded ? t("exit.feeReady") : t("exit.feeShortfall"),
+            })}
           </Text>
         </View>
 
         {!funded ? (
           <Text style={styles.warn}>
-            Fee address is underfunded. Go back to step 3 and send sats before starting.
+            {t("exit.underfundedWarn")}
           </Text>
         ) : null}
 
@@ -213,7 +217,7 @@ export function UnilateralExitExecuteScreen() {
           {starting ? (
             <ActivityIndicator color="#000" />
           ) : (
-            <Text style={ui.primaryBtnText}>Start execute</Text>
+            <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("exit.startExecute")}</AdaptiveText>
           )}
         </Pressable>
 
@@ -222,11 +226,11 @@ export function UnilateralExitExecuteScreen() {
           onPress={() => navigation.navigate("UnilateralExitFund")}
           disabled={starting}
         >
-          <Text style={ui.secondaryBtnText}>Back to fund fees</Text>
+          <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>{t("exit.backToFundFees")}</AdaptiveText>
         </Pressable>
 
         <Pressable style={ui.secondaryBtn} onPress={() => void onExport()} disabled={starting}>
-          <Text style={ui.secondaryBtnText}>Export package (advanced)</Text>
+          <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>{t("exit.exportPackage")}</AdaptiveText>
         </Pressable>
       </ScrollView>
     </ScreenChrome>

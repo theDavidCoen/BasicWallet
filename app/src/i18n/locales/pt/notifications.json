@@ -1,0 +1,21 @@
+{
+  "title": "NOTIFICAÇÕES",
+  "caption": "Ativação opt-in para Pay no Chat e compartilhamento de contatos\nenquanto o Basic está fechado. Desligado por padrão.",
+  "closedAppAlerts": "Alertas com app fechado",
+  "closedAppHint": "Só opacos (“Nova mensagem Pay”). Nunca valores, memos ou endereços. Recebimentos Bitcoin clássicos ainda sincronizam ao abrir o app — sem bandeja.\n\nDica: não use “Forçar parada” do sistema. Deslizar para fechar está ok. No Xiaomi / Samsung, permita bateria sem restrições para o Basic para o wake na bandeja funcionar com o app fechado.",
+  "permAndroidOnly": "Somente Android",
+  "permGranted": "Permissão do SO: concedida",
+  "permDenied": "Permissão do SO: negada — ative nas configurações do sistema",
+  "permStatus": "Permissão do SO: %{status}",
+  "alertAndroidOnlyTitle": "Somente Android",
+  "alertAndroidOnlyBody": "Push com app fechado chega primeiro no Android. iOS depois.",
+  "alertNostrRequiredTitle": "Identidade Nostr necessária",
+  "alertNostrRequiredBody": "Crie ou importe uma identidade Nostr primeiro (Configurações → Identidade Nostr).",
+  "alertPermissionTitle": "Permissão necessária",
+  "alertPermissionBody": "Permita notificações nas configurações do sistema para acordar o Basic com mensagens Pay enquanto o app está fechado.",
+  "alertRegisteredLocallyTitle": "Registrado localmente",
+  "alertRegisteredLocallyBody": "Ainda não foi possível alcançar o notifier:\n%{reason}\n\nO wake na bandeja precisa de credenciais Firebase + sidecar implantado. O catch-up clássico ao abrir ainda funciona.",
+  "nostrMissing": "Identidade Nostr: ausente — necessária para registrar.",
+  "nostrReady": "Identidade Nostr: pronta (npub registrado em segundo plano).",
+  "notAndroidBuild": "Este build não é Android — interruptor desativado."
+}

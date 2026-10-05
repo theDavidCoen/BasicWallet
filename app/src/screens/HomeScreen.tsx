@@ -211,7 +211,7 @@ export function HomeScreen() {
           hidden: balanceHidden,
           networkId: network.id,
         });
-        return balanceHidden ? amt : `+ ${amt} pending`;
+        return balanceHidden ? amt : t("home.fiatPending", { amount: amt });
       }
       if (depixDisplay == null || !(depixDisplay >= 0.01)) {
         return "…";
@@ -238,6 +238,7 @@ export function HomeScreen() {
     balanceUnit,
     fiatRates,
     network.id,
+    t,
   ]);
 
   const secondaryBalance = useMemo(() => {
@@ -665,14 +666,19 @@ export function HomeScreen() {
   const statusHint = (() => {
     if (balanceHidden) return null;
     if (balanceStatus === "loading") {
-      return balanceSats !== null ? "syncing…" : "opening wallet…";
+      return balanceSats !== null ? t("home.syncing") : t("home.openingWallet");
     }
-    if (balanceStatus === "error") return "sync failed · retrying…";
+    if (balanceStatus === "error") return t("home.syncFailed");
     if (balance && balance.boarding > 0) {
-      return `boarding ${formatSatsAmount(balance.boarding, false)} · available ${formatSatsAmount(balance.available, false)}`;
+      return t("home.boardingAvailable", {
+        boarding: formatSatsAmount(balance.boarding, false),
+        available: formatSatsAmount(balance.available, false),
+      });
     }
     if (balance && balance.available > 0 && balance.available !== balance.total) {
-      return `available ${formatSatsAmount(balance.available, false)}`;
+      return t("home.available", {
+        available: formatSatsAmount(balance.available, false),
+      });
     }
     return null;
   })();
@@ -828,7 +834,11 @@ export function HomeScreen() {
                   })}
                 </Text>
               ) : null}
-              {statusHint ? <Text style={styles.statusHint}>{statusHint}</Text> : null}
+              {statusHint ? (
+                <AdaptiveText style={styles.statusHint} baseFontSize={12} fit={false} numberOfLines={2}>
+                  {statusHint}
+                </AdaptiveText>
+              ) : null}
 
               <View style={styles.actions}>
                 <Pressable

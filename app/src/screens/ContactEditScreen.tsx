@@ -36,12 +36,14 @@ import {
   contactInitials,
   kindPillLabel,
 } from "../contacts/types";
+import { AdaptiveText, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
 export function ContactEditScreen() {
   const navigation = useNavigation<RootNav>();
   const route = useRoute<RouteProp<RootStackParamList, "ContactEdit">>();
+  const { t } = useI18n();
   const contactId = route.params?.contactId;
   const isNew = !contactId;
 
@@ -57,8 +59,29 @@ export function ContactEditScreen() {
     if (existing) setDraft(existing);
   }, [contactId]);
 
-  const title = isNew ? "ADD CONTACT" : "EDIT CONTACT";
+  const title = isNew ? t("contacts.addTitle") : t("contacts.editTitle");
   const initials = useMemo(() => contactInitials(draft), [draft.name, draft.surname]);
+
+  function placeholderForKind(kind: IdentifierKind): string {
+    switch (kind) {
+      case "ark":
+        return t("contacts.phArk");
+      case "onchain":
+        return t("contacts.phOnchain");
+      case "npub":
+        return t("contacts.phNpub");
+      case "nip05":
+        return t("contacts.phNip05");
+      case "lightning_address":
+        return t("contacts.phLightning");
+      case "bip353":
+        return t("contacts.phBip353");
+      case "lnurl":
+        return t("contacts.phLnurl");
+      default:
+        return t("contacts.phValue");
+    }
+  }
 
   function patchIdent(id: string, patch: Partial<ContactIdentifier>) {
     setDraft((d) => ({
@@ -79,16 +102,16 @@ export function ContactEditScreen() {
       upsertContact(draft);
       navigation.goBack();
     } catch (e) {
-      Alert.alert("Cannot save", e instanceof Error ? e.message : String(e));
+      Alert.alert(t("contacts.cannotSave"), e instanceof Error ? e.message : String(e));
     }
   }
 
   function onDelete() {
     if (isNew || !contactId) return;
-    Alert.alert("Delete contact?", draft.name || "This contact", [
-      { text: "Cancel", style: "cancel" },
+    Alert.alert(t("contacts.deleteConfirmTitle"), draft.name || t("contacts.deleteConfirmFallback"), [
+      { text: t("common.cancel"), style: "cancel" },
       {
-        text: "Delete",
+        text: t("contacts.deleteContact"),
         style: "destructive",
         onPress: () => {
           deleteContact(contactId);
@@ -104,7 +127,7 @@ export function ContactEditScreen() {
     try {
       if (ident.kind === "nip05") {
         if (!ident.value.trim()) {
-          setVerifyMsg((m) => ({ ...m, [ident.id]: "Enter a NIP-05 name@domain first." }));
+          setVerifyMsg((m) => ({ ...m, [ident.id]: t("contacts.verifyEnterNip05") }));
           return;
         }
         const ctrl = new AbortController();
@@ -120,16 +143,19 @@ export function ContactEditScreen() {
           return;
         }
         patchIdent(ident.id, { lastResolved: r.hint });
-        const extra = r.lud16 ? ` · lud16 ${r.lud16}` : "";
+        const extra = r.lud16 ? t("contacts.verifyOkLud16", { lud16: r.lud16 }) : "";
         setVerifyMsg((m) => ({
           ...m,
-          [ident.id]: `OK → ${r.npub.slice(0, 12)}…${extra}`,
+          [ident.id]: t("contacts.verifyOkNip05", {
+            npub: r.npub.slice(0, 12),
+            extra,
+          }),
         }));
         return;
       }
       if (ident.kind === "bip353") {
         if (!ident.value.trim()) {
-          setVerifyMsg((m) => ({ ...m, [ident.id]: "Enter a BIP353 user@domain first." }));
+          setVerifyMsg((m) => ({ ...m, [ident.id]: t("contacts.verifyEnterBip353") }));
           return;
         }
         const r = await resolveBip353ForContacts(ident.value, "lightning");
@@ -138,17 +164,20 @@ export function ContactEditScreen() {
           return;
         }
         patchIdent(ident.id, { lastResolved: r.hint });
+        const desc = r.probe.description
+          ? t("contacts.verifyOkBip353Desc", { description: r.probe.description })
+          : "";
         setVerifyMsg((m) => ({
           ...m,
-          [ident.id]: `OK · ${r.probe.kind}${r.probe.description ? ` · ${r.probe.description}` : ""}`,
+          [ident.id]: t("contacts.verifyOkBip353", { kind: r.probe.kind, desc }),
         }));
         return;
       }
-      setVerifyMsg((m) => ({ ...m, [ident.id]: "Verify is for NIP-05 and BIP 353." }));
+      setVerifyMsg((m) => ({ ...m, [ident.id]: t("contacts.verifyOnlyNip05Bip353") }));
     } catch (e) {
       setVerifyMsg((m) => ({
         ...m,
-        [ident.id]: e instanceof Error ? e.message : "Verify failed.",
+        [ident.id]: e instanceof Error ? e.message : t("contacts.verifyFailed"),
       }));
     } finally {
       setVerifyBusy(null);
@@ -170,29 +199,29 @@ export function ContactEditScreen() {
         contentContainerStyle={{ paddingBottom: 40 }}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.label}>name or username</Text>
+        <Text style={styles.label}>{t("contacts.labelName")}</Text>
         <TextInput
           value={draft.name}
           onChangeText={(name) => setDraft((d) => ({ ...d, name }))}
-          placeholder="Bob"
+          placeholder={t("contacts.placeholderName")}
           placeholderTextColor={colors.hint}
           style={styles.input}
         />
 
-        <Text style={styles.label}>surname</Text>
+        <Text style={styles.label}>{t("contacts.labelSurname")}</Text>
         <TextInput
           value={draft.surname ?? ""}
           onChangeText={(surname) => setDraft((d) => ({ ...d, surname }))}
-          placeholder="Optional"
+          placeholder={t("contacts.optional")}
           placeholderTextColor={colors.hint}
           style={styles.input}
         />
 
-        <Text style={styles.section}>Custom fields</Text>
+        <Text style={styles.section}>{t("contacts.sectionCustomFields")}</Text>
         {draft.fields.map((field) => (
           <View key={field.id} style={styles.card}>
             <View style={styles.cardHead}>
-              <Text style={styles.cardTitle}>Field</Text>
+              <Text style={styles.cardTitle}>{t("contacts.fieldTitle")}</Text>
               <Pressable
                 onPress={() =>
                   setDraft((d) => ({
@@ -201,20 +230,20 @@ export function ContactEditScreen() {
                   }))
                 }
               >
-                <Text style={styles.linkDanger}>Remove</Text>
+                <Text style={styles.linkDanger}>{t("contacts.remove")}</Text>
               </Pressable>
             </View>
             <TextInput
               value={field.key}
               onChangeText={(key) => patchField(field.id, { key })}
-              placeholder="Key"
+              placeholder={t("contacts.placeholderKey")}
               placeholderTextColor={colors.hint}
               style={styles.input}
             />
             <TextInput
               value={field.value}
               onChangeText={(value) => patchField(field.id, { value })}
-              placeholder="Value"
+              placeholder={t("contacts.placeholderValue")}
               placeholderTextColor={colors.hint}
               style={styles.input}
             />
@@ -229,20 +258,22 @@ export function ContactEditScreen() {
             }))
           }
         >
-          <Text style={styles.secondaryText}>+ Add field</Text>
+          <AdaptiveText style={styles.secondaryText} baseFontSize={14}>
+            {t("contacts.addField")}
+          </AdaptiveText>
         </Pressable>
 
-        <Text style={styles.label}>note</Text>
+        <Text style={styles.label}>{t("contacts.labelNote")}</Text>
         <TextInput
           value={draft.note ?? ""}
           onChangeText={(note) => setDraft((d) => ({ ...d, note }))}
-          placeholder="Optional"
+          placeholder={t("contacts.optional")}
           placeholderTextColor={colors.hint}
           style={[styles.input, styles.inputMulti]}
           multiline
         />
 
-        <Text style={styles.section}>Identifiers</Text>
+        <Text style={styles.section}>{t("contacts.sectionIdentifiers")}</Text>
         {draft.identifiers.map((ident, idx) => (
           <View key={ident.id} style={styles.card}>
             <View style={styles.cardHead}>
@@ -255,16 +286,16 @@ export function ContactEditScreen() {
                   }))
                 }
               >
-                <Text style={styles.linkDanger}>Remove</Text>
+                <Text style={styles.linkDanger}>{t("contacts.remove")}</Text>
               </Pressable>
             </View>
 
-            <Text style={styles.label}>type</Text>
+            <Text style={styles.label}>{t("contacts.labelType")}</Text>
             <Pressable
               style={styles.dropdown}
               onPress={() => setKindPickerFor(ident.id)}
               accessibilityRole="button"
-              accessibilityLabel="Choose identifier type"
+              accessibilityLabel={t("contacts.chooseTypeA11y")}
             >
               <Text style={styles.dropdownText}>{kindPillLabel(ident)}</Text>
               <Text style={styles.dropdownChevron}>▾</Text>
@@ -272,18 +303,18 @@ export function ContactEditScreen() {
 
             {ident.kind === "custom" ? (
               <>
-                <Text style={styles.label}>custom type label</Text>
+                <Text style={styles.label}>{t("contacts.labelCustomType")}</Text>
                 <TextInput
                   value={ident.customKindLabel ?? ""}
                   onChangeText={(customKindLabel) => patchIdent(ident.id, { customKindLabel })}
-                  placeholder="e.g. Telegram"
+                  placeholder={t("contacts.placeholderCustomType")}
                   placeholderTextColor={colors.hint}
                   style={styles.input}
                 />
               </>
             ) : null}
 
-            <Text style={styles.label}>identifier</Text>
+            <Text style={styles.label}>{t("contacts.labelIdentifier")}</Text>
             <TextInput
               value={ident.value}
               onChangeText={(value) => patchIdent(ident.id, { value })}
@@ -294,11 +325,11 @@ export function ContactEditScreen() {
               style={styles.input}
             />
 
-            <Text style={styles.label}>label (optional)</Text>
+            <Text style={styles.label}>{t("contacts.labelOptionalLabel")}</Text>
             <TextInput
               value={ident.label ?? ""}
               onChangeText={(label) => patchIdent(ident.id, { label })}
-              placeholder="e.g. work"
+              placeholder={t("contacts.placeholderLabel")}
               placeholderTextColor={colors.hint}
               style={styles.input}
             />
@@ -312,7 +343,7 @@ export function ContactEditScreen() {
                 {verifyBusy === ident.id ? (
                   <ActivityIndicator color={colors.fg} size="small" />
                 ) : (
-                  <Text style={styles.verifyText}>Verify</Text>
+                  <Text style={styles.verifyText}>{t("contacts.verify")}</Text>
                 )}
               </Pressable>
             ) : null}
@@ -338,7 +369,9 @@ export function ContactEditScreen() {
             }))
           }
         >
-          <Text style={styles.secondaryText}>+ Add identifier</Text>
+          <AdaptiveText style={styles.secondaryText} baseFontSize={14}>
+            {t("contacts.addIdentifier")}
+          </AdaptiveText>
         </Pressable>
 
         <Pressable
@@ -346,7 +379,9 @@ export function ContactEditScreen() {
           disabled={!draft.name.trim()}
           onPress={onSave}
         >
-          <Text style={styles.primaryText}>Save</Text>
+          <AdaptiveText style={styles.primaryText} baseFontSize={15}>
+            {t("contacts.save")}
+          </AdaptiveText>
         </Pressable>
 
         {!isNew ? (
@@ -355,17 +390,19 @@ export function ContactEditScreen() {
               style={styles.shareBtn}
               onPress={() => setShareOpen(true)}
               accessibilityRole="button"
-              accessibilityLabel="Share contact"
+              accessibilityLabel={t("contacts.shareContactA11y")}
             >
-              <Text style={styles.shareText}>Share contact</Text>
+              <AdaptiveText style={styles.shareText} baseFontSize={14}>
+                {t("contacts.shareContact")}
+              </AdaptiveText>
             </Pressable>
             <Pressable
               style={styles.deleteHit}
               onPress={onDelete}
               accessibilityRole="button"
-              accessibilityLabel="Delete contact"
+              accessibilityLabel={t("contacts.deleteContactA11y")}
             >
-              <Text style={styles.deleteText}>Delete contact</Text>
+              <Text style={styles.deleteText}>{t("contacts.deleteContact")}</Text>
             </Pressable>
           </>
         ) : null}
@@ -380,7 +417,7 @@ export function ContactEditScreen() {
       >
         <Pressable style={styles.modalBackdrop} onPress={() => setKindPickerFor(null)}>
           <Pressable style={styles.dropdownPanel} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.sheetTitle}>TYPE</Text>
+            <Text style={styles.sheetTitle}>{t("contacts.typeSheetTitle")}</Text>
             <ScrollView
               style={styles.dropdownScroll}
               contentContainerStyle={{ paddingBottom: 8 }}
@@ -416,27 +453,6 @@ export function ContactEditScreen() {
     ) : null}
     </View>
   );
-}
-
-function placeholderForKind(kind: IdentifierKind): string {
-  switch (kind) {
-    case "ark":
-      return "ark1…";
-    case "onchain":
-      return "bc1…";
-    case "npub":
-      return "npub1…";
-    case "nip05":
-      return "name@domain";
-    case "lightning_address":
-      return "user@domain";
-    case "bip353":
-      return "₿user@domain";
-    case "lnurl":
-      return "lnurl1… / https://…";
-    default:
-      return "value";
-  }
 }
 
 const styles = StyleSheet.create({

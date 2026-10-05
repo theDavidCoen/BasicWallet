@@ -27,10 +27,11 @@ import {
   syncEncryptedBackupNow,
   unlockBackupPassphraseSession,
 } from "../nostr/backupSync";
-import { BACKUP_PASSPHRASE_HINT, validateBackupPassphrase } from "../nostr/passphrasePolicy";
+import { validateBackupPassphrase } from "../nostr/passphrasePolicy";
 import { backupPassphraseChecklist } from "../nostr/passphrasePolicy";
 import { ensureNostrIdentity, hasNostrIdentity } from "../nostr/identityStore";
 import { requireUserPresence } from "../security/userPresence";
+import { AdaptiveText, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -54,6 +55,7 @@ function customRelaysFromMeta(meta: BackupPackageMeta | null): string[] {
 /** Penpot 12d — enable / disable Nostr AEAD package + passphrase. Next → Recap. */
 export function NostrBackupScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
   const [passphrase, setPassphrase] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
@@ -94,7 +96,7 @@ export function NostrBackupScreen() {
       const url = normalizeRelayUrl(raw);
       if (!url) {
         if (raw.trim()) {
-          Alert.alert("Invalid relay", "Custom relays must start with wss:// (or ws://).");
+          Alert.alert(t("backup.invalidRelayTitle"), t("backup.invalidRelayBody"));
           return null;
         }
         continue;
@@ -132,11 +134,11 @@ export function NostrBackupScreen() {
   async function onNext() {
     const check = validateBackupPassphrase(passphrase);
     if (!check.ok) {
-      Alert.alert("Invalid passphrase", check.message);
+      Alert.alert(t("backup.invalidPassphrase"), check.message);
       return;
     }
     if (passphrase !== confirm) {
-      Alert.alert("Mismatch", "Passphrase and confirmation do not match.");
+      Alert.alert(t("backup.mismatchTitle"), t("backup.mismatchBody"));
       return;
     }
     const relays = buildRelayList();
@@ -154,8 +156,8 @@ export function NostrBackupScreen() {
       });
     } catch (e) {
       Alert.alert(
-        "Could not continue",
-        e instanceof Error ? e.message : "Unknown error",
+        t("backup.couldNotContinue"),
+        e instanceof Error ? e.message : t("common.unknownError"),
       );
     } finally {
       setBusy(false);
@@ -165,9 +167,9 @@ export function NostrBackupScreen() {
   async function onUpdateAndPublish() {
     setBusy(true);
     try {
-      const auth = await requireUserPresence("Confirm to update Nostr backup");
+      const auth = await requireUserPresence(t("backup.confirmUpdateNostr"));
       if (!auth.ok) {
-        Alert.alert("Authentication required", "Backup was not updated.");
+        Alert.alert(t("backup.authRequired"), t("backup.backupNotUpdated"));
         return;
       }
       // UV can clear RAM briefly; reload SecureStore passphrase after unlock grant.
@@ -178,8 +180,8 @@ export function NostrBackupScreen() {
         const check = validateBackupPassphrase(passphrase);
         if (!check.ok) {
           Alert.alert(
-            "Passphrase needed",
-            "Session is locked. Enter your backup passphrase once, or unlock the app with biometrics.",
+            t("backup.passphraseNeededTitle"),
+            t("backup.passphraseNeededBody"),
           );
           return;
         }
@@ -200,13 +202,16 @@ export function NostrBackupScreen() {
       setBackupMeta(synced);
       setPassphrase("");
       Alert.alert(
-        "Backup updated",
-        `${synced.walletCount} wallet(s)` +
-          (synced.txMetaCount ? `, ${synced.txMetaCount} note(s)` : "") +
-          " re-packed and published.",
+        t("backup.backupUpdatedTitle"),
+        t("backup.backupUpdatedNostrBody", {
+          wallets: synced.walletCount,
+          notes: synced.txMetaCount
+            ? t("backup.notesPart", { notes: synced.txMetaCount })
+            : "",
+        }),
       );
     } catch (e) {
-      Alert.alert("Update failed", e instanceof Error ? e.message : "Unknown error");
+      Alert.alert(t("backup.updateFailed"), e instanceof Error ? e.message : t("common.unknownError"));
     } finally {
       setBusy(false);
     }
@@ -215,9 +220,9 @@ export function NostrBackupScreen() {
   async function onDisable() {
     setBusy(true);
     try {
-      const auth = await requireUserPresence("Confirm to disable Nostr backup");
+      const auth = await requireUserPresence(t("backup.confirmDisableNostr"));
       if (!auth.ok) {
-        Alert.alert("Authentication required", "Backup was not disabled.");
+        Alert.alert(t("backup.authRequired"), t("backup.backupNotDisabled"));
         return;
       }
       await disableEncryptedBackup();
@@ -227,12 +232,12 @@ export function NostrBackupScreen() {
       setPassphrase("");
       setConfirm("");
       Alert.alert(
-        "Nostr backup disabled",
-        "Local encrypted package removed. Wallets on this device are unchanged. Relay events are not deleted.",
+        t("backup.nostrDisabledTitle"),
+        t("backup.nostrDisabledBody"),
       );
       navigation.navigate("AdvancedBackup");
     } catch (e) {
-      Alert.alert("Could not disable", e instanceof Error ? e.message : "Unknown error");
+      Alert.alert(t("backup.couldNotDisable"), e instanceof Error ? e.message : t("common.unknownError"));
     } finally {
       setBusy(false);
     }
@@ -244,17 +249,14 @@ export function NostrBackupScreen() {
         contentContainerStyle={{ paddingBottom: 40 }}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={ui.title}>NOSTR BACKUP</Text>
-        <Text style={ui.caption}>
-          AEAD package of ALL wallets + notes.{"\n"}
-          Relays get NIP-44 ciphertext only.
-        </Text>
+        <Text style={ui.title}>{t("backup.nostrScreenTitle")}</Text>
+        <Text style={ui.caption}>{t("backup.nostrCaption")}</Text>
 
-        <Text style={styles.label}>relays</Text>
+        <Text style={styles.label}>{t("backup.relaysLabel")}</Text>
         {DEFAULT_NOSTR_RELAYS.map((url) => (
           <View key={url} style={styles.relayRow}>
             <Text style={styles.relayUrl}>{url}</Text>
-            <Text style={styles.relayOn}>ON</Text>
+            <Text style={styles.relayOn}>{t("backup.relayOn")}</Text>
           </View>
         ))}
 
@@ -267,13 +269,13 @@ export function NostrBackupScreen() {
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="url"
-              placeholder="wss://relay.example.com"
+              placeholder={t("backup.relayPlaceholder")}
               placeholderTextColor={colors.hint}
             />
             <Pressable
               onPress={() => removeCustomRelay(index)}
               hitSlop={8}
-              accessibilityLabel="Remove custom relay"
+              accessibilityLabel={t("backup.removeRelayA11y")}
             >
               <Text style={styles.removeBtn}>✕</Text>
             </Pressable>
@@ -282,24 +284,24 @@ export function NostrBackupScreen() {
 
         {customRelays.length < MAX_CUSTOM_RELAYS ? (
           <Pressable style={styles.addRelayBtn} onPress={addCustomRelay}>
-            <Text style={styles.addRelayText}>+ Add custom relay</Text>
+            <AdaptiveText style={styles.addRelayText} baseFontSize={14}>{t("backup.addCustomRelay")}</AdaptiveText>
           </Pressable>
         ) : null}
 
         {!nostrEnabled ? (
           <>
-            <Text style={[styles.section, { marginTop: 28 }]}>Backup passphrase</Text>
+            <Text style={[styles.section, { marginTop: 28 }]}>{t("backup.passphraseSection")}</Text>
             <Text style={[ui.hint, { marginTop: 8, marginBottom: 4 }]}>
-              {BACKUP_PASSPHRASE_HINT}
+              {t("backup.passphraseHint")}
             </Text>
-            <Text style={styles.label}>passphrase</Text>
+            <Text style={styles.label}>{t("backup.passphraseLabel")}</Text>
             <PassphraseInput
               value={passphrase}
               onChangeText={setPassphrase}
               placeholder="••••••••••••"
             />
 
-            <Text style={styles.label}>confirm passphrase</Text>
+            <Text style={styles.label}>{t("backup.confirmPassphraseLabel")}</Text>
             <PassphraseInput
               value={confirm}
               onChangeText={setConfirm}
@@ -319,29 +321,30 @@ export function NostrBackupScreen() {
               {busy ? (
                 <ActivityIndicator color="#000" />
               ) : (
-                <Text style={ui.primaryBtnText}>Next</Text>
+                <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("backup.next")}</AdaptiveText>
               )}
             </Pressable>
           </>
         ) : (
           <>
             <Text style={[ui.hint, { marginTop: 20 }]}>
-              Nostr backup is active.{"\n"}
-              {backupMeta?.lastPublishedAt
-                ? `Last publish: ${new Date(backupMeta.lastPublishedAt).toLocaleString()} · ${backupMeta.lastPublishOk ?? 0} ok`
-                : "Not published to relays yet."}
-              {"\n\n"}
-              After you unlock the app (biometrics), new wallets / renames / notes
-              sync automatically until you leave the app.
+              {t("backup.nostrActiveHint", {
+                publishLine: backupMeta?.lastPublishedAt
+                  ? t("backup.lastPublish", {
+                      when: new Date(backupMeta.lastPublishedAt).toLocaleString(),
+                      ok: backupMeta.lastPublishOk ?? 0,
+                    })
+                  : t("backup.notPublishedYet"),
+              })}
             </Text>
 
             {sessionReady ? (
               <Text style={[ui.hint, { marginTop: 16 }]}>
-                Session unlocked — Update & publish uses the stored passphrase (no re-entry).
+                {t("backup.sessionUnlocked")}
               </Text>
             ) : (
               <>
-                <Text style={styles.label}>passphrase (session locked)</Text>
+                <Text style={styles.label}>{t("backup.passphraseSessionLocked")}</Text>
                 <PassphraseInput
                   value={passphrase}
                   onChangeText={setPassphrase}
@@ -358,7 +361,7 @@ export function NostrBackupScreen() {
               {busy ? (
                 <ActivityIndicator color="#000" />
               ) : (
-                <Text style={ui.primaryBtnText}>Update & publish</Text>
+                <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("backup.updateAndPublish")}</AdaptiveText>
               )}
             </Pressable>
 
@@ -370,7 +373,7 @@ export function NostrBackupScreen() {
               {busy ? (
                 <ActivityIndicator color={colors.fg} />
               ) : (
-                <Text style={ui.secondaryBtnText}>Disable Nostr backup</Text>
+                <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>{t("backup.disableNostr")}</AdaptiveText>
               )}
             </Pressable>
           </>

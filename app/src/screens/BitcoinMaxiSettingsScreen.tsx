@@ -9,41 +9,40 @@ import { ScreenChrome } from "../components/ScreenChrome";
 import { getNetworkConfig } from "../config/network";
 import { useFiatMode } from "../fiat/FiatModeProvider";
 import { fiatFeeBps } from "../fiat/depixAssets";
+import { AdaptiveText, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 
 export function BitcoinMaxiSettingsScreen() {
+  const { t } = useI18n();
   const network = getNetworkConfig();
   const { bitcoinMaxiMode } = useFiatMode();
   const feePct = (fiatFeeBps(network.id) / 100).toFixed(1);
   const on = bitcoinMaxiMode !== false;
+  const status = on ? t("fiat.statusOn") : t("fiat.statusOff");
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={styles.title}>BITCOIN MAXI MODE</Text>
+      <AdaptiveText style={styles.title} baseFontSize={20}>
+        {t("fiat.maxiTitle")}
+      </AdaptiveText>
+      <Text style={styles.caption}>{t("fiat.maxiCaption1")}</Text>
       <Text style={styles.caption}>
-        When Bitcoin Maxi Mode is on, other assets that arrive on this wallet&apos;s
-        Ark address are converted to bitcoin (sats) automatically. Your home
-        balance stays in sats instead of collecting alt balances.
-      </Text>
-      <Text style={styles.caption}>
-        This runs quietly in the background, like Fiat Mode&apos;s inbound
-        conversion, but in the opposite direction. A small solver fee applies
-        (about {feePct}% on this network), the same family of fee as Fiat Mode
-        swaps.
+        {t("fiat.maxiCaption2", { feePct })}
       </Text>
       <Text style={[styles.caption, styles.captionLast]}>
-        Fiat Mode still wins when it is active: inbound value follows Fiat Mode
-        rules instead. Turning Maxi Mode off is not available yet.
+        {t("fiat.maxiCaption3")}
       </Text>
 
       <View
         style={styles.card}
         accessibilityRole="text"
-        accessibilityLabel={`Bitcoin Maxi Mode, ${on ? "On" : "Off"}`}
+        accessibilityLabel={t("fiat.maxiA11y", { status })}
       >
         <View style={styles.cardRow}>
-          <Text style={styles.cardTitle}>Bitcoin Maxi Mode</Text>
-          <Text style={styles.cardStatus}>{on ? "On" : "Off"}</Text>
+          <AdaptiveText style={styles.cardTitle} baseFontSize={15}>
+            {t("fiat.maxiCardTitle")}
+          </AdaptiveText>
+          <Text style={styles.cardStatus}>{status}</Text>
         </View>
       </View>
     </ScreenChrome>

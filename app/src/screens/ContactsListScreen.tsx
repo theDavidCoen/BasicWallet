@@ -14,12 +14,14 @@ import { filterContacts } from "../contacts/contactSearch";
 import { syncContactsDirectoryNow } from "../contacts/contactsNostrSync";
 import { listContacts } from "../contacts/contactStore";
 import type { Contact } from "../contacts/types";
+import { AdaptiveText, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
 export function ContactsListScreen() {
   const navigation = useNavigation<RootNav>();
   const route = useRoute<RouteProp<RootStackParamList, "Contacts">>();
+  const { t } = useI18n();
   const selectForChat = route.params?.selectForChat === true;
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [query, setQuery] = useState("");
@@ -55,19 +57,32 @@ export function ContactsListScreen() {
     [navigation],
   );
 
+  const countLabel = useMemo(() => {
+    const n = filtered.length;
+    const matched = !!query.trim();
+    if (matched) {
+      return n === 1
+        ? t("contacts.countMatched", { count: n })
+        : t("contacts.countMatchedPlural", { count: n });
+    }
+    return n === 1
+      ? t("contacts.count", { count: n })
+      : t("contacts.countPlural", { count: n });
+  }, [filtered.length, query, t]);
+
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={ui.title}>{selectForChat ? "CHOOSE CONTACT" : "CONTACTS"}</Text>
+      <Text style={ui.title}>
+        {selectForChat ? t("contacts.chooseTitle") : t("contacts.title")}
+      </Text>
       <Text style={ui.caption}>
-        {selectForChat
-          ? "Tap to open chat · long-press to edit"
-          : "Private · encrypted · no OS contacts"}
+        {selectForChat ? t("contacts.captionChoose") : t("contacts.captionPrivate")}
       </Text>
 
       <TextInput
         value={query}
         onChangeText={setQuery}
-        placeholder="Search name or id…"
+        placeholder={t("contacts.searchPlaceholder")}
         placeholderTextColor={colors.hint}
         autoCapitalize="none"
         autoCorrect={false}
@@ -83,21 +98,22 @@ export function ContactsListScreen() {
           contacts={filtered}
           onPick={selectForChat ? openChat : openEdit}
           onLongPress={selectForChat ? openEdit : undefined}
-          emptyLabel={query.trim() ? "No matches" : "No contacts yet"}
+          emptyLabel={
+            query.trim() ? t("contacts.emptyNoMatches") : t("contacts.emptyNone")
+          }
         />
-        <Text style={styles.count}>
-          {filtered.length} contact{filtered.length === 1 ? "" : "s"}
-          {query.trim() ? " matched" : ""}
-        </Text>
+        <Text style={styles.count}>{countLabel}</Text>
       </ScrollView>
 
       <Pressable
         style={styles.add}
         onPress={() => navigation.navigate("ContactEdit", {})}
         accessibilityRole="button"
-        accessibilityLabel="Add contact"
+        accessibilityLabel={t("contacts.addContactA11y")}
       >
-        <Text style={styles.addText}>+ Add contact</Text>
+        <AdaptiveText style={styles.addText} baseFontSize={15}>
+          {t("contacts.addContact")}
+        </AdaptiveText>
       </Pressable>
     </ScreenChrome>
   );

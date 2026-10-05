@@ -20,12 +20,14 @@ import {
   kindPillLabel,
   midEllipsis,
 } from "../contacts/types";
+import { AdaptiveText, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
 export function ContactShareOfferScreen() {
   const navigation = useNavigation<RootNav>();
   const route = useRoute<RouteProp<RootStackParamList, "ContactShareOffer">>();
+  const { t } = useI18n();
   const offerId = route.params.offerId;
 
   const [offer, setOffer] = useState<ContactShareOffer | null>(null);
@@ -87,10 +89,12 @@ export function ContactShareOfferScreen() {
   if (!offer) {
     return (
       <ScreenChrome logoScale={0.77}>
-        <Text style={ui.title}>CONTACT SHARE</Text>
-        <Text style={ui.caption}>This offer is no longer available.</Text>
+        <Text style={ui.title}>{t("contacts.shareTitle")}</Text>
+        <Text style={ui.caption}>{t("contacts.shareUnavailable")}</Text>
         <Pressable style={styles.primary} onPress={() => navigation.navigate("Home")}>
-          <Text style={styles.primaryText}>Home</Text>
+          <AdaptiveText style={styles.primaryText} baseFontSize={15}>
+            {t("contacts.home")}
+          </AdaptiveText>
         </Pressable>
       </ScreenChrome>
     );
@@ -103,8 +107,8 @@ export function ContactShareOfferScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={ui.title}>CONTACT SHARE</Text>
-      <Text style={ui.caption}>From {fromLabel}</Text>
+      <Text style={ui.title}>{t("contacts.shareTitle")}</Text>
+      <Text style={ui.caption}>{t("contacts.from", { who: fromLabel })}</Text>
 
       <ScrollView
         style={styles.scroll}
@@ -122,7 +126,7 @@ export function ContactShareOfferScreen() {
 
           {offer.contact.identifiers.length ? (
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Identifiers</Text>
+              <Text style={styles.sectionTitle}>{t("contacts.identifiers")}</Text>
               {offer.contact.identifiers.map((ident, idx) => (
                 <View key={`${ident.kind}-${idx}`} style={styles.row}>
                   <Text style={styles.pill}>{kindPillLabel({ ...ident, id: String(idx) })}</Text>
@@ -136,10 +140,10 @@ export function ContactShareOfferScreen() {
 
           {offer.contact.fields.length ? (
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Fields</Text>
+              <Text style={styles.sectionTitle}>{t("contacts.fields")}</Text>
               {offer.contact.fields.map((f, idx) => (
                 <View key={`${f.key}-${idx}`} style={styles.row}>
-                  <Text style={styles.pill}>{f.key || "field"}</Text>
+                  <Text style={styles.pill}>{f.key || t("contacts.fieldFallback")}</Text>
                   <Text style={styles.value} numberOfLines={2}>
                     {f.value}
                   </Text>
@@ -154,7 +158,9 @@ export function ContactShareOfferScreen() {
           disabled={busy}
           onPress={() => void onAdd()}
         >
-          <Text style={styles.primaryText}>Add contact</Text>
+          <AdaptiveText style={styles.primaryText} baseFontSize={15}>
+            {t("contacts.addContactCta")}
+          </AdaptiveText>
         </Pressable>
 
         <Pressable
@@ -162,9 +168,9 @@ export function ContactShareOfferScreen() {
           disabled={busy}
           onPress={() => void onRefuse()}
           accessibilityRole="button"
-          accessibilityLabel="Refuse contact"
+          accessibilityLabel={t("contacts.refuseA11y")}
         >
-          <Text style={styles.refuseText}>Refuse</Text>
+          <Text style={styles.refuseText}>{t("contacts.refuse")}</Text>
         </Pressable>
       </ScrollView>
     </ScreenChrome>

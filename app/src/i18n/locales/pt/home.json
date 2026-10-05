@@ -19,5 +19,14 @@
   "mutinynetOffline": "Mutinynet offline, abrir explorer",
   "pullResyncHint": "Deslize para baixo para ressincronizar saldo e atividade",
   "satsPending": "+ %{sats} sats pendentes",
-  "tapAgainToExit": "Toque novamente para sair do app"
+  "tapAgainToExit": "Toque novamente para sair do app",
+  "syncing": "sincronizando…",
+  "openingWallet": "abrindo carteira…",
+  "syncFailed": "falha na sync · tentando de novo…",
+  "boardingAvailable": "boarding %{boarding} · disponível %{available}",
+  "available": "disponível %{available}",
+  "fiatPending": "+ %{amount} pendente",
+  "pendingConvertBelowMin": "+ %{sats} sats a converter após atingir o mínimo",
+  "pendingConvert": "+ %{sats} sats a converter",
+  "pendingConvertStableBelowMin": "+ %{qty} %{ticker} a converter após atingir o mínimo"
 }

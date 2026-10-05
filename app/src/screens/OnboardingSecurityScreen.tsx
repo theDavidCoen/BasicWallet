@@ -9,6 +9,7 @@ import {
 import { useFocusEffect, useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { AdaptiveText, useI18n } from "../i18n";
 import { hasAppPin } from "../security/appPin";
 import {
   getOsBiometricsStatus,
@@ -23,6 +24,7 @@ import { ui } from "../theme/ui";
 export function OnboardingSecurityScreen() {
   const navigation = useNavigation<RootNav>();
   const route = useRoute<RouteProp<RootStackParamList, "OnboardingSecurity">>();
+  const { t } = useI18n();
   const continueTo = route.params.continueTo;
   const [busy, setBusy] = useState(false);
   const [bioAvailable, setBioAvailable] = useState(false);
@@ -74,39 +76,44 @@ export function OnboardingSecurityScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={ui.title}>SECURE THIS DEVICE</Text>
-      <Text style={ui.caption}>
-        Basic needs a way to confirm it&apos;s you.{"\n"}
-        OS biometrics are recommended.
-      </Text>
+      <AdaptiveText style={ui.title} baseFontSize={20}>
+        {t("privacy.secureDeviceTitle")}
+      </AdaptiveText>
+      <Text style={ui.caption}>{t("privacy.secureDeviceCaption")}</Text>
 
       <View style={ui.card}>
-        <Text style={ui.cardTitle}>OS Face ID / fingerprint</Text>
+        <AdaptiveText style={ui.cardTitle} baseFontSize={15}>
+          {t("privacy.osFaceIdTitle")}
+        </AdaptiveText>
         <Text style={[ui.caption, { textAlign: "left", marginBottom: 12 }]}>
           {bioAvailable
-            ? "Enabled on this device. Preferred unlock."
-            : "Not enabled. Turn them on in system settings for faster, safer unlock."}
+            ? t("privacy.osBioEnabled")
+            : t("privacy.osBioNotEnabled")}
         </Text>
         {!bioAvailable ? (
           <Pressable
             style={styles.secondary}
             onPress={() => void openOsSecuritySettings()}
           >
-            <Text style={styles.secondaryText}>Open system settings</Text>
+            <AdaptiveText style={styles.secondaryText} baseFontSize={14}>
+              {t("privacy.openSystemSettings")}
+            </AdaptiveText>
           </Pressable>
         ) : null}
       </View>
 
       <View style={pinSet ? ui.card : ui.cardMuted}>
-        <Text style={ui.cardTitle}>App PIN</Text>
+        <AdaptiveText style={ui.cardTitle} baseFontSize={15}>
+          {t("privacy.appPin")}
+        </AdaptiveText>
         <Text style={[ui.caption, { textAlign: "left", marginBottom: 12 }]}>
           {bioAvailable
             ? pinSet
-              ? "Set · fallback when biometrics fail."
-              : "Optional while OS biometrics are on."
+              ? t("privacy.appPinSetFallback")
+              : t("privacy.appPinOptionalBioOn")
             : pinSet
-              ? "Set · required until OS biometrics are enabled."
-              : "Required while OS biometrics are off."}
+              ? t("privacy.appPinSetRequired")
+              : t("privacy.appPinRequiredBioOff")}
         </Text>
         {!pinSet ? (
           <Pressable
@@ -118,10 +125,12 @@ export function OnboardingSecurityScreen() {
               })
             }
           >
-            <Text style={styles.secondaryText}>Set App PIN</Text>
+            <AdaptiveText style={styles.secondaryText} baseFontSize={14}>
+              {t("privacy.setAppPinCta")}
+            </AdaptiveText>
           </Pressable>
         ) : (
-          <Text style={styles.ok}>PIN ready</Text>
+          <Text style={styles.ok}>{t("privacy.pinReady")}</Text>
         )}
       </View>
 
@@ -133,13 +142,15 @@ export function OnboardingSecurityScreen() {
         {busy ? (
           <ActivityIndicator color="#000" />
         ) : (
-          <Text style={ui.primaryBtnText}>Continue</Text>
+          <AdaptiveText style={ui.primaryBtnText} baseFontSize={16}>
+            {t("common.continue")}
+          </AdaptiveText>
         )}
       </Pressable>
 
       {!canProceed ? (
         <Text style={[ui.hint, { marginTop: 16 }]}>
-          Enable OS biometrics or set an App PIN to continue.
+          {t("privacy.secureContinueHint")}
         </Text>
       ) : null}
     </ScreenChrome>

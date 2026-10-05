@@ -3,10 +3,12 @@
  */
 
 import { ActivityIndicator, Modal, StyleSheet, Text, View } from "react-native";
+import { AdaptiveText, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { useFiatMode } from "./FiatModeProvider";
 
 export function FiatModeConvertingOverlay() {
+  const { t } = useI18n();
   const { converting, convertingMessage } = useFiatMode();
   if (!converting) return null;
   return (
@@ -14,8 +16,12 @@ export function FiatModeConvertingOverlay() {
       <View style={styles.scrim}>
         <View style={styles.card}>
           <ActivityIndicator color="#fff" size="large" />
-          <Text style={styles.title}>CONVERTING</Text>
-          <Text style={styles.msg}>{convertingMessage || "Please wait…"}</Text>
+          <AdaptiveText style={styles.title} baseFontSize={16}>
+            {t("fiat.overlayTitle")}
+          </AdaptiveText>
+          <Text style={styles.msg}>
+            {convertingMessage || t("fiat.pleaseWait")}
+          </Text>
         </View>
       </View>
     </Modal>

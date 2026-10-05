@@ -386,10 +386,7 @@ export function ChatThreadScreen() {
 
   function openSend() {
     if (!canSendMoney && !contactArkAddress(contact!)) {
-      Alert.alert(
-        "No ark address",
-        "Add an ark… address for this contact, or wait for them to include one on a request.",
-      );
+      Alert.alert(t("chat.alertNoArkTitle"), t("chat.alertNoArkBody"));
       return;
     }
     navigation.navigate("ChatAmount", { contactId, mode: "send" });
@@ -428,10 +425,8 @@ export function ChatThreadScreen() {
       });
     } catch (e) {
       Alert.alert(
-        "Cannot pay",
-        e instanceof Error
-          ? e.message
-          : "Add an ark address for this contact, or wait for them to include a pay destination on the request.",
+        t("chat.alertCannotPayTitle"),
+        e instanceof Error ? e.message : t("chat.alertCannotPayBody"),
       );
       return;
     }
@@ -472,22 +467,22 @@ export function ChatThreadScreen() {
     if (!msg.requestId || !msg.amountSats) return;
 
     setActionBusy(msg.requestId);
-    setPayBusyLabel("Sending…");
+    setPayBusyLabel(t("chat.sending"));
     let localPaymentId: string | null = null;
     try {
-      const auth = await requireUserPresence("Confirm send");
+      const auth = await requireUserPresence(t("send.confirmSend"));
       if (!auth.ok) {
         Alert.alert(
-          "Authentication required",
-          auth.reason || "Confirm with biometrics or App PIN to send.",
+          t("chat.alertAuthRequired"),
+          auth.reason || t("chat.alertAuthBody"),
         );
         return;
       }
 
       if (bal.spendable != null && bal.need > bal.have) {
         Alert.alert(
-          "Insufficient balance",
-          "Not enough sats to pay this request.",
+          t("chat.alertInsufficientTitle"),
+          t("chat.alertInsufficientSats"),
         );
         return;
       }
@@ -548,15 +543,15 @@ export function ChatThreadScreen() {
           const again = getChatMessage(localPaymentId);
           if (again?.status !== "paid") {
             Alert.alert(
-              "Send failed",
-              e instanceof Error ? e.message : "Unknown error",
+              t("chat.alertSendFailed"),
+              e instanceof Error ? e.message : t("common.unknownError"),
             );
           }
         }
       } else {
         Alert.alert(
-          "Send failed",
-          e instanceof Error ? e.message : "Unknown error",
+          t("chat.alertSendFailed"),
+          e instanceof Error ? e.message : t("common.unknownError"),
         );
       }
     } finally {
@@ -575,31 +570,31 @@ export function ChatThreadScreen() {
 
     const spendable = bal.spendable;
     setActionBusy(msg.requestId);
-    setPayBusyLabel(willConvert ? "Converting…" : "Sending…");
+    setPayBusyLabel(willConvert ? t("chat.converting") : t("chat.sending"));
     let localPaymentId: string | null = null;
     beginOutboundSend();
     try {
       // Biometrics before any convert (no global CONVERTING dialog for chat).
-      const auth = await requireUserPresence("Confirm send");
+      const auth = await requireUserPresence(t("send.confirmSend"));
       if (!auth.ok) {
         Alert.alert(
-          "Authentication required",
-          auth.reason || "Confirm with biometrics or App PIN to send.",
+          t("chat.alertAuthRequired"),
+          auth.reason || t("chat.alertAuthBody"),
         );
         return;
       }
 
       if (willConvert && !(depixDisplay != null && depixDisplay > 0)) {
         Alert.alert(
-          "Insufficient balance",
-          "Not enough sats or stable balance to pay this request.",
+          t("chat.alertInsufficientTitle"),
+          t("chat.alertInsufficientFiat"),
         );
         return;
       }
       if (!willConvert && bal.spendable != null && bal.need > bal.have) {
         Alert.alert(
-          "Insufficient balance",
-          "Not enough sats to pay this request.",
+          t("chat.alertInsufficientTitle"),
+          t("chat.alertInsufficientSats"),
         );
         return;
       }
@@ -650,7 +645,7 @@ export function ChatThreadScreen() {
         },
       });
       holdAutoInboundForPay(180_000);
-      setPayBusyLabel("Sending…");
+      setPayBusyLabel(t("chat.sending"));
       updateChatMessage(local.id, { status: "sending" });
 
       await executeChatPay({
@@ -691,15 +686,15 @@ export function ChatThreadScreen() {
           const again = getChatMessage(localPaymentId);
           if (again?.status !== "paid") {
             Alert.alert(
-              "Send failed",
-              e instanceof Error ? e.message : "Unknown error",
+              t("chat.alertSendFailed"),
+              e instanceof Error ? e.message : t("common.unknownError"),
             );
           }
         }
       } else {
         Alert.alert(
-          "Send failed",
-          e instanceof Error ? e.message : "Unknown error",
+          t("chat.alertSendFailed"),
+          e instanceof Error ? e.message : t("common.unknownError"),
         );
       }
     } finally {

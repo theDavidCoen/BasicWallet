@@ -3,6 +3,7 @@ import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { AdaptiveText, useI18n } from "../i18n";
 import { clearAppPin, hasAppPin, setAppPin, validatePinFormat, verifyAppPin } from "../security/appPin";
 import { getOsBiometricsStatus } from "../security/osBiometrics";
 import { requireUserPresence } from "../security/userPresence";
@@ -15,6 +16,7 @@ type Mode = "create" | "confirm" | "change-old" | "change-new" | "change-confirm
 export function SetAppPinScreen() {
   const navigation = useNavigation<RootNav>();
   const route = useRoute<RouteProp<RootStackParamList, "SetAppPin">>();
+  const { t } = useI18n();
   const intent = route.params?.intent ?? "set";
   const continueTo = route.params?.continueTo;
   const isOnboarding = intent === "onboarding";
@@ -32,34 +34,39 @@ export function SetAppPinScreen() {
     switch (mode) {
       case "confirm":
       case "change-confirm":
-        return "CONFIRM PIN";
+        return t("privacy.confirmPinTitle");
       case "change-old":
       case "remove":
-        return "ENTER CURRENT PIN";
+        return t("privacy.enterCurrentPinTitle");
       case "change-new":
-        return "NEW PIN";
+        return t("privacy.newPinTitle");
       default:
-        return isOnboarding ? "SET APP PIN" : "SET APP PIN";
+        return t("privacy.setPinTitle");
     }
-  }, [mode, isOnboarding]);
+  }, [mode, t]);
 
   const caption = useMemo(() => {
     switch (mode) {
       case "confirm":
       case "change-confirm":
-        return "Enter the same PIN again.";
+        return t("privacy.captionConfirm");
       case "change-old":
-        return "Confirm your current PIN to continue.";
+        return t("privacy.captionChangeOld");
       case "remove":
-        return "Enter your PIN to remove it.";
+        return t("privacy.captionRemove");
       case "change-new":
-        return "Choose a new 4–8 digit PIN.";
+        return t("privacy.captionChangeNew");
       default:
         return isOnboarding
-          ? "Required while OS biometrics are off.\n4–8 digits."
-          : "4–8 digits. Used to unlock Basic\nwhen biometrics are unavailable.";
+          ? t("privacy.captionOnboarding")
+          : t("privacy.captionSet");
     }
-  }, [mode, isOnboarding]);
+  }, [mode, isOnboarding, t]);
+
+  function invalidPinMessage(pin: string): string {
+    if (!/^\d+$/.test(pin)) return t("privacy.alertPinDigitsOnly");
+    return t("privacy.alertPinLength");
+  }
 
   async function onDigit(d: string) {
     if (busy) return;
@@ -80,7 +87,7 @@ export function SetAppPinScreen() {
   async function submit(pin: string) {
     const check = validatePinFormat(pin);
     if (!check.ok) {
-      Alert.alert("Invalid PIN", check.message);
+      Alert.alert(t("privacy.alertInvalidPinTitle"), invalidPinMessage(pin));
       setDraft("");
       return;
     }
@@ -95,7 +102,7 @@ export function SetAppPinScreen() {
       }
       if (mode === "confirm") {
         if (pin !== first) {
-          Alert.alert("Mismatch", "PINs do not match.");
+          Alert.alert(t("privacy.alertMismatchTitle"), t("privacy.alertMismatchBody"));
           setDraft("");
           setFirst("");
           setMode("create");
@@ -112,30 +119,33 @@ export function SetAppPinScreen() {
           }
           return;
         }
-        Alert.alert("PIN set", "You can use it from the unlock screen.");
+        Alert.alert(t("privacy.alertPinSetTitle"), t("privacy.alertPinSetBody"));
         navigation.goBack();
         return;
       }
       if (mode === "change-old" || mode === "remove") {
         if (!(await verifyAppPin(pin))) {
-          Alert.alert("Wrong PIN", "Try again.");
+          Alert.alert(t("privacy.alertWrongPinTitle"), t("privacy.alertWrongPinBody"));
           setDraft("");
           return;
         }
         if (mode === "remove") {
           const bio = await getOsBiometricsStatus();
           if (bio.available) {
-            const auth = await requireUserPresence("Confirm remove app PIN", {
+            const auth = await requireUserPresence(t("privacy.confirmRemovePinPresence"), {
               allowPin: false,
             });
             if (!auth.ok) {
-              Alert.alert("Authentication required", "PIN was not removed.");
+              Alert.alert(
+                t("privacy.alertAuthRequiredTitle"),
+                t("privacy.alertAuthRequiredBody"),
+              );
               setDraft("");
               return;
             }
           }
           await clearAppPin();
-          Alert.alert("PIN removed");
+          Alert.alert(t("privacy.alertPinRemoved"));
           navigation.goBack();
           return;
         }
@@ -151,18 +161,21 @@ export function SetAppPinScreen() {
       }
       if (mode === "change-confirm") {
         if (pin !== first) {
-          Alert.alert("Mismatch", "PINs do not match.");
+          Alert.alert(t("privacy.alertMismatchTitle"), t("privacy.alertMismatchBody"));
           setDraft("");
           setFirst("");
           setMode("change-new");
           return;
         }
         await setAppPin(pin);
-        Alert.alert("PIN updated");
+        Alert.alert(t("privacy.alertPinUpdated"));
         navigation.goBack();
       }
     } catch (e) {
-      Alert.alert("Error", e instanceof Error ? e.message : "Unknown error");
+      Alert.alert(
+        t("privacy.alertErrorTitle"),
+        e instanceof Error ? e.message : t("common.unknownError"),
+      );
       setDraft("");
     } finally {
       setBusy(false);
@@ -178,7 +191,9 @@ export function SetAppPinScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={ui.title}>{title}</Text>
+      <AdaptiveText style={ui.title} baseFontSize={20}>
+        {title}
+      </AdaptiveText>
       <Text style={ui.caption}>{caption}</Text>
 
       <View style={styles.dots}>
@@ -220,7 +235,9 @@ export function SetAppPinScreen() {
           disabled={busy}
           onPress={() => void submit(draft)}
         >
-          <Text style={ui.primaryBtnText}>Continue</Text>
+          <AdaptiveText style={ui.primaryBtnText} baseFontSize={16}>
+            {t("common.continue")}
+          </AdaptiveText>
         </Pressable>
       ) : null}
     </ScreenChrome>
@@ -231,26 +248,28 @@ export function SetAppPinScreen() {
 export function UnlockPinPad({
   onSuccess,
   onCancel,
-  cancelLabel = "Use biometrics",
+  cancelLabel,
 }: {
   onSuccess: () => void;
   onCancel: () => void;
   cancelLabel?: string;
 }) {
+  const { t } = useI18n();
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const resolvedCancel = cancelLabel ?? t("privacy.useBiometrics");
 
   async function tryPin(pin: string) {
     setBusy(true);
     setError(null);
     try {
       if (!(await hasAppPin())) {
-        setError("No app PIN set");
+        setError(t("privacy.noAppPinSet"));
         return;
       }
       if (!(await verifyAppPin(pin))) {
-        setError("Wrong PIN");
+        setError(t("privacy.wrongPin"));
         setDraft("");
         return;
       }
@@ -276,7 +295,9 @@ export function UnlockPinPad({
 
   return (
     <View style={styles.unlockWrap}>
-      <Text style={styles.unlockTitle}>ENTER PIN</Text>
+      <AdaptiveText style={styles.unlockTitle} baseFontSize={20}>
+        {t("privacy.enterPinTitle")}
+      </AdaptiveText>
 
       <View style={styles.dotsHit}>
         <View style={styles.dots}>
@@ -323,12 +344,14 @@ export function UnlockPinPad({
           style={[ui.primaryBtn, { marginTop: 12, alignSelf: "stretch" }]}
           onPress={() => void tryPin(draft)}
         >
-          <Text style={ui.primaryBtnText}>Unlock</Text>
+          <AdaptiveText style={ui.primaryBtnText} baseFontSize={16}>
+            {t("privacy.unlock")}
+          </AdaptiveText>
         </Pressable>
       ) : null}
 
       <Pressable onPress={onCancel} style={{ marginTop: 16 }}>
-        <Text style={styles.cancel}>{cancelLabel}</Text>
+        <Text style={styles.cancel}>{resolvedCancel}</Text>
       </Pressable>
     </View>
   );

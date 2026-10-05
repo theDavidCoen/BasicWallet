@@ -1,0 +1,21 @@
+{
+  "title": "NOTIFICHE",
+  "caption": "Riattivazione opt-in per Pay in Chat e condivisione contatti\nmentre Basic è chiusa. Disattivata di default.",
+  "closedAppAlerts": "Avvisi a app chiusa",
+  "closedAppHint": "Solo opachi («Nuovo messaggio Pay»). Mai importi, memo o indirizzi. Le ricezioni Bitcoin classiche si aggiornano quando apri l’app — niente tray.\n\nSuggerimento: non usare «Forza interruzione» di sistema. Scorri via va bene. Su Xiaomi / Samsung, consenti batteria senza limitazioni per Basic così il wake in tray funziona a app chiusa.",
+  "permAndroidOnly": "Solo Android",
+  "permGranted": "Permesso OS: concesso",
+  "permDenied": "Permesso OS: negato — abilitalo nelle impostazioni di sistema",
+  "permStatus": "Permesso OS: %{status}",
+  "alertAndroidOnlyTitle": "Solo Android",
+  "alertAndroidOnlyBody": "Il push a app chiusa arriva prima su Android. iOS più avanti.",
+  "alertNostrRequiredTitle": "Identità Nostr richiesta",
+  "alertNostrRequiredBody": "Crea o importa prima un’identità Nostr (Impostazioni → Identità Nostr).",
+  "alertPermissionTitle": "Permesso necessario",
+  "alertPermissionBody": "Consenti le notifiche nelle impostazioni di sistema per riattivare Basic sui messaggi Pay mentre l’app è chiusa.",
+  "alertRegisteredLocallyTitle": "Registrato in locale",
+  "alertRegisteredLocallyBody": "Il notifier non è ancora raggiungibile:\n%{reason}\n\nIl wake in tray richiede credenziali Firebase + sidecar deployato. Il catch-up classico all’apertura continua a funzionare.",
+  "nostrMissing": "Identità Nostr: assente — richiesta per registrarsi.",
+  "nostrReady": "Identità Nostr: pronta (npub registrato in background).",
+  "notAndroidBuild": "Questa build non è Android — toggle disabilitato."
+}
