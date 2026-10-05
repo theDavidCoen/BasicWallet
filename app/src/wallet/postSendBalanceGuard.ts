@@ -330,6 +330,16 @@ export function decidePostSendPersist(
           skipFloorPin: true,
         });
       }
+      // α95 Xiaomi: notify double-credit left Home/ack above live with no
+      // outbound optimistic. floor-pin stuck 12406 while ASP spent 9495.
+      // Heal whenever we are not holding a real local spend.
+      if (!hasAppliedLocalSpend(input) && input.optimisticTotal == null) {
+        return finish("floor-heal", {
+          adoptLive: true,
+          writeAck: true,
+          skipFloorPin: true,
+        });
+      }
       return {
         adoptLive: false,
         writeAck: false,

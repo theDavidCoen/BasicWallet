@@ -8,6 +8,7 @@ import {
   settleCatchUpCredit,
   getCatchUpCreditForWallet,
   setCatchUpCreditForWallet,
+  seedPollAdoptCatchUpCredit,
   CATCH_UP_EXACT_MATCH_TTL_MS,
   CATCH_UP_SETTLED_TTL_MS,
   type CatchUpCredit,
@@ -240,6 +241,25 @@ console.log("catchUpCredit scenarios\n");
   // No seed at all (catch-up-while-away):
   const none = consumeCatchUpCredit(null, 800, { now: 0 });
   assert("no credit apply full 800", eq(none.applyAmount, 800));
+}
+
+{
+  console.log("\n14) α95 Xiaomi: poll-adopt +2911 then notify must not double Home");
+  // Poll home/notify adopted UI to 9495 (delta 2911) without raising ack.
+  let c = seedPollAdoptCatchUpCredit(null, 2911, { now: 0, noticeSettled: true });
+  assert("seeded 2911", eq(c?.sats ?? -1, 2911));
+  // Second path (already-on-screen) must not stack another 2911.
+  c = seedPollAdoptCatchUpCredit(c, 2911, { now: 1_000, noticeSettled: true });
+  assert("re-seed same amount stays 2911", eq(c?.sats ?? -1, 2911));
+  const notify = consumeCatchUpCredit(c, 2911, { now: 60_000 });
+  assert("notify apply 0 (no double)", eq(notify.applyAmount, 0));
+  assert("notify consumes seed", notify.consumed === 2911 || eq(notify.consumed, 2911));
+  assert("credit cleared", notify.credit === null);
+  // Simulated Home: start 6584 → poll to 9495 → notify must stay 9495.
+  const homeAfterPoll = 6584 + 2911;
+  const homeAfterNotify = homeAfterPoll + notify.applyAmount;
+  assert("Home stays 9495", eq(homeAfterNotify, 9495));
+  assert("Home not 12406", !eq(homeAfterNotify, 12406));
 }
 
 console.log(failed === 0 ? "\nAll scenarios passed." : `\n${failed} scenario(s) failed.`);

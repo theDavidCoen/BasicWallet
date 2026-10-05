@@ -376,7 +376,8 @@ console.log("postSendBalanceGuard provider scenarios\n");
     pinned.reason === "hold-expired" && pinned.skipFloorPin && !pinned.floorPinned,
     JSON.stringify(pinned),
   );
-  const wouldPin = decidePostSendPersist({
+  // α95: without local spend, overshoot vs live heals (was legacy floor-pin).
+  const wouldHeal = decidePostSendPersist({
     now: 310_000,
     suppressUntil: 0,
     holdUntil: 0,
@@ -389,9 +390,11 @@ console.log("postSendBalanceGuard provider scenarios\n");
     displayedTotal: OPT,
   });
   assert(
-    "floor pins only when no expiry release and ack still high",
-    wouldPin.floorPinned && wouldPin.reason === "floor-pin",
-    JSON.stringify(wouldPin),
+    "α95 heals overshoot when no local spend (was floor-pin)",
+    wouldHeal.reason === "floor-heal" &&
+      wouldHeal.adoptLive &&
+      !wouldHeal.floorPinned,
+    JSON.stringify(wouldHeal),
   );
 }
 
@@ -825,6 +828,49 @@ console.log("postSendBalanceGuard provider scenarios\n");
   );
   applyInbound(s, second);
   assert("Home 8895 after both", s.home === 8895, `home ${s.home}`);
+}
+
+{
+  console.log("\nα95) floor-heal when Home overshoots live with no local spend");
+  // Xiaomi: notify double-credit left displayed/ack 12406 while ASP live 9495.
+  const r = decidePostSendPersist({
+    now: 200_000,
+    suppressUntil: 0,
+    holdUntil: 0,
+    preSendTotal: null,
+    localSpend: null,
+    optimisticTotal: null,
+    selectedVtxoTotal: null,
+    liveTotal: 9495,
+    ackTotal: 12406,
+    displayedTotal: 12406,
+    fiatMode: false,
+    postOpen: false,
+    awaitingRecv: false,
+  });
+  assert("adoptLive heals overshoot", r.adoptLive === true, JSON.stringify(r));
+  assert("writeAck to live", r.writeAck === true);
+  assert("reason floor-heal", r.reason === "floor-heal", r.reason);
+  assert("homeTotal live 9495", r.homeTotal === 9495, `home ${r.homeTotal}`);
+  // Still pin when a real outbound optimistic is active.
+  const pin = decidePostSendPersist({
+    now: 200_000,
+    suppressUntil: 0,
+    holdUntil: 0,
+    preSendTotal: 15000,
+    localSpend: 2000,
+    optimisticTotal: 13000,
+    selectedVtxoTotal: null,
+    liveTotal: 9495,
+    ackTotal: 12406,
+    displayedTotal: 12406,
+    fiatMode: false,
+  });
+  assert(
+    "still floor-pin with local spend",
+    pin.reason === "floor-pin" && pin.adoptLive === false,
+    JSON.stringify(pin),
+  );
 }
 
 console.log(failed === 0 ? "\nAll scenarios passed." : `\n${failed} scenario(s) failed.`);

@@ -97,6 +97,7 @@ import { markWarmupSeen, clearWarmupSeen } from "./warmupSeen";
 import { balanceFromSdk, type BalanceBreakdown } from "./balance";
 import {
   addCatchUpCredit,
+  seedPollAdoptCatchUpCredit,
   CATCH_UP_CREDIT_EPS,
   CATCH_UP_EXACT_MATCH_TTL_MS,
   consumeCatchUpCredit,
@@ -233,7 +234,12 @@ type WalletContextValue = {
   /** Cheap getBalance only — no activity materialize (Receive boarding poll). */
   refreshBalanceOnly: () => Promise<void>;
   /** Rematerialize activity_idx only (no balance). Safe for Activity pull-to-refresh. */
-  refreshActivity: () => Promise<void>;
+  refreshActivity: (opts?: { force?: boolean }) => Promise<void>;
+  /**
+   * User-initiated Home pull-to-resync: balance + activity.
+   * Bypasses activity rematerialize cool-down. Does not fight an in-flight send.
+   */
+  forceResync: () => Promise<void>;
   ensureBoardingAddress: () => Promise<string>;
   rotateReceiveAddress: () => Promise<string>;
   rotateBoardingAddress: () => Promise<string>;
@@ -1571,6 +1577,19 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
               live: bal.total,
               ackTotal: ack.total,
             });
+            // α95: seed exact-match credit so late notify does not double-apply.
+            setCatchUpCreditForWallet(
+              catchUpCreditByWalletRef.current,
+              walletId,
+              seedPollAdoptCatchUpCredit(
+                getCatchUpCreditForWallet(
+                  catchUpCreditByWalletRef.current,
+                  walletId,
+                ),
+                totalDelta,
+                { noticeSettled: true },
+              ),
+            );
           } else if (
             // Exact carrier deltas only (330 / 660) — not every small pay (α74).
             totalDelta > 0 &&
@@ -1616,6 +1635,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 // α88: adopt UI when notify owns toast. Prior early-return left
                 // Home stale if push never ack'd. Do not raise lastAck — notify
                 // path acknowledges; poll can still toast if push stays silent.
+                // α95: still seed catch-up credit for the adopted delta so a late
+                // notifyIncomingFunds of the same amount cannot applyLocalReceive again.
+                if (totalDelta > 0) {
+                  setCatchUpCreditForWallet(
+                    catchUpCreditByWalletRef.current,
+                    walletId,
+                    seedPollAdoptCatchUpCredit(
+                      getCatchUpCreditForWallet(
+                        catchUpCreditByWalletRef.current,
+                        walletId,
+                      ),
+                      totalDelta,
+                      { noticeSettled: true },
+                    ),
+                  );
+                }
                 prevBoardingRef.current = bal.boarding;
                 prevBalanceRef.current = bal;
                 balanceBaselineReadyRef.current = true;
@@ -2460,13 +2495,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, [wallet, selectedWallet, loadBalance]);
 
   /** Activity pull-to-refresh: history only — never block on getBalance. */
-  const refreshActivity = useCallback(async () => {
+  const refreshActivity = useCallback(async (opts?: { force?: boolean }) => {
     // Never rematerialize during outbound send — fights wallet.send (α69).
     if (aspPollPausedRef.current > 0) return;
     const walletId = selectedIdRef.current;
     if (!walletId) return;
     // Cooldown after timeouts — stacked rematerialize froze Xiaomi (α70). Per wallet.
+    // User force-resync (Home pull) bypasses cool-down.
     if (
+      !opts?.force &&
       isWalletCoolingDown(
         activityRematerializeCoolUntilRef.current,
         walletId,
@@ -2475,6 +2512,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     ) {
       console.warn("[basic] activity rematerialize cool-down", walletId.slice(0, 8));
       return;
+    }
+    if (opts?.force) {
+      delete activityRematerializeCoolUntilRef.current[walletId];
     }
     const inFlight = activityRefreshInFlightRef.current[walletId];
     if (
@@ -2569,6 +2609,21 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     return promise;
   }, [wallet, selectedWallet]);
   refreshActivityRef.current = refreshActivity;
+
+  /** Home swipe-down: live balance + activity rematerialize (user force). */
+  const forceResync = useCallback(async () => {
+    if (aspPollPausedRef.current > 0) {
+      console.warn("[basic] forceResync skipped (outbound send)");
+      return;
+    }
+    console.warn("[basic] forceResync home");
+    setBalanceStatus("loading");
+    try {
+      await Promise.all([refresh(), refreshActivity({ force: true })]);
+    } catch (e) {
+      console.warn("[basic] forceResync failed", e);
+    }
+  }, [refresh, refreshActivity]);
 
   const rotateReceiveAddress = useCallback(async () => {
     const walletId = selectedIdRef.current;
@@ -3829,6 +3884,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       refresh,
       refreshBalanceOnly,
       refreshActivity,
+      forceResync,
       ensureBoardingAddress,
       rotateReceiveAddress,
       rotateBoardingAddress,
@@ -3882,6 +3938,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       refresh,
       refreshBalanceOnly,
       refreshActivity,
+      forceResync,
       ensureBoardingAddress,
       rotateReceiveAddress,
       rotateBoardingAddress,

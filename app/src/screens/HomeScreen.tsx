@@ -84,6 +84,7 @@ export function HomeScreen() {
     selectedWallet,
     avatarLabel,
     bumpActivity,
+    forceResync,
   } = useWallet();
   const {
     fiatMode,
@@ -434,7 +435,23 @@ export function HomeScreen() {
     dragStartX: scanDragStart,
   } = scanMotion;
 
-  const { pan, homeSwipe } = useMemo(() => {
+  const onPullResyncJS = useCallback(() => {
+    void forceResync();
+  }, [forceResync]);
+
+  const { pan, homeSwipe, pullResync } = useMemo(() => {
+    /** Swipe down from below the logo → force balance + activity resync (α95). */
+    const pullDown = Gesture.Pan()
+      .enabled(!activityOpen && !posOpen && !scanOpen && !fiatModeSheetOpen)
+      .activeOffsetY(28)
+      .failOffsetX([-36, 36])
+      .onEnd((e) => {
+        "worklet";
+        if (e.translationY > 72) {
+          runOnJS(onPullResyncJS)();
+        }
+      });
+
     const activityPan = Gesture.Pan()
       .activeOffsetY([-4, 4])
       .failOffsetX([-40, 40])
@@ -587,16 +604,18 @@ export function HomeScreen() {
         }
       });
 
-    return { pan: activityPan, homeSwipe: swipe };
+    return { pan: activityPan, homeSwipe: swipe, pullResync: pullDown };
   }, [
     activityOpen,
     beginPosDrag,
     beginScanDrag,
     clearHomeDragJS,
     dragStartY,
+    fiatModeSheetOpen,
     finishDismissJS,
     finishPosDismissJS,
     finishScanDismissJS,
+    onPullResyncJS,
     settlePosOpen,
     settleScanOpen,
     offY,
@@ -713,7 +732,11 @@ export function HomeScreen() {
           onLongPressEmpty={openSettings}
         >
           <View style={styles.flex}>
-            <View style={styles.center}>
+            <GestureDetector gesture={pullResync}>
+            <View
+              style={styles.center}
+              accessibilityHint="Swipe down to resync balance and activity"
+            >
               <View style={styles.walletTagRow}>
                 <Text style={styles.walletTag}>
                   {stripFiatModeLabelSuffix(selectedWallet?.label ?? "Personal")}
@@ -782,6 +805,7 @@ export function HomeScreen() {
                 </Pressable>
               </View>
             </View>
+            </GestureDetector>
 
             <Pressable
               style={styles.chatPayCard}

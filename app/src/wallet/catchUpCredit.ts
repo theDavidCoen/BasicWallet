@@ -200,6 +200,33 @@ export function isExactMatchCatchUpCredit(credit: CatchUpCredit | null): boolean
   return credit != null && credit.exactMatchTtlMs != null;
 }
 
+/**
+ * Seed an exact-match budget after poll adopts Home (home/notify or already-on-screen)
+ * so a later notifyIncomingFunds of the same amount does not applyLocalReceive again.
+ * α95 Xiaomi: poll adopted +2911 → 9495, then notify re-added → 12406.
+ */
+export function seedPollAdoptCatchUpCredit(
+  prev: CatchUpCredit | null,
+  deltaSats: number,
+  opts: { now?: number; noticeSettled?: boolean } = {},
+): CatchUpCredit | null {
+  const add = Math.floor(deltaSats);
+  if (!(add > 0)) return prev;
+  if (prev && prev.sats > 0) {
+    // Already covering this amount (exact seed or running budget ≥ delta).
+    if (Math.abs(prev.sats - add) <= CATCH_UP_CREDIT_EPS) return prev;
+    if (prev.exactMatchTtlMs == null && prev.sats + CATCH_UP_CREDIT_EPS >= add) {
+      return prev;
+    }
+  }
+  return addCatchUpCredit(prev, add, {
+    now: opts.now,
+    noticeSettled: opts.noticeSettled ?? true,
+    exactMatchOnly: true,
+    exactMatchTtlMs: CATCH_UP_EXACT_MATCH_TTL_MS,
+  });
+}
+
 /** Per-wallet credit map — switch must not wipe another wallet's budget. */
 export type CatchUpCreditByWallet = Record<string, CatchUpCredit>;
 
