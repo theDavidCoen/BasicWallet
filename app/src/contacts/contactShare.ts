@@ -7,6 +7,7 @@ import { SimplePool } from "nostr-tools/pool";
 import { wrapEvent } from "nostr-tools/nip17";
 import { decode, npubEncode } from "nostr-tools/nip19";
 import { mergeNostrRelays, readBackupMeta } from "../nostr/backupPackage";
+import { HOME_RELAY_HINT } from "../notifications/config";
 import {
   hasNostrIdentity,
   loadNostrKeyPairForCrypto,
@@ -53,9 +54,15 @@ export type ShareContactResult = {
 };
 
 async function resolveRelays(extra?: string[]): Promise<string[]> {
-  if (extra?.length) return mergeNostrRelays(extra);
   const meta = await readBackupMeta();
-  return mergeNostrRelays(meta?.relays);
+  const merged = mergeNostrRelays([
+    HOME_RELAY_HINT,
+    ...(extra ?? []),
+    ...(meta?.relays ?? []),
+  ]);
+  const home = merged.find((u) => u.toLowerCase().includes("relay.davidcoen.it"));
+  if (!home) return mergeNostrRelays([HOME_RELAY_HINT, ...merged]);
+  return [home, ...merged.filter((u) => u !== home)];
 }
 
 export function contactToSharePayload(contact: Contact): SharedContactPayload {
@@ -228,34 +235,39 @@ export async function shareContactToRecipient(
 
   const wrap = wrapEvent(pair.sk, { publicKey: recipient.pubkeyHex }, JSON.stringify(message));
   const urls = await resolveRelays(opts?.relays);
+  const homeUrl =
+    urls.find((u) => u.toLowerCase().includes("relay.davidcoen.it")) ?? HOME_RELAY_HINT;
   const pool = new SimplePool();
   const okRelays: string[] = [];
   const failedRelays: { url: string; error: string }[] = [];
 
   try {
-    const pubs = pool.publish(urls, wrap);
-    const settled = await Promise.allSettled(pubs);
-    for (let i = 0; i < urls.length; i++) {
-      const url = urls[i]!;
-      const r = settled[i]!;
-      if (r.status === "fulfilled") okRelays.push(url);
-      else {
-        failedRelays.push({
-          url,
-          error: r.reason instanceof Error ? r.reason.message : String(r.reason),
-        });
-      }
+    const homeSettled = await Promise.allSettled(pool.publish([homeUrl], wrap));
+    if (!homeSettled.some((r) => r.status === "fulfilled")) {
+      const err = homeSettled.find((r) => r.status === "rejected") as PromiseRejectedResult | undefined;
+      throw new Error(
+        `Share failed on home relay (${homeUrl}): ${
+          err?.reason instanceof Error ? err.reason.message : String(err?.reason ?? "rejected")
+        }`,
+      );
+    }
+    okRelays.push(homeUrl);
+    const rest = urls.filter((u) => u !== homeUrl);
+    if (rest.length) {
+      const restSettled = await Promise.allSettled(pool.publish(rest, wrap));
+      restSettled.forEach((r, i) => {
+        const url = rest[i]!;
+        if (r.status === "fulfilled") okRelays.push(url);
+        else {
+          failedRelays.push({
+            url,
+            error: r.reason instanceof Error ? r.reason.message : String(r.reason),
+          });
+        }
+      });
     }
   } finally {
-    pool.close(urls);
-  }
-
-  if (!okRelays.length) {
-    throw new Error(
-      failedRelays[0]?.error
-        ? `Share failed: ${failedRelays[0].error}`
-        : "Share failed on all relays",
-    );
+    pool.close(urls.includes(homeUrl) ? urls : [homeUrl, ...urls]);
   }
 
   return {

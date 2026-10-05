@@ -69,6 +69,8 @@ export type RootStackParamList = {
       }
     | undefined;
   Privacy: undefined;
+  /** Android closed-app push (opt-in opaque FCM for kind 1059). */
+  Notifications: undefined;
   SetAppPin:
     | {
         intent?: "set" | "change" | "remove" | "onboarding";

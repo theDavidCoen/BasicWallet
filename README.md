@@ -66,6 +66,7 @@ Gestures (Activity pull, POS/Scan swipes, Send Enter/Paste/My wallets/Scan, Fiat
 | Path | Role |
 |------|------|
 | [`app/`](./app/) | Expo client (TypeScript) |
+| [`notifier/`](./notifier/) | Closed-app push sidecar (Nostr kind 1059 → opaque FCM); deploy beside strfry |
 | [`prototype/docs/`](./prototype/docs/) | Product / UX / Arkade tech specs |
 | [`docs/`](./docs/) | How to use, reproducible builds, passkey asset links, notes |
 | [`scripts/`](./scripts/) | Release APK build helpers |

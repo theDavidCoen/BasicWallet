@@ -191,6 +191,45 @@ export async function catchUpContactShares(opts?: { force?: boolean }): Promise<
   return catchUpInFlight;
 }
 
+/**
+ * Fetch + ingest one gift-wrap by id (push deep-link). Always closes the pool.
+ */
+export async function catchUpGiftWrapByEventId(eventId: string): Promise<void> {
+  const id = eventId.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(id)) return;
+  try {
+    if (!(await hasNostrIdentity())) return;
+    const pair = await loadNostrKeyPairForCrypto();
+    if (!pair) return;
+    const meta = await readBackupMeta();
+    const urls = mergeNostrRelays([
+      "wss://relay.davidcoen.it",
+      ...(meta?.relays ?? []),
+    ]);
+    const pool = new SimplePool();
+    try {
+      const batches = await Promise.all(
+        urls.map(async (url) => {
+          try {
+            return await pool.querySync([url], { ids: [id] }, { maxWait: 1_500 });
+          } catch {
+            return [] as Event[];
+          }
+        }),
+      );
+      for (const events of batches) {
+        for (const ev of events) {
+          if (ev?.id === id) await handleWrap(ev, pair.sk);
+        }
+      }
+    } finally {
+      pool.close(urls);
+    }
+  } catch (e) {
+    console.warn("[basic] gift-wrap by-id catch-up failed", e);
+  }
+}
+
 /** Foreground / boot: refresh live sub + debounced catch-up. */
 export function resumeContactShareWatch(): void {
   stopContactShareWatch();

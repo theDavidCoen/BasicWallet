@@ -1,0 +1,40 @@
+# Example nginx site for the Basic push notifier beside strfry.
+# Adjust server_name / cert paths to match the host.
+
+limit_req_zone $binary_remote_addr zone=basic_notifier:10m rate=30r/m;
+
+upstream basic_notifier {
+  server 127.0.0.1:8787;
+  keepalive 8;
+}
+
+server {
+  listen 443 ssl http2;
+  server_name notifier.davidcoen.it;
+
+  # ssl_certificate     /etc/letsencrypt/live/notifier.davidcoen.it/fullchain.pem;
+  # ssl_certificate_key /etc/letsencrypt/live/notifier.davidcoen.it/privkey.pem;
+
+  location /health {
+    proxy_pass http://basic_notifier;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  location /v1/ {
+    limit_req zone=basic_notifier burst=10 nodelay;
+    proxy_pass http://basic_notifier;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Basic-Notifier-Key $http_x_basic_notifier_key;
+    client_max_body_size 16k;
+  }
+
+  location / {
+    return 404;
+  }
+}

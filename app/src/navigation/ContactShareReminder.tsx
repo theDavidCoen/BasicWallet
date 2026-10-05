@@ -26,6 +26,7 @@ import {
   stopContactShareWatch,
 } from "../contacts/contactShareWatch";
 import { contactDisplayName, midEllipsis } from "../contacts/types";
+import { unregisterPushBestEffort } from "../notifications/register";
 import { useWallet } from "../wallet/WalletProvider";
 import { useSheets } from "./SheetHost";
 import { colors } from "../theme/colors";
@@ -74,6 +75,8 @@ export function ContactShareReminder({
   useEffect(() => {
     if (!hasWallet) {
       stopContactShareWatch();
+      // Same spirit as gift-wrap stop — drop FCM registration on logout/wipe.
+      void unregisterPushBestEffort();
       setOffer(null);
       return;
     }

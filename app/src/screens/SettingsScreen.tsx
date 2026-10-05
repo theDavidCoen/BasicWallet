@@ -23,6 +23,7 @@ type NavTarget =
   | "ResetApp"
   | "Logs"
   | "Privacy"
+  | "Notifications"
   | "ConnectedNode"
   | "ArkadeSettings"
   | "PairBluetooth"
@@ -46,6 +47,7 @@ const BLOCKS: Block[] = [
 
   { kind: "section", title: "Account" },
   { kind: "row", row: { label: "Privacy", on: "Privacy" } },
+  { kind: "row", row: { label: "Notifications", on: "Notifications" } },
   { kind: "row", row: { label: "Nostr identity", on: "NostrIdentity" } },
   { kind: "row", row: { label: "Archived wallets", on: "ArchivedWallets" } },
   { kind: "row", row: { label: "Contacts", on: "Contacts" } },
