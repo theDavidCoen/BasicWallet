@@ -7,7 +7,7 @@ import { useNavigation } from "@react-navigation/native";
 import { Pressable, ScrollView, StyleSheet, Text } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 
 const DANGER = "#E07070";
@@ -107,12 +107,13 @@ export function SettingsScreen() {
                 navigation.navigate(row.on);
               }}
             >
-              <AdaptiveText
-                style={[styles.rowLabel, row.danger && styles.dangerLabel]}
-                baseFontSize={16}
-              >
+              <Text
+                style={[
+                  styles.rowLabel,
+                  row.danger && styles.dangerLabel
+                ]}>
                 {label}
-              </AdaptiveText>
+              </Text>
               <Text style={[styles.chevron, row.danger && styles.dangerLabel]}>
                 {row.stub ? t("common.soon") : "›"}
               </Text>

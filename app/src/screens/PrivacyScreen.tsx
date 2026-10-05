@@ -4,7 +4,7 @@ import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import * as ScreenCapture from "expo-screen-capture";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { hasAppPin } from "../security/appPin";
 import {
   getOsBiometricsStatus,
@@ -57,9 +57,9 @@ export function PrivacyScreen() {
   if (!settings) {
     return (
       <ScreenChrome logoScale={0.77}>
-        <AdaptiveText style={ui.title} baseFontSize={20}>
+        <Text style={ui.title}>
           {t("privacy.title")}
-        </AdaptiveText>
+        </Text>
       </ScreenChrome>
     );
   }
@@ -74,9 +74,9 @@ export function PrivacyScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <AdaptiveText style={ui.title} baseFontSize={20}>
+      <Text style={ui.title}>
         {t("privacy.title")}
-      </AdaptiveText>
+      </Text>
       <Text style={ui.caption}>{t("privacy.caption")}</Text>
 
       <ToggleRow
@@ -93,9 +93,9 @@ export function PrivacyScreen() {
       {osBio && !osBio.available ? (
         <Pressable style={styles.row} onPress={() => void openOsSecuritySettings()}>
           <View style={styles.rowText}>
-            <AdaptiveText style={styles.label} baseFontSize={15}>
+            <Text style={styles.label}>
               {t("privacy.enableOsBiometrics")}
-            </AdaptiveText>
+            </Text>
             <Text style={styles.hint}>{t("privacy.enableOsBiometricsHint")}</Text>
           </View>
           <Text style={styles.chevron}>›</Text>
@@ -109,9 +109,9 @@ export function PrivacyScreen() {
         }
       >
         <View style={styles.rowText}>
-          <AdaptiveText style={styles.label} baseFontSize={15}>
+          <Text style={styles.label}>
             {t("privacy.appPin")}
-          </AdaptiveText>
+          </Text>
           <Text style={styles.hint}>
             {pinSet
               ? osBio?.available
@@ -131,9 +131,9 @@ export function PrivacyScreen() {
           onPress={() => navigation.navigate("SetAppPin", { intent: "remove" })}
         >
           <View style={styles.rowText}>
-            <AdaptiveText style={styles.label} baseFontSize={15}>
+            <Text style={styles.label}>
               {t("privacy.removeAppPin")}
-            </AdaptiveText>
+            </Text>
             <Text style={styles.hint}>
               {osBio?.available
                 ? t("privacy.removeAppPinHintBioOn")
@@ -168,9 +168,9 @@ function ToggleRow({
   return (
     <Pressable style={styles.row} onPress={() => onChange(!value)}>
       <View style={styles.rowText}>
-        <AdaptiveText style={styles.label} baseFontSize={15}>
+        <Text style={styles.label}>
           {label}
-        </AdaptiveText>
+        </Text>
         <Text style={styles.hint}>{hint}</Text>
       </View>
       <Switch

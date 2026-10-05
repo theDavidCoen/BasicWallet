@@ -30,7 +30,7 @@ import { createFeeOnchainWallet, pollFeeBalance } from "../exit/feeWallet";
 import { loadExitPackage, readExitPackageMeta } from "../exit/packageStore";
 import type { ExitPackageMeta } from "../exit/packageStore";
 import { useWallet } from "../wallet/WalletProvider";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -182,7 +182,7 @@ export function UnilateralExitFundScreen() {
           style={ui.primaryBtn}
           onPress={() => navigation.navigate("UnilateralExitPrepare")}
         >
-          <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("exit.goToPrepare")}</AdaptiveText>
+          <Text style={ui.primaryBtnText}>{t("exit.goToPrepare")}</Text>
         </Pressable>
       </ScreenChrome>
     );
@@ -225,9 +225,9 @@ export function UnilateralExitFundScreen() {
             })}
           </Text>
           <Pressable style={ui.secondaryBtn} onPress={() => void onCopyFee()}>
-            <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>
+            <Text style={ui.secondaryBtnText}>
               {t("exit.copyFeeAddress")}
-            </AdaptiveText>
+            </Text>
           </Pressable>
         </View>
 
@@ -251,7 +251,7 @@ export function UnilateralExitFundScreen() {
             style={ui.secondaryBtn}
             onPress={() => navigation.navigate("UnilateralExitPrepare")}
           >
-            <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>{t("exit.repreparePackage")}</AdaptiveText>
+            <Text style={ui.secondaryBtnText}>{t("exit.repreparePackage")}</Text>
           </Pressable>
         ) : null}
 
@@ -264,13 +264,13 @@ export function UnilateralExitFundScreen() {
             })
           }
         >
-          <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>
+          <Text style={ui.primaryBtnText}>
             {mismatch
               ? t("exit.fixPackageFirst")
               : funded
                 ? t("exit.continueStartExecute")
                 : t("exit.waitingFeeFunds")}
-          </AdaptiveText>
+          </Text>
         </Pressable>
       </ScrollView>
     </ScreenChrome>

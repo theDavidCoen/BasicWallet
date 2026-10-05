@@ -31,7 +31,7 @@ import { validateBackupPassphrase } from "../nostr/passphrasePolicy";
 import { backupPassphraseChecklist } from "../nostr/passphrasePolicy";
 import { ensureNostrIdentity, hasNostrIdentity } from "../nostr/identityStore";
 import { requireUserPresence } from "../security/userPresence";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -284,7 +284,7 @@ export function NostrBackupScreen() {
 
         {customRelays.length < MAX_CUSTOM_RELAYS ? (
           <Pressable style={styles.addRelayBtn} onPress={addCustomRelay}>
-            <AdaptiveText style={styles.addRelayText} baseFontSize={14}>{t("backup.addCustomRelay")}</AdaptiveText>
+            <Text style={styles.addRelayText}>{t("backup.addCustomRelay")}</Text>
           </Pressable>
         ) : null}
 
@@ -321,7 +321,7 @@ export function NostrBackupScreen() {
               {busy ? (
                 <ActivityIndicator color="#000" />
               ) : (
-                <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("backup.next")}</AdaptiveText>
+                <Text style={ui.primaryBtnText}>{t("backup.next")}</Text>
               )}
             </Pressable>
           </>
@@ -361,7 +361,7 @@ export function NostrBackupScreen() {
               {busy ? (
                 <ActivityIndicator color="#000" />
               ) : (
-                <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("backup.updateAndPublish")}</AdaptiveText>
+                <Text style={ui.primaryBtnText}>{t("backup.updateAndPublish")}</Text>
               )}
             </Pressable>
 
@@ -373,7 +373,7 @@ export function NostrBackupScreen() {
               {busy ? (
                 <ActivityIndicator color={colors.fg} />
               ) : (
-                <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>{t("backup.disableNostr")}</AdaptiveText>
+                <Text style={ui.secondaryBtnText}>{t("backup.disableNostr")}</Text>
               )}
             </Pressable>
           </>

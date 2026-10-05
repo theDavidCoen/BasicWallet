@@ -9,7 +9,7 @@ import {
 import { useFocusEffect, useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { hasAppPin } from "../security/appPin";
 import {
   getOsBiometricsStatus,
@@ -76,15 +76,15 @@ export function OnboardingSecurityScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <AdaptiveText style={ui.title} baseFontSize={20}>
+      <Text style={ui.title}>
         {t("privacy.secureDeviceTitle")}
-      </AdaptiveText>
+      </Text>
       <Text style={ui.caption}>{t("privacy.secureDeviceCaption")}</Text>
 
       <View style={ui.card}>
-        <AdaptiveText style={ui.cardTitle} baseFontSize={15}>
+        <Text style={ui.cardTitle}>
           {t("privacy.osFaceIdTitle")}
-        </AdaptiveText>
+        </Text>
         <Text style={[ui.caption, { textAlign: "left", marginBottom: 12 }]}>
           {bioAvailable
             ? t("privacy.osBioEnabled")
@@ -95,17 +95,17 @@ export function OnboardingSecurityScreen() {
             style={styles.secondary}
             onPress={() => void openOsSecuritySettings()}
           >
-            <AdaptiveText style={styles.secondaryText} baseFontSize={14}>
+            <Text style={styles.secondaryText}>
               {t("privacy.openSystemSettings")}
-            </AdaptiveText>
+            </Text>
           </Pressable>
         ) : null}
       </View>
 
       <View style={pinSet ? ui.card : ui.cardMuted}>
-        <AdaptiveText style={ui.cardTitle} baseFontSize={15}>
+        <Text style={ui.cardTitle}>
           {t("privacy.appPin")}
-        </AdaptiveText>
+        </Text>
         <Text style={[ui.caption, { textAlign: "left", marginBottom: 12 }]}>
           {bioAvailable
             ? pinSet
@@ -125,9 +125,9 @@ export function OnboardingSecurityScreen() {
               })
             }
           >
-            <AdaptiveText style={styles.secondaryText} baseFontSize={14}>
+            <Text style={styles.secondaryText}>
               {t("privacy.setAppPinCta")}
-            </AdaptiveText>
+            </Text>
           </Pressable>
         ) : (
           <Text style={styles.ok}>{t("privacy.pinReady")}</Text>
@@ -142,9 +142,9 @@ export function OnboardingSecurityScreen() {
         {busy ? (
           <ActivityIndicator color="#000" />
         ) : (
-          <AdaptiveText style={ui.primaryBtnText} baseFontSize={16}>
+          <Text style={ui.primaryBtnText}>
             {t("common.continue")}
-          </AdaptiveText>
+          </Text>
         )}
       </Pressable>
 

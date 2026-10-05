@@ -6,7 +6,7 @@ import { useCallback, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { ScreenChrome } from "../components/ScreenChrome";
-import { AdaptiveText, useI18n, type LanguagePreference } from "../i18n";
+import { useI18n, type LanguagePreference } from "../i18n";
 import { resolveDeviceLocale } from "../i18n/languagePrefs";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
@@ -67,9 +67,9 @@ export function LanguageScreen() {
             disabled={saving}
           >
             <View style={styles.rowText}>
-              <AdaptiveText style={styles.label} baseFontSize={16}>
+              <Text style={styles.label}>
                 {label}
-              </AdaptiveText>
+              </Text>
               {row.hint ? (
                 <Text style={styles.hint} numberOfLines={2}>
                   {row.hint}

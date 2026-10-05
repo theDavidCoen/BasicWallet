@@ -9,7 +9,7 @@ import { ScreenChrome } from "../components/ScreenChrome";
 import { getNetworkConfig } from "../config/network";
 import { useFiatMode } from "../fiat/FiatModeProvider";
 import { fiatFeeBps } from "../fiat/depixAssets";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 
 export function BitcoinMaxiSettingsScreen() {
@@ -22,9 +22,9 @@ export function BitcoinMaxiSettingsScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <AdaptiveText style={styles.title} baseFontSize={20}>
+      <Text style={styles.title}>
         {t("fiat.maxiTitle")}
-      </AdaptiveText>
+      </Text>
       <Text style={styles.caption}>{t("fiat.maxiCaption1")}</Text>
       <Text style={styles.caption}>
         {t("fiat.maxiCaption2", { feePct })}
@@ -39,9 +39,9 @@ export function BitcoinMaxiSettingsScreen() {
         accessibilityLabel={t("fiat.maxiA11y", { status })}
       >
         <View style={styles.cardRow}>
-          <AdaptiveText style={styles.cardTitle} baseFontSize={15}>
+          <Text style={styles.cardTitle}>
             {t("fiat.maxiCardTitle")}
-          </AdaptiveText>
+          </Text>
           <Text style={styles.cardStatus}>{status}</Text>
         </View>
       </View>

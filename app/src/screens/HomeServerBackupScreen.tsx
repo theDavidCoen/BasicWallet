@@ -28,7 +28,7 @@ import {
   unlockBackupPassphraseSession,
 } from "../nostr/backupSync";
 import { requireUserPresence } from "../security/userPresence";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -248,7 +248,7 @@ export function HomeServerBackupScreen() {
               {busy ? (
                 <ActivityIndicator color="#000" />
               ) : (
-                <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("backup.updateAndUpload")}</AdaptiveText>
+                <Text style={ui.primaryBtnText}>{t("backup.updateAndUpload")}</Text>
               )}
             </Pressable>
 
@@ -260,7 +260,7 @@ export function HomeServerBackupScreen() {
               {busy ? (
                 <ActivityIndicator color={colors.fg} />
               ) : (
-                <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>{t("backup.disableHome")}</AdaptiveText>
+                <Text style={ui.secondaryBtnText}>{t("backup.disableHome")}</Text>
               )}
             </Pressable>
           </>
@@ -346,7 +346,7 @@ export function HomeServerBackupScreen() {
               {busy ? (
                 <ActivityIndicator color="#000" />
               ) : (
-                <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("backup.next")}</AdaptiveText>
+                <Text style={ui.primaryBtnText}>{t("backup.next")}</Text>
               )}
             </Pressable>
           </>

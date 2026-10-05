@@ -52,7 +52,7 @@ import {
   listUnreadChatThreads,
   subscribeChatStore,
 } from "../chat/chatStore";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 
 const MUTINYNET_OK = "#7DCEA0";
 const MUTINYNET_DOWN = "#E07070";
@@ -717,11 +717,11 @@ export function HomeScreen() {
                   style={styles.exitBadgeRow}
                 >
                   <View style={styles.exitDot} />
-                  <AdaptiveText style={styles.exitBadge} baseFontSize={11}>
+                  <Text style={styles.exitBadge}>
                     {activeCount === 1
                       ? t("home.exitInProgress")
                       : t("home.exitsCount", { count: activeCount })}
-                  </AdaptiveText>
+                  </Text>
                 </Pressable>
               ) : pendingSweep.count > 0 ? (
                 <Pressable
@@ -732,11 +732,11 @@ export function HomeScreen() {
                   style={styles.exitBadgeRow}
                 >
                   <View style={styles.exitDot} />
-                  <AdaptiveText style={styles.exitBadge} baseFontSize={11}>
+                  <Text style={styles.exitBadge}>
                     {t("home.exitRemaining", {
                       sats: pendingSweep.sats.toLocaleString("en-US"),
                     })}
-                  </AdaptiveText>
+                  </Text>
                 </Pressable>
               ) : null}
               {network.id === "mutinynet" ? (
@@ -782,9 +782,9 @@ export function HomeScreen() {
                       style={styles.fiatModeBadge}
                       accessibilityLabel={t("home.fiatModeOn")}
                     >
-                      <AdaptiveText style={styles.fiatModeBadgeLabel} baseFontSize={10}>
+                      <Text style={styles.fiatModeBadgeLabel}>
                         {t("home.fiatModeBadge")}
-                      </AdaptiveText>
+                      </Text>
                     </View>
                   ) : null}
                 </View>
@@ -835,9 +835,9 @@ export function HomeScreen() {
                 </Text>
               ) : null}
               {statusHint ? (
-                <AdaptiveText style={styles.statusHint} baseFontSize={12} fit={false} numberOfLines={2}>
+                <Text style={styles.statusHint} numberOfLines={2}>
                   {statusHint}
-                </AdaptiveText>
+                </Text>
               ) : null}
 
               <View style={styles.actions}>
@@ -845,17 +845,17 @@ export function HomeScreen() {
                   style={styles.ghostBtn}
                   onPressIn={() => navigation.navigate("Receive")}
                 >
-                  <AdaptiveText style={styles.ghostLabel} baseFontSize={16}>
+                  <Text style={styles.ghostLabel}>
                     {t("home.receive")}
-                  </AdaptiveText>
+                  </Text>
                 </Pressable>
                 <Pressable
                   style={styles.ghostBtn}
                   onPressIn={() => navigation.navigate("Send")}
                 >
-                  <AdaptiveText style={styles.ghostLabel} baseFontSize={16}>
+                  <Text style={styles.ghostLabel}>
                     {t("home.send")}
-                  </AdaptiveText>
+                  </Text>
                 </Pressable>
               </View>
             </View>
@@ -878,12 +878,12 @@ export function HomeScreen() {
                   </Text>
                 </View>
               ) : null}
-              <AdaptiveText style={styles.chatPayTitle} baseFontSize={16}>
+              <Text style={styles.chatPayTitle}>
                 {t("home.chatAndPay")}
-              </AdaptiveText>
-              <AdaptiveText style={styles.chatPayHint} baseFontSize={12} fit={false} numberOfLines={2}>
+              </Text>
+              <Text style={styles.chatPayHint} numberOfLines={2}>
                 {t("home.chatAndPayHint")}
-              </AdaptiveText>
+              </Text>
             </Pressable>
 
             <GestureDetector gesture={pan}>

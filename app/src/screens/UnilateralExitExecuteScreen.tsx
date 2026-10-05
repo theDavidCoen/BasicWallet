@@ -31,7 +31,7 @@ import { createFeeOnchainWallet, pollFeeBalance } from "../exit/feeWallet";
 import { loadExitPackage } from "../exit/packageStore";
 import { startExitJob } from "../exit/jobRunner";
 import { useWallet } from "../wallet/WalletProvider";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -166,7 +166,7 @@ export function UnilateralExitExecuteScreen() {
           style={ui.primaryBtn}
           onPress={() => navigation.navigate("ExitRecoveryAddress", { from: "exit" })}
         >
-          <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("exit.startFromRecovery")}</AdaptiveText>
+          <Text style={ui.primaryBtnText}>{t("exit.startFromRecovery")}</Text>
         </Pressable>
       </ScreenChrome>
     );
@@ -217,7 +217,7 @@ export function UnilateralExitExecuteScreen() {
           {starting ? (
             <ActivityIndicator color="#000" />
           ) : (
-            <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("exit.startExecute")}</AdaptiveText>
+            <Text style={ui.primaryBtnText}>{t("exit.startExecute")}</Text>
           )}
         </Pressable>
 
@@ -226,11 +226,11 @@ export function UnilateralExitExecuteScreen() {
           onPress={() => navigation.navigate("UnilateralExitFund")}
           disabled={starting}
         >
-          <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>{t("exit.backToFundFees")}</AdaptiveText>
+          <Text style={ui.secondaryBtnText}>{t("exit.backToFundFees")}</Text>
         </Pressable>
 
         <Pressable style={ui.secondaryBtn} onPress={() => void onExport()} disabled={starting}>
-          <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>{t("exit.exportPackage")}</AdaptiveText>
+          <Text style={ui.secondaryBtnText}>{t("exit.exportPackage")}</Text>
         </Pressable>
       </ScrollView>
     </ScreenChrome>

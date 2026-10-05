@@ -27,7 +27,7 @@ import {
   generatePairEphemeralKeypair,
   type PairEphemeralKeypair,
 } from "../pair/pairProtocol";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { useWallet } from "../wallet/WalletProvider";
 
 /**
@@ -234,9 +234,9 @@ export function OnboardingCreateScreen() {
           {busy ? (
             <ActivityIndicator color="#000" />
           ) : (
-            <AdaptiveText style={styles.primaryBtnText} baseFontSize={16}>
+            <Text style={styles.primaryBtnText}>
               {t("onboarding.continue")}
-            </AdaptiveText>
+            </Text>
           )}
         </Pressable>
 
@@ -259,9 +259,9 @@ export function OnboardingCreateScreen() {
           accessibilityHint={pairBusy ? pairStatus : t("onboarding.pairHint")}
         >
           <BluetoothIcon />
-          <AdaptiveText style={styles.chipText} baseFontSize={13}>
+          <Text style={styles.chipText}>
             {t("onboarding.pair")}
-          </AdaptiveText>
+          </Text>
         </Pressable>
         <Pressable
           style={styles.chip}
@@ -269,9 +269,9 @@ export function OnboardingCreateScreen() {
           accessibilityRole="button"
           accessibilityLabel={t("onboarding.restoreOptions")}
         >
-          <AdaptiveText style={styles.chipText} baseFontSize={13}>
+          <Text style={styles.chipText}>
             {t("onboarding.restoreOptions")}
-          </AdaptiveText>
+          </Text>
         </Pressable>
       </View>
 

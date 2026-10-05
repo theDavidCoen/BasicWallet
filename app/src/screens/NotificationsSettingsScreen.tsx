@@ -16,7 +16,7 @@ import {
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { ScreenChrome } from "../components/ScreenChrome";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { hasNostrIdentity } from "../nostr/identityStore";
 import {
   ensureAndroidNotificationPermission,
@@ -122,9 +122,9 @@ export function NotificationsSettingsScreen() {
   if (!ready) {
     return (
       <ScreenChrome logoScale={0.77}>
-        <AdaptiveText style={ui.title} baseFontSize={20}>
+        <Text style={ui.title}>
           {t("notifications.title")}
-        </AdaptiveText>
+        </Text>
         <ActivityIndicator color={colors.fg} style={{ marginTop: 24 }} />
       </ScreenChrome>
     );
@@ -132,9 +132,9 @@ export function NotificationsSettingsScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <AdaptiveText style={ui.title} baseFontSize={20}>
+      <Text style={ui.title}>
         {t("notifications.title")}
-      </AdaptiveText>
+      </Text>
       <Text style={ui.caption}>{t("notifications.caption")}</Text>
 
       <Pressable
@@ -143,9 +143,9 @@ export function NotificationsSettingsScreen() {
         disabled={busy || Platform.OS !== "android"}
       >
         <View style={styles.rowText}>
-          <AdaptiveText style={styles.label} baseFontSize={15}>
+          <Text style={styles.label}>
             {t("notifications.closedAppAlerts")}
-          </AdaptiveText>
+          </Text>
           <Text style={styles.hint}>{t("notifications.closedAppHint")}</Text>
         </View>
         {busy ? (

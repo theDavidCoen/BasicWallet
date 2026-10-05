@@ -3,7 +3,7 @@
  */
 
 import { ActivityIndicator, Modal, StyleSheet, Text, View } from "react-native";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { useFiatMode } from "./FiatModeProvider";
 
@@ -16,9 +16,9 @@ export function FiatModeConvertingOverlay() {
       <View style={styles.scrim}>
         <View style={styles.card}>
           <ActivityIndicator color="#fff" size="large" />
-          <AdaptiveText style={styles.title} baseFontSize={16}>
+          <Text style={styles.title}>
             {t("fiat.overlayTitle")}
-          </AdaptiveText>
+          </Text>
           <Text style={styles.msg}>
             {convertingMessage || t("fiat.pleaseWait")}
           </Text>

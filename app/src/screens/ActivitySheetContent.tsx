@@ -25,7 +25,7 @@ import { filterFiatModeActivityRows } from "../fiat/fiatActivityFilter";
 import { useFiatMode } from "../fiat/FiatModeProvider";
 import { useWallet } from "../wallet/WalletProvider";
 import { activityDepixAtomic, formatActivityAmountSigned, formatWhen, statusLabel } from "../wallet/activity";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 
 type Props = {
@@ -174,7 +174,7 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
           )}
         </Pressable>
       </View>
-      <AdaptiveText style={styles.caption} baseFontSize={12} fit={false} numberOfLines={2}>
+      <Text style={styles.caption} numberOfLines={2}>
         {selectedWallet
           ? `${selectedWallet.label}${
               selectedWallet.kind === "lightning"
@@ -182,7 +182,7 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
                 : t("activity.captionSuffixArkade")
             }`
           : t("activity.noWalletSelected")}
-      </AdaptiveText>
+      </Text>
 
       <View style={styles.searchWrap}>
         <TextInput
@@ -228,9 +228,9 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
           }
           contentContainerStyle={rows.length === 0 ? styles.emptyWrap : styles.list}
           ListEmptyComponent={
-            <AdaptiveText style={styles.empty} fit={false} numberOfLines={4} baseFontSize={14}>
+            <Text style={styles.empty} numberOfLines={4}>
               {error ?? emptyHint}
-            </AdaptiveText>
+            </Text>
           }
           renderItem={({ item }) => {
             const amountLabel = formatActivityAmountSigned(item, network.id);

@@ -78,7 +78,7 @@ import { catchUpBotWatch } from "../agent/botWatch";
 import { getNetworkConfig } from "../config/network";
 import { fetchFiatSpot } from "../fiat/depixAssets";
 import { useFiatMode } from "../fiat/FiatModeProvider";
-import { AdaptiveText, suggestionChipsFor, useI18n } from "../i18n";
+import { suggestionChipsFor, useI18n } from "../i18n";
 import { hasNostrIdentity } from "../nostr/identityStore";
 import { requireUserPresence } from "../security/userPresence";
 import { useWallet } from "../wallet/WalletProvider";
@@ -759,10 +759,10 @@ export function ChatThreadScreen() {
             <Text style={styles.avatarText}>{isBot ? "AI" : initials}</Text>
           </View>
           <View style={styles.headerMeta}>
-            <AdaptiveText style={styles.headerName} baseFontSize={16}>
+            <Text style={styles.headerName}>
               {isBot ? t("chat.askName", { name }) : name}
-            </AdaptiveText>
-            <AdaptiveText style={styles.headerSub} baseFontSize={12}>
+            </Text>
+            <Text style={styles.headerSub}>
               {archived
                 ? t("chat.archived")
                 : isBot
@@ -770,7 +770,7 @@ export function ChatThreadScreen() {
                   : canNostr
                     ? t("chat.privateEncrypted")
                     : t("chat.addNpubForChat")}
-            </AdaptiveText>
+            </Text>
           </View>
           {!isBot ? (
             <>
@@ -784,9 +784,9 @@ export function ChatThreadScreen() {
                     : t("chat.archiveA11y", { name })
                 }
               >
-                <AdaptiveText style={styles.editLink} baseFontSize={13}>
+                <Text style={styles.editLink}>
                   {archived ? t("chat.unarchive") : t("chat.archive")}
-                </AdaptiveText>
+                </Text>
               </Pressable>
               <Pressable
                 onPress={() => navigation.navigate("ContactEdit", { contactId })}
@@ -922,9 +922,9 @@ export function ChatThreadScreen() {
               accessibilityRole="button"
               accessibilityLabel={t("chat.requestA11y")}
             >
-              <AdaptiveText style={styles.actionBtnText} baseFontSize={14}>
+              <Text style={styles.actionBtnText}>
                 {t("chat.request")}
-              </AdaptiveText>
+              </Text>
             </Pressable>
             <Pressable
               style={[styles.actionBtn, styles.actionBtnPrimary]}
@@ -932,12 +932,13 @@ export function ChatThreadScreen() {
               accessibilityRole="button"
               accessibilityLabel={t("chat.sendA11y")}
             >
-              <AdaptiveText
-                style={[styles.actionBtnText, styles.actionBtnPrimaryText]}
-                baseFontSize={14}
-              >
+              <Text
+                style={[
+                  styles.actionBtnText,
+                  styles.actionBtnPrimaryText
+                ]}>
                 {t("chat.send")}
-              </AdaptiveText>
+              </Text>
             </Pressable>
           </View>
         ) : null}

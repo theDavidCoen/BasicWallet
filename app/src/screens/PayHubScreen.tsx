@@ -23,7 +23,7 @@ import {
   getCursorBotContact,
   isCursorBotContact,
 } from "../agent/botContact";
-import { AdaptiveText, suggestionChipsFor, useI18n } from "../i18n";
+import { suggestionChipsFor, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -68,13 +68,13 @@ function ThreadRow({
         <Text style={styles.rowName} numberOfLines={1}>
           {name}
         </Text>
-        <AdaptiveText style={styles.rowSub} baseFontSize={12} numberOfLines={1}>
+        <Text style={styles.rowSub} numberOfLines={1}>
           {row.thread.unreadCount > 0
             ? t("chat.unread", { count: row.thread.unreadCount })
             : row.thread.archived
               ? t("chat.archivedLongPress")
               : t("chat.privateChat")}
-        </AdaptiveText>
+        </Text>
       </View>
       <View style={styles.rowRight}>
         <Text style={styles.rowDate}>{formatDay(row.thread.lastMessageAt)}</Text>
@@ -181,13 +181,13 @@ export function PayHubScreen() {
                 <Text style={styles.botAvatarText}>AI</Text>
               </View>
               <View style={styles.rowMeta}>
-                <AdaptiveText style={styles.botTitle} baseFontSize={15}>
+                <Text style={styles.botTitle}>
                   {askTitle}
-                </AdaptiveText>
-                <AdaptiveText style={styles.botCaption} baseFontSize={12}>
+                </Text>
+                <Text style={styles.botCaption}>
                   {aiCaption}
                   {botUnread > 0 ? t("chat.unreadDot", { count: botUnread }) : ""}
-                </AdaptiveText>
+                </Text>
               </View>
               <View style={styles.rowRight}>
                 <Text style={styles.rowDate}>
@@ -256,10 +256,10 @@ export function PayHubScreen() {
               showArchived ? t("chat.hideArchived") : t("chat.showArchived")
             }
           >
-            <AdaptiveText style={styles.archivedToggleText} baseFontSize={13}>
+            <Text style={styles.archivedToggleText}>
               {showArchived ? "▾" : "▸"}{" "}
               {t("chat.archivedToggle", { count: archivedCount })}
-            </AdaptiveText>
+            </Text>
           </Pressable>
         ) : null}
 
@@ -291,9 +291,9 @@ export function PayHubScreen() {
         accessibilityRole="button"
         accessibilityLabel={t("chat.openContacts")}
       >
-        <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>
+        <Text style={ui.secondaryBtnText}>
           {t("chat.openContacts")}
-        </AdaptiveText>
+        </Text>
       </Pressable>
     </ScreenChrome>
   );

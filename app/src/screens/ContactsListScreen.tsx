@@ -14,7 +14,7 @@ import { filterContacts } from "../contacts/contactSearch";
 import { syncContactsDirectoryNow } from "../contacts/contactsNostrSync";
 import { listContacts } from "../contacts/contactStore";
 import type { Contact } from "../contacts/types";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -111,9 +111,9 @@ export function ContactsListScreen() {
         accessibilityRole="button"
         accessibilityLabel={t("contacts.addContactA11y")}
       >
-        <AdaptiveText style={styles.addText} baseFontSize={15}>
+        <Text style={styles.addText}>
           {t("contacts.addContact")}
-        </AdaptiveText>
+        </Text>
       </Pressable>
     </ScreenChrome>
   );

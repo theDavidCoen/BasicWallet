@@ -36,7 +36,7 @@ import {
   contactInitials,
   kindPillLabel,
 } from "../contacts/types";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -258,9 +258,9 @@ export function ContactEditScreen() {
             }))
           }
         >
-          <AdaptiveText style={styles.secondaryText} baseFontSize={14}>
+          <Text style={styles.secondaryText}>
             {t("contacts.addField")}
-          </AdaptiveText>
+          </Text>
         </Pressable>
 
         <Text style={styles.label}>{t("contacts.labelNote")}</Text>
@@ -369,9 +369,9 @@ export function ContactEditScreen() {
             }))
           }
         >
-          <AdaptiveText style={styles.secondaryText} baseFontSize={14}>
+          <Text style={styles.secondaryText}>
             {t("contacts.addIdentifier")}
-          </AdaptiveText>
+          </Text>
         </Pressable>
 
         <Pressable
@@ -379,9 +379,9 @@ export function ContactEditScreen() {
           disabled={!draft.name.trim()}
           onPress={onSave}
         >
-          <AdaptiveText style={styles.primaryText} baseFontSize={15}>
+          <Text style={styles.primaryText}>
             {t("contacts.save")}
-          </AdaptiveText>
+          </Text>
         </Pressable>
 
         {!isNew ? (
@@ -392,9 +392,9 @@ export function ContactEditScreen() {
               accessibilityRole="button"
               accessibilityLabel={t("contacts.shareContactA11y")}
             >
-              <AdaptiveText style={styles.shareText} baseFontSize={14}>
+              <Text style={styles.shareText}>
                 {t("contacts.shareContact")}
-              </AdaptiveText>
+              </Text>
             </Pressable>
             <Pressable
               style={styles.deleteHit}

@@ -40,7 +40,7 @@ import { syncContactsDirectoryNow } from "../contacts/contactsNostrSync";
 import { persistBackupPassphrase } from "../nostr/backupSync";
 import { hasMnemonic, storeMnemonic } from "../security/mnemonicStore";
 import { requireUserPresence } from "../security/userPresence";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 import { createHdWalletFromMnemonic } from "../wallet/hdWallet";
@@ -436,11 +436,11 @@ export function RestoreWalletContent({
             {busy ? (
               <ActivityIndicator color="#000" />
             ) : (
-              <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>
+              <Text style={ui.primaryBtnText}>
                 {seedOnly && embedded
                   ? t("restore.importArkadeWallet")
                   : t("restore.restoreArkadeFromSeed")}
-              </AdaptiveText>
+              </Text>
             )}
           </Pressable>
         </>
@@ -483,7 +483,7 @@ export function RestoreWalletContent({
             {busy ? (
               <ActivityIndicator color="#000" />
             ) : (
-              <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("restore.restorePackage")}</AdaptiveText>
+              <Text style={ui.primaryBtnText}>{t("restore.restorePackage")}</Text>
             )}
           </Pressable>
         </>
@@ -558,7 +558,7 @@ export function RestoreWalletContent({
             {busy ? (
               <ActivityIndicator color="#000" />
             ) : (
-              <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("restore.restoreFromServer")}</AdaptiveText>
+              <Text style={ui.primaryBtnText}>{t("restore.restoreFromServer")}</Text>
             )}
           </Pressable>
         </>

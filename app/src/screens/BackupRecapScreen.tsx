@@ -33,7 +33,7 @@ import {
 import { ensureNostrIdentity, loadNostrKeyPairForCrypto } from "../nostr/identityStore";
 import { uploadHomeBackupCipher } from "../nostr/homeServerWebdav";
 import { requireUserPresence } from "../security/userPresence";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 import { useWallet } from "../wallet/WalletProvider";
@@ -235,9 +235,9 @@ export function BackupRecapScreen() {
             revealed ? t("backup.hideSecretsA11y") : t("backup.revealSecretsA11y")
           }
         >
-          <AdaptiveText style={styles.revealLabel} baseFontSize={14}>
+          <Text style={styles.revealLabel}>
             {t("backup.revealSecrets")}
-          </AdaptiveText>
+          </Text>
           <Text style={styles.chevron}>{revealed ? "⌃" : "⌄"}</Text>
         </Pressable>
 
@@ -271,7 +271,7 @@ export function BackupRecapScreen() {
           {busy ? (
             <ActivityIndicator color="#000" />
           ) : (
-            <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{enableLabel}</AdaptiveText>
+            <Text style={ui.primaryBtnText}>{enableLabel}</Text>
           )}
         </Pressable>
       </ScrollView>

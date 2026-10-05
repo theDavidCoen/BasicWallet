@@ -30,7 +30,7 @@ import {
 import { dismissRecoveryReminder } from "../exit/recoveryReminder";
 import { requireExitAuth } from "../exit/gates";
 import { useWallet } from "../wallet/WalletProvider";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -150,16 +150,16 @@ export function ExitRecoveryAddressScreen() {
           disabled={busy}
           onPress={() => void onSave()}
         >
-          <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>
+          <Text style={ui.primaryBtnText}>
             {inWizard ? t("exit.saveContinue") : t("exit.save")}
-          </AdaptiveText>
+          </Text>
         </Pressable>
         <Pressable
           style={ui.secondaryBtn}
           disabled={busy}
           onPress={() => void onSave("")}
         >
-          <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>{t("exit.clear")}</AdaptiveText>
+          <Text style={ui.secondaryBtnText}>{t("exit.clear")}</Text>
         </Pressable>
       </ScrollView>
     </ScreenChrome>

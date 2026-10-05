@@ -29,7 +29,7 @@ import {
   maskCursorApiKey,
   saveCursorAgentCredentials,
 } from "../settings/cursorAgentCredentials";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -216,17 +216,17 @@ export function CursorAgentSettingsScreen() {
               style={styles.linkBtn}
               onPress={() => void Linking.openURL(CURSOR_API_KEYS_HINT)}
             >
-              <AdaptiveText style={styles.linkText} baseFontSize={14}>
+              <Text style={styles.linkText}>
                 {t("cursor.openDashboard")}
-              </AdaptiveText>
+              </Text>
             </Pressable>
             <Pressable
               style={styles.linkBtn}
               onPress={() => void Linking.openURL(CURSOR_DASHBOARD_KEYS)}
             >
-              <AdaptiveText style={styles.linkText} baseFontSize={14}>
+              <Text style={styles.linkText}>
                 {t("cursor.configureMcps")}
-              </AdaptiveText>
+              </Text>
             </Pressable>
 
             {botNpub ? (
@@ -255,9 +255,9 @@ export function CursorAgentSettingsScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Disable Cursor agent"
               >
-                <AdaptiveText style={styles.dangerText} baseFontSize={14}>
+                <Text style={styles.dangerText}>
                   {t("cursor.disableWipe")}
-                </AdaptiveText>
+                </Text>
               </Pressable>
             ) : null}
           </>

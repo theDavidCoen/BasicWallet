@@ -41,7 +41,7 @@ import {
 import { loadLndHubCredentials } from "../lightning/lndhubCredentials";
 import { requireUserPresence } from "../security/userPresence";
 import { useSheets } from "../navigation/SheetHost";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { readCachedArkAddress, writeCachedArkAddress } from "../wallet/addressCache";
 import { peekArkAddress } from "../wallet/hdWallet";
@@ -189,7 +189,6 @@ function IconQr({ size = 28 }: { size?: number }) {
     </Svg>
   );
 }
-
 
 function confirmAmountBump(
   originalTotal: number,
@@ -561,7 +560,6 @@ export function SendScreen() {
       setMyWalletPeekId(null);
     }
   }
-
 
   function openEnterSheet(target: "primary" | "add" = "primary") {
     Keyboard.dismiss();
@@ -1452,7 +1450,7 @@ export function SendScreen() {
           </Text>
           {address.trim() ? (
             <Pressable onPress={() => setScanOpen(true)} hitSlop={8}>
-              <AdaptiveText style={styles.scanLink} baseFontSize={14}>{t("send.scanQr")}</AdaptiveText>
+              <Text style={styles.scanLink}>{t("send.scanQr")}</Text>
             </Pressable>
           ) : null}
         </View>
@@ -1537,7 +1535,7 @@ export function SendScreen() {
           {busy ? (
             <ActivityIndicator color="#000" />
           ) : (
-            <AdaptiveText style={styles.primaryText} baseFontSize={15}>{t("send.confirmSend")}</AdaptiveText>
+            <Text style={styles.primaryText}>{t("send.confirmSend")}</Text>
           )}
         </Pressable>
 
@@ -1552,7 +1550,7 @@ export function SendScreen() {
               <View style={styles.scanRing}>
                 <IconQr size={30} />
               </View>
-              <AdaptiveText style={styles.scanLabel} baseFontSize={12}>{t("send.scanQrLower")}</AdaptiveText>
+              <Text style={styles.scanLabel}>{t("send.scanQrLower")}</Text>
             </Pressable>
           </View>
         ) : null}
@@ -1710,7 +1708,7 @@ export function SendScreen() {
                   <View style={styles.toActionIcon}>
                     <IconEnter />
                   </View>
-                  <AdaptiveText style={styles.toActionLabel} baseFontSize={13}>{t("send.enter")}</AdaptiveText>
+                  <Text style={styles.toActionLabel}>{t("send.enter")}</Text>
                 </Pressable>
                 <Pressable
                   style={styles.toAction}
@@ -1721,7 +1719,7 @@ export function SendScreen() {
                   <View style={styles.toActionIcon}>
                     <IconPaste />
                   </View>
-                  <AdaptiveText style={styles.toActionLabel} baseFontSize={13}>{t("send.paste")}</AdaptiveText>
+                  <Text style={styles.toActionLabel}>{t("send.paste")}</Text>
                 </Pressable>
                 {showMyWalletsAction ? (
                   <Pressable
@@ -1736,7 +1734,7 @@ export function SendScreen() {
                     <View style={styles.toActionIcon}>
                       <IconMyWallets />
                     </View>
-                    <AdaptiveText style={styles.toActionLabel} baseFontSize={13}>{t("send.myWallets")}</AdaptiveText>
+                    <Text style={styles.toActionLabel}>{t("send.myWallets")}</Text>
                   </Pressable>
                 ) : null}
                 <Pressable
@@ -1751,7 +1749,7 @@ export function SendScreen() {
                   <View style={styles.toActionIcon}>
                     <IconQr size={28} />
                   </View>
-                  <AdaptiveText style={styles.toActionLabel} baseFontSize={13}>{t("send.scan")}</AdaptiveText>
+                  <Text style={styles.toActionLabel}>{t("send.scan")}</Text>
                 </Pressable>
               </View>
             </>
@@ -1764,7 +1762,7 @@ export function SendScreen() {
             accessibilityRole="button"
             accessibilityLabel="Add recipient"
           >
-            <AdaptiveText style={styles.addRecipientText} baseFontSize={14}>{t("send.addRecipient")}</AdaptiveText>
+            <Text style={styles.addRecipientText}>{t("send.addRecipient")}</Text>
           </Pressable>
           {lines.length === 1 && !canAddRecipient && !primaryHasDest ? (
             <Text style={styles.addHint}>
@@ -1859,7 +1857,7 @@ export function SendScreen() {
               <View style={styles.toActionIcon}>
                 <IconEnter />
               </View>
-              <AdaptiveText style={styles.toActionLabel} baseFontSize={13}>{t("send.enter")}</AdaptiveText>
+              <Text style={styles.toActionLabel}>{t("send.enter")}</Text>
             </Pressable>
             <Pressable
               style={styles.toAction}
@@ -1870,7 +1868,7 @@ export function SendScreen() {
               <View style={styles.toActionIcon}>
                 <IconPaste />
               </View>
-              <AdaptiveText style={styles.toActionLabel} baseFontSize={13}>{t("send.paste")}</AdaptiveText>
+              <Text style={styles.toActionLabel}>{t("send.paste")}</Text>
             </Pressable>
             {showMyWalletsAction ? (
               <Pressable
@@ -1885,7 +1883,7 @@ export function SendScreen() {
                 <View style={styles.toActionIcon}>
                   <IconMyWallets />
                 </View>
-                <AdaptiveText style={styles.toActionLabel} baseFontSize={13}>{t("send.myWallets")}</AdaptiveText>
+                <Text style={styles.toActionLabel}>{t("send.myWallets")}</Text>
               </Pressable>
             ) : null}
           </View>
@@ -1969,7 +1967,7 @@ export function SendScreen() {
             disabled={!enterDraft.trim() || contactResolveBusy}
             onPress={confirmEnterDestination}
           >
-            <AdaptiveText style={styles.primaryText} baseFontSize={15}>{t("send.useDestination")}</AdaptiveText>
+            <Text style={styles.primaryText}>{t("send.useDestination")}</Text>
           </Pressable>
 
           <TextInput

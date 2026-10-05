@@ -18,7 +18,7 @@ import {
 } from "../nostr/backupPackage";
 import { setBackupReminderPending } from "../wallet/backupReminder";
 import { getMnemonicSource } from "../wallet/mnemonicMeta";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 import { useWallet } from "../wallet/WalletProvider";
@@ -100,9 +100,9 @@ export function AdvancedBackupScreen() {
             style={ui.cardMuted}
             onPress={() => navigation.navigate("ExportRecoveryPhrase")}
           >
-            <AdaptiveText style={ui.cardTitle} baseFontSize={14}>
+            <Text style={ui.cardTitle}>
               {t("backup.exportPhraseTitle")}
-            </AdaptiveText>
+            </Text>
             <Text style={[ui.caption, { textAlign: "left", marginBottom: 0 }]}>
               {t("backup.exportPhraseBody")}
             </Text>
@@ -120,9 +120,9 @@ export function AdvancedBackupScreen() {
             {busy ? (
               <ActivityIndicator color="#000" />
             ) : (
-              <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>
+              <Text style={ui.primaryBtnText}>
                 {t("backup.continueWithoutBackup")}
-              </AdaptiveText>
+              </Text>
             )}
           </Pressable>
         ) : null}
@@ -146,9 +146,9 @@ function BackupCard({
   const content = (
     <>
       <View style={styles.cardHeader}>
-        <AdaptiveText style={[ui.cardTitle, { marginBottom: 0, flex: 1 }]} baseFontSize={14}>
+        <Text style={[ui.cardTitle, { marginBottom: 0, flex: 1 }]}>
           {title}
-        </AdaptiveText>
+        </Text>
         {active ? (
           <View style={styles.activeRow}>
             <View style={styles.activeDot} />

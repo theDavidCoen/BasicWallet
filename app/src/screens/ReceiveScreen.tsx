@@ -38,7 +38,7 @@ import { encodeReceiveBip21 } from "../wallet/bip21Receive";
 import { encodeReceiveBip21Asset } from "../wallet/bip21Asset";
 import { useWallet } from "../wallet/WalletProvider";
 import { formatSatsLabel } from "../wallet/formatSats";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ReceivePosPanel } from "./ReceivePosPanel";
 import { useFiatMode } from "../fiat/FiatModeProvider";
@@ -595,7 +595,7 @@ export function ReceiveScreen() {
                 {lnBusy ? (
                   <ActivityIndicator color="#000" />
                 ) : (
-                  <AdaptiveText style={styles.primaryText} baseFontSize={15}>{t("receive.createInvoice")}</AdaptiveText>
+                  <Text style={styles.primaryText}>{t("receive.createInvoice")}</Text>
                 )}
               </Pressable>
             </>
@@ -626,7 +626,7 @@ export function ReceiveScreen() {
                 </Pressable>
               </View>
               <Pressable style={styles.secondary} onPress={onNewLnInvoice}>
-                <AdaptiveText style={styles.secondaryText} baseFontSize={14}>{t("receive.newInvoice")}</AdaptiveText>
+                <Text style={styles.secondaryText}>{t("receive.newInvoice")}</Text>
               </Pressable>
             </>
           )}
@@ -765,7 +765,7 @@ export function ReceiveScreen() {
               {busy ? (
                 <ActivityIndicator color={colors.fg} />
               ) : (
-                <AdaptiveText style={styles.secondaryText} baseFontSize={14}>{t("receive.newReceiveAddress")}</AdaptiveText>
+                <Text style={styles.secondaryText}>{t("receive.newReceiveAddress")}</Text>
               )}
             </Pressable>
           </>
@@ -789,7 +789,7 @@ export function ReceiveScreen() {
               {busy ? (
                 <ActivityIndicator color={colors.fg} />
               ) : (
-                <AdaptiveText style={styles.secondaryText} baseFontSize={14}>{t("receive.newReceiveAddress")}</AdaptiveText>
+                <Text style={styles.secondaryText}>{t("receive.newReceiveAddress")}</Text>
               )}
             </Pressable>
           </>
@@ -802,7 +802,7 @@ export function ReceiveScreen() {
             {busy ? (
               <ActivityIndicator color={colors.fg} />
             ) : (
-              <AdaptiveText style={styles.secondaryText} baseFontSize={14}>{t("receive.newReceiveAddress")}</AdaptiveText>
+              <Text style={styles.secondaryText}>{t("receive.newReceiveAddress")}</Text>
             )}
           </Pressable>
         )}

@@ -37,7 +37,7 @@ import {
 import type { ExitJobRecord } from "../exit/jobStore";
 import { getOpenWallet } from "../wallet/hdWallet";
 import { useWallet } from "../wallet/WalletProvider";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -116,23 +116,23 @@ function JobCard({
       )}
       {job.status === "running" ? (
         <Pressable style={ui.secondaryBtn} onPress={onStop}>
-          <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>
+          <Text style={ui.secondaryBtnText}>
             {t("exit.stopResumeLater")}
-          </AdaptiveText>
+          </Text>
         </Pressable>
       ) : null}
       {job.status === "stopped" ? (
         <Pressable style={ui.primaryBtn} onPress={onResume}>
-          <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>
+          <Text style={ui.primaryBtnText}>
             {t("exit.resume")}
-          </AdaptiveText>
+          </Text>
         </Pressable>
       ) : null}
       {job.status === "failed" ? (
         <Pressable style={ui.primaryBtn} onPress={onResume}>
-          <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>
+          <Text style={ui.primaryBtnText}>
             {t("exit.retryExit")}
-          </AdaptiveText>
+          </Text>
         </Pressable>
       ) : null}
     </View>
@@ -182,9 +182,9 @@ function PendingSweepCard({
         {sweeping ? (
           <ActivityIndicator color="#000" />
         ) : (
-          <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>
+          <Text style={ui.primaryBtnText}>
             {t("exit.exitRemainingFunds")}
-          </AdaptiveText>
+          </Text>
         )}
       </Pressable>
     </View>
@@ -534,7 +534,7 @@ export function UnilateralExitHubScreen() {
                 {continuing ? (
                   <ActivityIndicator color="#000" />
                 ) : (
-                  <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("exit.continueExit")}</AdaptiveText>
+                  <Text style={ui.primaryBtnText}>{t("exit.continueExit")}</Text>
                 )}
               </Pressable>
             ) : null}
@@ -547,25 +547,24 @@ export function UnilateralExitHubScreen() {
               }
               onPress={startWizard}
             >
-              <AdaptiveText
+              <Text
                 style={
                   hasActive || (!hasPkg && !hasPendingSweep)
                     ? ui.primaryBtnText
                     : ui.secondaryBtnText
                 }
-                baseFontSize={15}
               >
                 {hasActive
                   ? t("exit.startAnother")
                   : t("exit.prepareNewPackage")}
-              </AdaptiveText>
+              </Text>
             </Pressable>
 
             <Pressable
               style={ui.secondaryBtn}
               onPress={() => navigation.navigate("Home")}
             >
-              <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>{t("exit.home")}</AdaptiveText>
+              <Text style={ui.secondaryBtnText}>{t("exit.home")}</Text>
             </Pressable>
           </>
         )}

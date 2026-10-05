@@ -23,7 +23,7 @@ import { filterFiatModeActivityRows } from "../fiat/fiatActivityFilter";
 import { useFiatMode } from "../fiat/FiatModeProvider";
 import { useWallet } from "../wallet/WalletProvider";
 import { activityDepixAtomic, formatActivityAmountSigned, formatWhen, statusLabel } from "../wallet/activity";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 
 export function ActivityScreen() {
@@ -143,7 +143,7 @@ export function ActivityScreen() {
           </Text>
         </Pressable>
       </View>
-      <AdaptiveText style={styles.sub} baseFontSize={12} fit={false} numberOfLines={2}>
+      <Text style={styles.sub} numberOfLines={2}>
         {selectedWallet
           ? `${selectedWallet.label}${
               selectedWallet.kind === "lightning"
@@ -151,7 +151,7 @@ export function ActivityScreen() {
                 : t("activity.captionSuffixArkade")
             }`
           : t("activity.noWalletSelected")}
-      </AdaptiveText>
+      </Text>
 
       <View style={styles.searchRow}>
         <TextInput
@@ -192,9 +192,9 @@ export function ActivityScreen() {
           }
           contentContainerStyle={rows.length === 0 ? styles.emptyWrap : styles.list}
           ListEmptyComponent={
-            <AdaptiveText style={styles.empty} fit={false} numberOfLines={4} baseFontSize={14}>
+            <Text style={styles.empty} numberOfLines={4}>
               {error ?? emptyHint}
-            </AdaptiveText>
+            </Text>
           }
           renderItem={({ item }) => {
             const amountLabel = formatActivityAmountSigned(item, network.id);

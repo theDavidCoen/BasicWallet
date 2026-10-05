@@ -20,7 +20,7 @@ import {
   kindPillLabel,
   midEllipsis,
 } from "../contacts/types";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -92,9 +92,9 @@ export function ContactShareOfferScreen() {
         <Text style={ui.title}>{t("contacts.shareTitle")}</Text>
         <Text style={ui.caption}>{t("contacts.shareUnavailable")}</Text>
         <Pressable style={styles.primary} onPress={() => navigation.navigate("Home")}>
-          <AdaptiveText style={styles.primaryText} baseFontSize={15}>
+          <Text style={styles.primaryText}>
             {t("contacts.home")}
-          </AdaptiveText>
+          </Text>
         </Pressable>
       </ScreenChrome>
     );
@@ -158,9 +158,9 @@ export function ContactShareOfferScreen() {
           disabled={busy}
           onPress={() => void onAdd()}
         >
-          <AdaptiveText style={styles.primaryText} baseFontSize={15}>
+          <Text style={styles.primaryText}>
             {t("contacts.addContactCta")}
-          </AdaptiveText>
+          </Text>
         </Pressable>
 
         <Pressable

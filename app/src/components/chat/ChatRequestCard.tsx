@@ -1,5 +1,5 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import { AdaptiveText, useI18n } from "../../i18n";
+import { useI18n } from "../../i18n";
 import { colors } from "../../theme/colors";
 
 export function ChatRequestCard({
@@ -47,12 +47,13 @@ export function ChatRequestCard({
 
   return (
     <View style={[styles.card, outgoing ? styles.out : styles.in]}>
-      <AdaptiveText
-        style={[styles.kicker, outgoing && styles.kickerOut]}
-        baseFontSize={11}
-      >
+      <Text
+        style={[
+          styles.kicker,
+          outgoing && styles.kickerOut
+        ]}>
         {statusLabel}
-      </AdaptiveText>
+      </Text>
       <Text style={[styles.amount, outgoing && styles.amountOut]}>{primary}</Text>
       {secondary ? (
         <Text style={[styles.secondary, outgoing && styles.secondaryOut]}>
@@ -73,9 +74,9 @@ export function ChatRequestCard({
             accessibilityRole="button"
             accessibilityLabel={t("chat.decline")}
           >
-            <AdaptiveText style={styles.declineText} baseFontSize={14}>
+            <Text style={styles.declineText}>
               {t("chat.decline")}
-            </AdaptiveText>
+            </Text>
           </Pressable>
           <Pressable
             style={styles.payBtn}
@@ -88,15 +89,15 @@ export function ChatRequestCard({
               <View style={styles.busyCol}>
                 <ActivityIndicator color="#000" />
                 {busyLabel ? (
-                  <AdaptiveText style={styles.busyText} baseFontSize={10}>
+                  <Text style={styles.busyText}>
                     {busyLabel}
-                  </AdaptiveText>
+                  </Text>
                 ) : null}
               </View>
             ) : (
-              <AdaptiveText style={styles.payText} baseFontSize={14}>
+              <Text style={styles.payText}>
                 {t("chat.pay")}
-              </AdaptiveText>
+              </Text>
             )}
           </Pressable>
         </View>

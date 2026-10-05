@@ -39,7 +39,7 @@ import {
 } from "../exit/packageStore";
 import { getOpenWallet } from "../wallet/hdWallet";
 import { useWallet } from "../wallet/WalletProvider";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -239,7 +239,7 @@ export function UnilateralExitPrepareScreen() {
               navigation.navigate("ExitRecoveryAddress", { from: "exit" })
             }
           >
-            <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>{t("exit.setRecoveryAddress")}</AdaptiveText>
+            <Text style={ui.secondaryBtnText}>{t("exit.setRecoveryAddress")}</Text>
           </Pressable>
         )}
 
@@ -292,7 +292,7 @@ export function UnilateralExitPrepareScreen() {
         {packageReady ? (
           <>
             <Pressable style={ui.primaryBtn} onPress={onContinueExisting}>
-              <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>{t("exit.continueFundFees")}</AdaptiveText>
+              <Text style={ui.primaryBtnText}>{t("exit.continueFundFees")}</Text>
             </Pressable>
             <Pressable
               style={ui.secondaryBtn}
@@ -302,7 +302,7 @@ export function UnilateralExitPrepareScreen() {
               {phase === "estimating" ? (
                 <ActivityIndicator color={colors.fg} />
               ) : (
-                <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>{t("exit.rebuildEstimate")}</AdaptiveText>
+                <Text style={ui.secondaryBtnText}>{t("exit.rebuildEstimate")}</Text>
               )}
             </Pressable>
           </>
@@ -315,7 +315,7 @@ export function UnilateralExitPrepareScreen() {
             {phase === "estimating" ? (
               <ActivityIndicator color={colors.fg} />
             ) : (
-              <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>{t("exit.estimate")}</AdaptiveText>
+              <Text style={ui.secondaryBtnText}>{t("exit.estimate")}</Text>
             )}
           </Pressable>
         )}
@@ -367,9 +367,9 @@ export function UnilateralExitPrepareScreen() {
             {phase === "preparing" ? (
               <ActivityIndicator color="#000" />
             ) : (
-              <AdaptiveText style={ui.primaryBtnText} baseFontSize={15}>
+              <Text style={ui.primaryBtnText}>
                 {packageReady ? t("exit.replacePackage") : t("exit.preparePackageContinue")}
-              </AdaptiveText>
+              </Text>
             )}
           </Pressable>
         ) : null}

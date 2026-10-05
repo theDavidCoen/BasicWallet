@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View } from "react-native";
 import type { ChatMessageStatus } from "../../chat/types";
-import { AdaptiveText, useI18n } from "../../i18n";
+import { useI18n } from "../../i18n";
 import { colors } from "../../theme/colors";
 
 function paymentTitle(
@@ -68,17 +68,15 @@ export function ChatPaymentCard({
 
   return (
     <View style={[styles.card, outgoing ? styles.out : styles.in]}>
-      <AdaptiveText
+      <Text
         style={[
           styles.title,
           outgoing && styles.titleOut,
           failed && styles.titleFailed,
-          inFlight && styles.titleInFlight,
-        ]}
-        baseFontSize={12}
-      >
+          inFlight && styles.titleInFlight
+        ]}>
         {title}
-      </AdaptiveText>
+      </Text>
       {showAmount ? (
         <Text style={[styles.amount, outgoing && styles.amountOut]}>{primary}</Text>
       ) : null}

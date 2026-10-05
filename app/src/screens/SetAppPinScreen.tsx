@@ -3,7 +3,7 @@ import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { clearAppPin, hasAppPin, setAppPin, validatePinFormat, verifyAppPin } from "../security/appPin";
 import { getOsBiometricsStatus } from "../security/osBiometrics";
 import { requireUserPresence } from "../security/userPresence";
@@ -191,9 +191,9 @@ export function SetAppPinScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <AdaptiveText style={ui.title} baseFontSize={20}>
+      <Text style={ui.title}>
         {title}
-      </AdaptiveText>
+      </Text>
       <Text style={ui.caption}>{caption}</Text>
 
       <View style={styles.dots}>
@@ -235,9 +235,9 @@ export function SetAppPinScreen() {
           disabled={busy}
           onPress={() => void submit(draft)}
         >
-          <AdaptiveText style={ui.primaryBtnText} baseFontSize={16}>
+          <Text style={ui.primaryBtnText}>
             {t("common.continue")}
-          </AdaptiveText>
+          </Text>
         </Pressable>
       ) : null}
     </ScreenChrome>
@@ -295,9 +295,9 @@ export function UnlockPinPad({
 
   return (
     <View style={styles.unlockWrap}>
-      <AdaptiveText style={styles.unlockTitle} baseFontSize={20}>
+      <Text style={styles.unlockTitle}>
         {t("privacy.enterPinTitle")}
-      </AdaptiveText>
+      </Text>
 
       <View style={styles.dotsHit}>
         <View style={styles.dots}>
@@ -344,9 +344,9 @@ export function UnlockPinPad({
           style={[ui.primaryBtn, { marginTop: 12, alignSelf: "stretch" }]}
           onPress={() => void tryPin(draft)}
         >
-          <AdaptiveText style={ui.primaryBtnText} baseFontSize={16}>
+          <Text style={ui.primaryBtnText}>
             {t("privacy.unlock")}
-          </AdaptiveText>
+          </Text>
         </Pressable>
       ) : null}
 

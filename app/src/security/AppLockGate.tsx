@@ -12,7 +12,7 @@ import * as ScreenCapture from "expo-screen-capture";
 import * as LocalAuthentication from "expo-local-authentication";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BasicLogo } from "../components/BasicLogo";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { UnlockPinPad } from "../screens/SetAppPinScreen";
 import { hasAppPin } from "./appPin";
 import { getOsBiometricsStatus } from "./osBiometrics";
@@ -242,9 +242,9 @@ export function AppLockGate({ children }: { children: ReactNode }) {
           ) : (
             <>
               <BasicLogo scale={1.2} />
-              <AdaptiveText style={styles.title} baseFontSize={20}>
+              <Text style={styles.title}>
                 {t("privacy.unlockTitle")}
-              </AdaptiveText>
+              </Text>
               <Text style={styles.sub}>{t("privacy.unlockSub")}</Text>
 
               <Pressable
@@ -255,9 +255,9 @@ export function AppLockGate({ children }: { children: ReactNode }) {
                 {busy ? (
                   <ActivityIndicator color={colors.fg} />
                 ) : (
-                  <AdaptiveText style={styles.bioLabel} baseFontSize={12}>
+                  <Text style={styles.bioLabel}>
                     {t("privacy.touchFaceId")}
-                  </AdaptiveText>
+                  </Text>
                 )}
               </Pressable>
 
@@ -271,9 +271,9 @@ export function AppLockGate({ children }: { children: ReactNode }) {
                     setMode("pin");
                   }}
                 >
-                  <AdaptiveText style={styles.pinLinkText} baseFontSize={14}>
+                  <Text style={styles.pinLinkText}>
                     {t("privacy.usePinInstead")}
-                  </AdaptiveText>
+                  </Text>
                 </Pressable>
               ) : (
                 <Text style={styles.hint}>{t("privacy.optionalPinHint")}</Text>

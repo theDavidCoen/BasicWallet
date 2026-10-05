@@ -16,7 +16,7 @@ import {
   formatBrlDisplay,
   isFiatModeSwapAvailable,
 } from "../fiat/depixAssets";
-import { AdaptiveText, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import type { RootNav } from "../navigation/types";
 import { requireUserPresence } from "../security/userPresence";
 import { useWallet } from "../wallet/WalletProvider";
@@ -139,9 +139,9 @@ export function FiatModeSettingsScreen() {
   if (converting) {
     return (
       <ScreenChrome logoScale={0.77}>
-        <AdaptiveText style={styles.title} baseFontSize={18}>
+        <Text style={styles.title}>
           {t("fiat.title")}
-        </AdaptiveText>
+        </Text>
         <Text style={styles.caption}>{t("fiat.convertingWait")}</Text>
       </ScreenChrome>
     );
@@ -149,9 +149,9 @@ export function FiatModeSettingsScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <AdaptiveText style={styles.title} baseFontSize={18}>
+      <Text style={styles.title}>
         {t("fiat.title")}
-      </AdaptiveText>
+      </Text>
       <Text style={styles.caption}>{t("fiat.captionIntro")}</Text>
       <Text style={styles.caption}>
         {isMutiny ? t("fiat.captionMutiny") : t("fiat.captionMainnet")}{" "}
@@ -224,9 +224,9 @@ export function FiatModeSettingsScreen() {
           accessibilityRole="button"
           accessibilityLabel={confirmLabel}
         >
-          <AdaptiveText style={styles.primaryLabel} baseFontSize={15}>
+          <Text style={styles.primaryLabel}>
             {confirmLabel}
-          </AdaptiveText>
+          </Text>
         </Pressable>
       ) : null}
 
