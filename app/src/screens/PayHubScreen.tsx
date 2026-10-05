@@ -1,5 +1,5 @@
 /**
- * Chat & Pay hub (Penpot 15g) — recent threads + open contacts + archived.
+ * Chat & Pay hub (Penpot 15g) — Ask Cursor section above human threads.
  */
 
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
@@ -9,6 +9,7 @@ import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
 import {
   countArchivedChatThreads,
+  getChatThread,
   listChatThreads,
   setChatThreadArchived,
   subscribeChatStore,
@@ -17,6 +18,16 @@ import type { ChatThread } from "../chat/types";
 import { getContact, listContacts } from "../contacts/contactStore";
 import { contactDisplayName, contactInitials } from "../contacts/types";
 import type { Contact } from "../contacts/types";
+import {
+  CURSOR_BOT_CONTACT_ID,
+  CURSOR_HUB_CAPTION,
+  CURSOR_SUGGESTION_CHIPS,
+} from "../agent/botConstants";
+import {
+  cursorBotAskTitle,
+  getCursorBotContact,
+  isCursorBotContact,
+} from "../agent/botContact";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -93,6 +104,7 @@ export function PayHubScreen() {
   const [archivedCount, setArchivedCount] = useState(() => countArchivedChatThreads());
   const [showArchived, setShowArchived] = useState(false);
   const [contactCount, setContactCount] = useState(() => listContacts().length);
+  const [botContact, setBotContact] = useState<Contact | null>(() => getCursorBotContact());
 
   const reload = useCallback(() => {
     startTransition(() => {
@@ -100,6 +112,7 @@ export function PayHubScreen() {
       setArchivedThreads(listChatThreads({ archived: true }));
       setArchivedCount(countArchivedChatThreads());
       setContactCount(listContacts().length);
+      setBotContact(getCursorBotContact());
     });
   }, []);
 
@@ -113,7 +126,7 @@ export function PayHubScreen() {
   const rows: Row[] = threads
     .map((t) => {
       const c = getContact(t.contactId);
-      if (!c) return null;
+      if (!c || isCursorBotContact(c)) return null;
       return { thread: t, contact: c };
     })
     .filter((r): r is Row => r != null);
@@ -121,7 +134,7 @@ export function PayHubScreen() {
   const archivedRows: Row[] = archivedThreads
     .map((t) => {
       const c = getContact(t.contactId);
-      if (!c) return null;
+      if (!c || isCursorBotContact(c)) return null;
       return { thread: t, contact: c };
     })
     .filter((r): r is Row => r != null);
@@ -131,6 +144,18 @@ export function PayHubScreen() {
       navigation.navigate("ChatThread", { contactId });
     });
   }
+
+  function openBotWithChip(chip: string) {
+    startTransition(() => {
+      navigation.navigate("ChatThread", {
+        contactId: CURSOR_BOT_CONTACT_ID,
+        seedDraft: chip,
+      });
+    });
+  }
+
+  const botThread = botContact ? getChatThread(CURSOR_BOT_CONTACT_ID) : null;
+  const botUnread = botThread?.unreadCount ?? 0;
 
   return (
     <ScreenChrome logoScale={0.77}>
@@ -144,12 +169,71 @@ export function PayHubScreen() {
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
       >
+        {botContact ? (
+          <View style={styles.botSection}>
+            <Pressable
+              style={styles.botRow}
+              onPress={() => openThread(CURSOR_BOT_CONTACT_ID)}
+              accessibilityRole="button"
+              accessibilityLabel={`${cursorBotAskTitle(botContact)}. ${CURSOR_HUB_CAPTION}`}
+            >
+              <View style={styles.botAvatar}>
+                <Text style={styles.botAvatarText}>AI</Text>
+              </View>
+              <View style={styles.rowMeta}>
+                <Text style={styles.botTitle} numberOfLines={1}>
+                  {cursorBotAskTitle(botContact)}
+                </Text>
+                <Text style={styles.botCaption} numberOfLines={1}>
+                  {CURSOR_HUB_CAPTION}
+                  {botUnread > 0 ? ` · ${botUnread} unread` : ""}
+                </Text>
+              </View>
+              <View style={styles.rowRight}>
+                <Text style={styles.rowDate}>
+                  {formatDay(botThread?.lastMessageAt ?? null)}
+                </Text>
+                {botUnread > 0 ? (
+                  <View style={styles.botBadge}>
+                    <Text style={styles.badgeText}>
+                      {botUnread > 9 ? "9+" : String(botUnread)}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            </Pressable>
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.chipRow}
+            >
+              {CURSOR_SUGGESTION_CHIPS.map((chip) => (
+                <Pressable
+                  key={chip}
+                  style={styles.chip}
+                  onPress={() => openBotWithChip(chip)}
+                  accessibilityRole="button"
+                  accessibilityLabel={chip}
+                >
+                  <Text style={styles.chipText} numberOfLines={2}>
+                    {chip}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        ) : null}
+
         {rows.length === 0 ? (
           <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>No chats yet</Text>
+            <Text style={styles.emptyTitle}>
+              {botContact ? "No contact chats yet" : "No chats yet"}
+            </Text>
             <Text style={styles.emptyBody}>
-              Open a contact to start a private payment chat. Text, requests, and
-              payments live in one thread.
+              {botContact
+                ? "Open a contact to start a private payment chat, or ask Cursor above."
+                : "Open a contact to start a private payment chat. Text, requests, and payments live in one thread."}
             </Text>
           </View>
         ) : (
@@ -215,6 +299,73 @@ export function PayHubScreen() {
 const styles = StyleSheet.create({
   list: { flex: 1, marginTop: 16 },
   listContent: { paddingBottom: 16 },
+  botSection: {
+    marginBottom: 18,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  botRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 10,
+  },
+  botAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.fg,
+    backgroundColor: colors.card,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  botAvatarText: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 12,
+    color: colors.fg,
+  },
+  botTitle: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 15,
+    color: colors.fg,
+  },
+  botCaption: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 11,
+    color: colors.caption,
+    marginTop: 2,
+  },
+  botBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: colors.fg,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 6,
+  },
+  chipRow: {
+    gap: 8,
+    paddingTop: 10,
+    paddingRight: 8,
+  },
+  chip: {
+    maxWidth: 220,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: colors.card,
+  },
+  chipText: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 11,
+    color: colors.caption,
+    lineHeight: 16,
+  },
   emptyCard: {
     backgroundColor: colors.card,
     borderRadius: 12,

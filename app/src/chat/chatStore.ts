@@ -596,3 +596,25 @@ export function bumpChatOutboxFailure(id: string, error: string): void {
     [attempts, Date.now() + delay, error.slice(0, 400), id],
   );
 }
+
+/** Wipe one thread (messages + outbox + thread row). Used when disabling the Cursor bot. */
+export function deleteChatThreadLocal(contactId: string): void {
+  if (!contactId) return;
+  const database = db();
+  try {
+    database.runSync(`DELETE FROM chat_outbox WHERE contact_id = ?`, [contactId]);
+  } catch {
+    /* */
+  }
+  try {
+    database.runSync(`DELETE FROM chat_message WHERE contact_id = ?`, [contactId]);
+  } catch {
+    /* */
+  }
+  try {
+    database.runSync(`DELETE FROM chat_thread WHERE contact_id = ?`, [contactId]);
+  } catch {
+    /* */
+  }
+  notify();
+}

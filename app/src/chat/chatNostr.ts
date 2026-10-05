@@ -4,6 +4,7 @@
 
 import { SimplePool } from "nostr-tools/pool";
 import { wrapEvent } from "nostr-tools/nip17";
+import { getPublicKey } from "nostr-tools/pure";
 import { mergeNostrRelays, readBackupMeta } from "../nostr/backupPackage";
 import {
   hasNostrIdentity,
@@ -40,23 +41,23 @@ export type PublishChatResult = {
   eventId: string;
 };
 
-export async function publishChatEnvelope(
+/**
+ * Publish a chat envelope signed with an explicit secret key (user or bot).
+ * Home relay must succeed first (closed-app push watches home only).
+ */
+export async function publishChatEnvelopeWithSk(
+  sk: Uint8Array,
   recipientPubkeyHex: string,
   envelope: ChatEnvelope,
-  opts?: { relays?: string[] },
+  opts?: { relays?: string[]; senderPubkeyHex?: string },
 ): Promise<PublishChatResult> {
-  if (!(await hasNostrIdentity())) {
-    throw new Error("Create a Nostr identity before using Chat & Pay.");
-  }
-  const pair = await loadNostrKeyPairForCrypto();
-  if (!pair) throw new Error("No Nostr identity");
-
+  const senderPubkey = (opts?.senderPubkeyHex ?? getPublicKey(sk)).toLowerCase();
   const recipient = recipientPubkeyHex.toLowerCase();
-  if (recipient === pair.pubkey.toLowerCase()) {
+  if (recipient === senderPubkey) {
     throw new Error("Cannot message yourself.");
   }
 
-  const wrap = wrapEvent(pair.sk, { publicKey: recipient }, JSON.stringify(envelope));
+  const wrap = wrapEvent(sk, { publicKey: recipient }, JSON.stringify(envelope));
   const urls = await resolveRelays(opts?.relays);
   const homeUrl =
     urls.find((u) => u.toLowerCase().includes("relay.davidcoen.it")) ?? HOME_RELAY_HINT;
@@ -111,4 +112,21 @@ export async function publishChatEnvelope(
   });
 
   return { okRelays, failedRelays, eventId: wrap.id };
+}
+
+export async function publishChatEnvelope(
+  recipientPubkeyHex: string,
+  envelope: ChatEnvelope,
+  opts?: { relays?: string[] },
+): Promise<PublishChatResult> {
+  if (!(await hasNostrIdentity())) {
+    throw new Error("Create a Nostr identity before using Chat & Pay.");
+  }
+  const pair = await loadNostrKeyPairForCrypto();
+  if (!pair) throw new Error("No Nostr identity");
+
+  return publishChatEnvelopeWithSk(pair.sk, recipientPubkeyHex, envelope, {
+    relays: opts?.relays,
+    senderPubkeyHex: pair.pubkey,
+  });
 }

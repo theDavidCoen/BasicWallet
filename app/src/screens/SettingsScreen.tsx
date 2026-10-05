@@ -24,6 +24,7 @@ type NavTarget =
   | "Logs"
   | "Privacy"
   | "Notifications"
+  | "CursorAgentSettings"
   | "ConnectedNode"
   | "ArkadeSettings"
   | "PairBluetooth"
@@ -52,6 +53,7 @@ const BLOCKS: Block[] = [
   { kind: "row", row: { label: "Archived wallets", on: "ArchivedWallets" } },
   { kind: "row", row: { label: "Contacts", on: "Contacts" } },
   { kind: "row", row: { label: "Chat & Pay", on: "PayHub" } },
+  { kind: "row", row: { label: "Cursor agent", on: "CursorAgentSettings" } },
   { kind: "row", row: { label: "Duress PIN", stub: true } },
 
   { kind: "section", title: "Provider Settings" },

@@ -38,6 +38,9 @@ const SECURE_KEYS_ALWAYS = [
   "basic.wallet.appPin.v1",
   "basic.wallet.lnd.rest.v1",
   "basic.wallet.lndhub.v1",
+  // Cursor Ask Cursor bot (API key + bot nsec) — never survive factory reset.
+  "basic.wallet.cursor.apiKey.v1",
+  "basic.wallet.cursor.bot.nsec.v1",
   // Clear passkey link so next onboarding uses discoverable get (password manager picker),
   // never a silent create of a brand-new passkey.
   "basic.wallet.passkey.credentialId.v1",
@@ -146,6 +149,13 @@ export async function factoryResetWipeDevice(): Promise<void> {
     await writePushNotificationPrefs({ enabled: false });
   } catch {
     /* ignore */
+  }
+
+  try {
+    const { wipeCursorBotForReset } = await import("../agent/activateBot");
+    await wipeCursorBotForReset();
+  } catch {
+    /* bot wipe best-effort */
   }
 
   await clearSecureSlots(ids);

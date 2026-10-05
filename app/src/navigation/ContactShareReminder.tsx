@@ -75,12 +75,18 @@ export function ContactShareReminder({
   useEffect(() => {
     if (!hasWallet) {
       stopContactShareWatch();
+      void import("../agent/botWatch")
+        .then((m) => m.stopBotWatch())
+        .catch(() => {});
       // Same spirit as gift-wrap stop — drop FCM registration on logout/wipe.
       void unregisterPushBestEffort();
       setOffer(null);
       return;
     }
     queueContactShareWatchBoot();
+    void import("../agent/botWatch")
+      .then((m) => m.queueBotWatchBoot())
+      .catch(() => {});
     refresh();
     const unsub = subscribeContactShareInbox(refresh);
     return () => {

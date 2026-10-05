@@ -34,6 +34,13 @@ export function GenerateIdentityWarningScreen() {
         return;
       }
       await generateAndStoreNostrIdentity();
+      // Owner binding for Ask Cursor must stay 1:1 — wipe bot on identity change.
+      try {
+        const { wipeCursorBotForReset } = await import("../agent/activateBot");
+        await wipeCursorBotForReset();
+      } catch {
+        /* */
+      }
       Alert.alert(
         "Identity ready",
         exists

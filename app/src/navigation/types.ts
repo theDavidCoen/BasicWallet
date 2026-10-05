@@ -85,7 +85,9 @@ export type RootStackParamList = {
   /** Chat & Pay hub (Penpot 15g) — recent threads / choose contact */
   PayHub: undefined;
   /** 1:1 Pay in Chat thread (Penpot 15 / 15f) */
-  ChatThread: { contactId: string; focusRequestId?: string };
+  ChatThread: { contactId: string; focusRequestId?: string; seedDraft?: string };
+  /** Settings → Cursor agent (API key only; bot activation) */
+  CursorAgentSettings: undefined;
   /** Full-screen amount: Request / Send use POS; Pay is biometrics-only from the card. */
   ChatAmount: {
     contactId: string;

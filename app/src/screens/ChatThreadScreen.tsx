@@ -68,6 +68,9 @@ import {
 import { getContact } from "../contacts/contactStore";
 import { contactDisplayName, contactInitials } from "../contacts/types";
 import { catchUpGiftWraps } from "../contacts/contactShareWatch";
+import { isCursorBotContact } from "../agent/botContact";
+import { CURSOR_HUB_CAPTION, CURSOR_SUGGESTION_CHIPS } from "../agent/botConstants";
+import { catchUpBotWatch } from "../agent/botWatch";
 import { getNetworkConfig } from "../config/network";
 import { fetchFiatSpot } from "../fiat/depixAssets";
 import { useFiatMode } from "../fiat/FiatModeProvider";
@@ -93,7 +96,9 @@ export function ChatThreadScreen() {
   const navigation = useNavigation<RootNav>();
   const route = useRoute<RouteProp<RootStackParamList, "ChatThread">>();
   const contactId = route.params.contactId;
+  const seedDraft = route.params.seedDraft;
   const contact = useMemo(() => getContact(contactId), [contactId]);
+  const isBot = isCursorBotContact(contact);
   const {
     wallet,
     selectedWallet,
@@ -122,6 +127,7 @@ export function ChatThreadScreen() {
   const [archived, setArchived] = useState(false);
   const [spot, setSpot] = useState<number | null>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
+  const seededRef = useRef(false);
 
   const name = contact ? contactDisplayName(contact) : "Unknown";
   const initials = contact ? contactInitials(contact) : "?";
@@ -212,6 +218,14 @@ export function ChatThreadScreen() {
   }, []);
 
   useEffect(() => {
+    if (seededRef.current) return;
+    const seed = typeof seedDraft === "string" ? seedDraft.trim() : "";
+    if (!seed) return;
+    seededRef.current = true;
+    setDraft(seed);
+  }, [seedDraft]);
+
+  useEffect(() => {
     if (!fiatMode) {
       setSpot(null);
       return;
@@ -240,6 +254,7 @@ export function ChatThreadScreen() {
         });
         // α71: Nostr/outbox only — never rematerialize from chat focus (Xiaomi lag).
         void catchUpGiftWraps({ force: true });
+        if (isBot) void catchUpBotWatch({ force: true });
         void flushChatOutbox();
         if (selectedWallet?.id) {
           try {
@@ -256,7 +271,7 @@ export function ChatThreadScreen() {
         setChatThreadFocused(false);
         task.cancel();
       };
-    }, [contactId, selectedWallet?.id, network.id]),
+    }, [contactId, selectedWallet?.id, network.id, isBot]),
   );
 
   useEffect(() => {
@@ -547,37 +562,43 @@ export function ChatThreadScreen() {
         keyboardVerticalOffset={8}
       >
         <View style={styles.headerRow}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{initials}</Text>
+          <View style={[styles.avatar, isBot && styles.botAvatar]}>
+            <Text style={styles.avatarText}>{isBot ? "AI" : initials}</Text>
           </View>
           <View style={styles.headerMeta}>
             <Text style={styles.headerName} numberOfLines={1}>
-              {name}
+              {isBot ? `Ask ${name}` : name}
             </Text>
             <Text style={styles.headerSub}>
               {archived
                 ? "Archived"
-                : canNostr
-                  ? "Private · encrypted"
-                  : "Add npub for encrypted chat"}
+                : isBot
+                  ? CURSOR_HUB_CAPTION
+                  : canNostr
+                    ? "Private · encrypted"
+                    : "Add npub for encrypted chat"}
             </Text>
           </View>
-          <Pressable
-            onPress={onArchiveToggle}
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel={archived ? `Unarchive ${name}` : `Archive ${name}`}
-          >
-            <Text style={styles.editLink}>{archived ? "Unarchive" : "Archive"}</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => navigation.navigate("ContactEdit", { contactId })}
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel={`Edit ${name}`}
-          >
-            <Text style={styles.editLink}>Edit</Text>
-          </Pressable>
+          {!isBot ? (
+            <>
+              <Pressable
+                onPress={onArchiveToggle}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={archived ? `Unarchive ${name}` : `Archive ${name}`}
+              >
+                <Text style={styles.editLink}>{archived ? "Unarchive" : "Archive"}</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => navigation.navigate("ContactEdit", { contactId })}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={`Edit ${name}`}
+              >
+                <Text style={styles.editLink}>Edit</Text>
+              </Pressable>
+            </>
+          ) : null}
         </View>
 
         <FlatList
@@ -592,11 +613,27 @@ export function ChatThreadScreen() {
           keyboardShouldPersistTaps="handled"
           ListEmptyComponent={
             <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>No messages yet</Text>
-              <Text style={styles.emptyBody}>
-                Private chat with {name}. Encrypted with your account data. Send or
-                request sats anytime.
+              <Text style={styles.emptyTitle}>
+                {isBot ? "Ask Cursor anything" : "No messages yet"}
               </Text>
+              <Text style={styles.emptyBody}>
+                {isBot
+                  ? "Your AI concierge. Shopping MCPs (e.g. Bitrefill) use your Cursor Dashboard — Basic never stores those keys. Pay invoices here with Confirm + biometrics."
+                  : `Private chat with ${name}. Encrypted with your account data. Send or request sats anytime.`}
+              </Text>
+              {isBot
+                ? CURSOR_SUGGESTION_CHIPS.map((chip) => (
+                    <Pressable
+                      key={chip}
+                      style={styles.suggestChip}
+                      onPress={() => setDraft(chip)}
+                      accessibilityRole="button"
+                      accessibilityLabel={chip}
+                    >
+                      <Text style={styles.suggestChipText}>{chip}</Text>
+                    </Pressable>
+                  ))
+                : null}
             </View>
           }
           renderItem={({ item }) => {
@@ -676,30 +713,38 @@ export function ChatThreadScreen() {
           }}
         />
 
-        <View style={styles.actionBar}>
-          <Pressable
-            style={[styles.actionBtn, !canNostr && styles.actionDisabled]}
-            onPress={openRequest}
-            accessibilityRole="button"
-            accessibilityLabel="Request"
-          >
-            <Text style={styles.actionBtnText}>← Request</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.actionBtn, styles.actionBtnPrimary]}
-            onPress={openSend}
-            accessibilityRole="button"
-            accessibilityLabel="Send"
-          >
-            <Text style={[styles.actionBtnText, styles.actionBtnPrimaryText]}>Send →</Text>
-          </Pressable>
-        </View>
+        {!isBot ? (
+          <View style={styles.actionBar}>
+            <Pressable
+              style={[styles.actionBtn, !canNostr && styles.actionDisabled]}
+              onPress={openRequest}
+              accessibilityRole="button"
+              accessibilityLabel="Request"
+            >
+              <Text style={styles.actionBtnText}>← Request</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.actionBtn, styles.actionBtnPrimary]}
+              onPress={openSend}
+              accessibilityRole="button"
+              accessibilityLabel="Send"
+            >
+              <Text style={[styles.actionBtnText, styles.actionBtnPrimaryText]}>Send →</Text>
+            </Pressable>
+          </View>
+        ) : null}
 
         <View style={styles.composerRow}>
           <TextInput
             value={draft}
             onChangeText={setDraft}
-            placeholder={canNostr ? "Type a message…" : "Add npub to chat…"}
+            placeholder={
+              isBot
+                ? "Ask Cursor…"
+                : canNostr
+                  ? "Type a message…"
+                  : "Add npub to chat…"
+            }
             placeholderTextColor={colors.hint}
             style={styles.composer}
             multiline
@@ -743,6 +788,11 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     alignItems: "center",
     justifyContent: "center",
+  },
+  botAvatar: {
+    borderRadius: 8,
+    borderColor: colors.fg,
+    backgroundColor: colors.card,
   },
   avatarText: {
     fontFamily: "JetBrainsMono_700Bold",
@@ -795,6 +845,21 @@ const styles = StyleSheet.create({
     color: colors.caption,
     textAlign: "center",
     lineHeight: 20,
+  },
+  suggestChip: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: colors.bg,
+  },
+  suggestChipText: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.caption,
+    lineHeight: 17,
   },
   system: {
     alignSelf: "center",

@@ -116,6 +116,9 @@ export function ChatUnreadBanner({
     }
     // Gift-wrap demux (contact share + chat) — same boot as ContactShareReminder.
     queueContactShareWatchBoot();
+    void import("../agent/botWatch")
+      .then((m) => m.queueBotWatchBoot())
+      .catch(() => {});
     refresh();
     return subscribeChatStore(refresh);
   }, [hasWallet, refresh]);

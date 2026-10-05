@@ -52,6 +52,7 @@ import { ResetAppScreen } from "../screens/ResetAppScreen";
 import { LogsScreen } from "../screens/LogsScreen";
 import { PrivacyScreen } from "../screens/PrivacyScreen";
 import { NotificationsSettingsScreen } from "../screens/NotificationsSettingsScreen";
+import { CursorAgentSettingsScreen } from "../screens/CursorAgentSettingsScreen";
 import { SetAppPinScreen } from "../screens/SetAppPinScreen";
 import { bindPushNotificationListeners } from "../notifications";
 import { OnboardingSecurityScreen } from "../screens/OnboardingSecurityScreen";
@@ -156,6 +157,7 @@ export function RootNavigator() {
             <Stack.Screen name="NodeStatus" component={NodeStatusScreen} />
             <Stack.Screen name="Privacy" component={PrivacyScreen} />
             <Stack.Screen name="Notifications" component={NotificationsSettingsScreen} />
+            <Stack.Screen name="CursorAgentSettings" component={CursorAgentSettingsScreen} />
             <Stack.Screen name="SetAppPin" component={SetAppPinScreen} />
             <Stack.Screen name="ExportRecoveryPhrase" component={ExportRecoveryPhraseScreen} />
             <Stack.Screen name="NostrIdentity" component={NostrIdentityScreen} />
