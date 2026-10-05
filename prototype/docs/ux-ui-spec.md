@@ -404,9 +404,10 @@ Copy: prefer asset names users know (**Bitcoin**, **USDT**). Do not brand Boltz.
 
 | Mode | Behavior | Recommendation |
 | ---- | -------- | -------------- |
-| **v1 default** | Sync on foreground / unlock only. Badge inbox when opened. | **Ship this first.** Matches §0 “notifications optional / default off”. |
-| **Opt-in push** | User enables alerts → device registers push token + npub with a **notifier** that watches gift-wrap (e.g. kind 1059) on chosen relays. | Opaque payload only (“New Pay message” / contact name at most). **Never** sats, memo, or addresses in the push body. |
-| **Home relay** | Self-hosted strfry (or similar) + **sidecar notifier** (FCM / APNs / UnifiedPush). Relay stores events; notifier watches and wakes the device. | Good for power users / testers. Not a required SPOF for all Basic users. Product default must work without David’s `relay.davidcoen.it`. |
+| **v1 default** | Sync on foreground / unlock only. Badge inbox when opened. | **Shipped as default** (toggle off). Matches §0 “notifications optional / default off”. |
+| **Opt-in push (Android)** | Settings → Notifications → user enables → FCM token + npub register with **notifier sidecar** watching kind **1059** on home relay. | Opaque payload only (“New Pay message”). **Never** sats, memo, or addresses. Classic Arkade receives: **no tray while killed** — catch-up on open only. |
+| **Home relay** | Self-hosted strfry + **sidecar notifier** beside `relay.davidcoen.it` (FCM). Free write for kinds **1059** + **30078** with rate limits; relay stays paid otherwise. | Not a required SPOF for all Basic users. Product default must work without David’s relay. |
+| **iOS / APNs** | Later. | Not in this ship. |
 | **Background poll alone** | WorkManager / periodic relay fetch. | Unreliable when force-stopped; poor on iOS. **Do not** treat as the closed-app solution. |
 
 
@@ -514,7 +515,7 @@ Penpot `05u*` boards remain optional polish; Expo screens are the source of trut
 3. Receive / Send yellow notes: HD rotation; BOLT11 from Personal = intents.
 4. Refresh stale “board not drawn yet” lines in `figma-scene-comments.md` when touching that file.
 5. Pay in Chat: Expo scaffold (`15g` → thread → amount → slide); wire Penpot notes; gate `15j` non-BTC until corridors exist.
-6. Optional: notifier sidecar design for home-relay push (opaque FCM/APNs); not required for v1.
+6. ~~Optional: notifier sidecar for home-relay push (opaque FCM).~~ Android opt-in + `notifier/` sidecar scaffold shipped; deploy needs Firebase credentials + host apply. iOS/APNs later.
 
 ---
 
@@ -538,5 +539,6 @@ Penpot `05u*` boards remain optional polish; Expo screens are the source of trut
 - [ ] Mnemonic never plaintext in UI/logs except export after biometrics/password; Keystore at rest.
 - [ ] Account + engine DBs SQLCipher + Keystore key on **all** networks (block ship if missing) — [`activity-storage.md`](./activity-storage.md).
 - [ ] Pay in Chat: Request · Send in thread; slide confirm; balance visible on amount; BTC-only until multi-asset ships.
-- [ ] Pay in Chat: no OS contacts; no plaintext chat server; push opt-in and opaque if present.
+- [x] Pay in Chat: no OS contacts; no plaintext chat server; Android push opt-in + opaque (Settings → Notifications; sidecar). iOS later. Classic killed receive: catch-up on open only.
 - [ ] Pay in Chat: Nostr/inbox watchers always stopped on teardown (no leaked subscribe / `Promise.race`).
+- [ ] Closed-app push: tray smoke on Xiaomi + Samsung with force-stop (needs FCM credentials + deployed notifier).

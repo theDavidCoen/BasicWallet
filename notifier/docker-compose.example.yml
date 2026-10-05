@@ -1,0 +1,25 @@
+# Example compose fragment to run beside strfry on the relay host.
+# Copy secrets onto the host; do not commit real keys.
+
+services:
+  basic-notifier:
+    build: .
+    image: basic-push-notifier:0.1.0
+    restart: unless-stopped
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8787"
+      HOME_RELAY: "wss://relay.davidcoen.it"
+      STORE_PATH: "/data/registrations.json"
+      NOTIFIER_APP_KEY: "${NOTIFIER_APP_KEY}"
+      GOOGLE_APPLICATION_CREDENTIALS: "/run/secrets/firebase-service-account.json"
+      FCM_ANDROID_PACKAGE: "app.basic.wallet"
+      COALESCE_MS: "5000"
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - basic-notifier-data:/data
+      - ./secrets/firebase-service-account.json:/run/secrets/firebase-service-account.json:ro
+
+volumes:
+  basic-notifier-data:

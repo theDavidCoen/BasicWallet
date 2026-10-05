@@ -46,6 +46,7 @@
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.CAMERA",
+        "android.permission.POST_NOTIFICATIONS",
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_ADMIN",
         "android.permission.BLUETOOTH_CONNECT",
@@ -58,6 +59,14 @@
     "plugins": [
       "expo-secure-store",
       "expo-font",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#000000",
+          "defaultChannel": "basic-pay"
+        }
+      ],
       [
         "react-native-ble-plx",
         {

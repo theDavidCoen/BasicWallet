@@ -13,6 +13,8 @@ import { getAccountDb } from "../account/accountDb";
 import { getNetworkConfig, type ArkadeNetworkId } from "../config/network";
 import { wipeContactsTables } from "../contacts/contactStore";
 import { clearNostrIdentity } from "../nostr/identityStore";
+import { unregisterPushBestEffort } from "../notifications/register";
+import { writePushNotificationPrefs } from "../notifications/prefs";
 import { deleteMnemonic, hasLegacyMnemonic } from "../security/mnemonicStore";
 import { clearExitPackage, clearAllExitPackages } from "../exit/packageStore";
 import { clearAllRecoveryAddresses } from "../exit/recoveryAddress";
@@ -133,6 +135,18 @@ export async function factoryResetWipeDevice(): Promise<void> {
   const networkId = getNetworkConfig().id;
   const wallets = listWallets(networkId);
   const ids = wallets.map((w) => w.id);
+
+  // Drop remote FCM registration before wiping local npub/token prefs.
+  try {
+    await unregisterPushBestEffort();
+  } catch {
+    /* ignore */
+  }
+  try {
+    await writePushNotificationPrefs({ enabled: false });
+  } catch {
+    /* ignore */
+  }
 
   await clearSecureSlots(ids);
   wipeAccountTables(networkId);

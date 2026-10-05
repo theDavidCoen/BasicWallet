@@ -51,7 +51,9 @@ import { ImportNsecWarningScreen } from "../screens/ImportNsecWarningScreen";
 import { ResetAppScreen } from "../screens/ResetAppScreen";
 import { LogsScreen } from "../screens/LogsScreen";
 import { PrivacyScreen } from "../screens/PrivacyScreen";
+import { NotificationsSettingsScreen } from "../screens/NotificationsSettingsScreen";
 import { SetAppPinScreen } from "../screens/SetAppPinScreen";
+import { bindPushNotificationListeners } from "../notifications";
 import { OnboardingSecurityScreen } from "../screens/OnboardingSecurityScreen";
 import { ActivityDetailScreen } from "../screens/ActivityDetailScreen";
 import { UnilateralExitHubScreen } from "../screens/UnilateralExitHubScreen";
@@ -69,6 +71,7 @@ import { RecoveryAddressReminder } from "./RecoveryAddressReminder";
 import { SheetHost } from "./SheetHost";
 import { AppLockGate } from "../security/AppLockGate";
 import { UserPresenceHost } from "../security/UserPresenceHost";
+import { useEffect } from "react";
 import { ActivityIndicator, View } from "react-native";
 import { colors } from "../theme/colors";
 
@@ -89,6 +92,11 @@ const navTheme = {
 export function RootNavigator() {
   const { ready, hasWallet, sessionPhase } = useWallet();
   const navigationRef = useNavigationContainerRef<RootStackParamList>();
+
+  useEffect(() => {
+    if (!ready || !hasWallet) return;
+    return bindPushNotificationListeners(navigationRef);
+  }, [ready, hasWallet, navigationRef]);
 
   if (!ready) {
     return (
@@ -147,6 +155,7 @@ export function RootNavigator() {
             <Stack.Screen name="ConnectLndHub" component={ConnectLndHubScreen} />
             <Stack.Screen name="NodeStatus" component={NodeStatusScreen} />
             <Stack.Screen name="Privacy" component={PrivacyScreen} />
+            <Stack.Screen name="Notifications" component={NotificationsSettingsScreen} />
             <Stack.Screen name="SetAppPin" component={SetAppPinScreen} />
             <Stack.Screen name="ExportRecoveryPhrase" component={ExportRecoveryPhraseScreen} />
             <Stack.Screen name="NostrIdentity" component={NostrIdentityScreen} />
