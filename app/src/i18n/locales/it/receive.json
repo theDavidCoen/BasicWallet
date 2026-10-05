@@ -1,0 +1,8 @@
+{
+  "title": "RICEVI",
+  "amountSats": "Importo (sats)",
+  "memoOptional": "Memo (opzionale)",
+  "createInvoice": "Crea invoice",
+  "newInvoice": "Nuova invoice",
+  "newReceiveAddress": "Nuovo indirizzo di ricezione"
+}

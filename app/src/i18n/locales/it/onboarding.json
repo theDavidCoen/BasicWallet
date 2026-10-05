@@ -1,0 +1,16 @@
+{
+  "tagline": "La tua app di pagamenti.\nNessuna seed phrase in setup.\nPasskey OS + backup multi-cloud.",
+  "continue": "Continua",
+  "continueWithoutPasskey": "Continua senza passkey",
+  "pair": "associa",
+  "pairA11y": "associa",
+  "pairHint": "Associa account con Bluetooth",
+  "restoreOptions": "Opzioni di ripristino",
+  "pairSheetTitle": "Associa account con Bluetooth",
+  "pairingCodeLabel": "Il tuo codice di associazione",
+  "pairingCodeHint": "Mostra questo codice sul telefono già connesso e approva solo se corrisponde.",
+  "pairSheetBody": "Concedi il Bluetooth quando richiesto. Tieni aperta questa schermata mentre l’altro telefono scansiona, confronta questo codice e approva. Wallet, nsec e la passphrase di backup (se l’altro telefono ha il backup cloud attivo) si trasferiscono tramite Bluetooth crittografato. Il backup resta pienamente attivo su questo telefono. Le passkey non vengono trasferite. Se l’altro telefono non aveva backup Nostr o Home, vedrai un promemoria per configurarne uno.",
+  "waitingNearby": "In attesa del dispositivo vicino…",
+  "decrypting": "Decrittazione…",
+  "applyingLogin": "Applicazione del login…"
+}

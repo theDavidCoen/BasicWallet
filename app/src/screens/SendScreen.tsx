@@ -41,6 +41,7 @@ import {
 import { loadLndHubCredentials } from "../lightning/lndhubCredentials";
 import { requireUserPresence } from "../security/userPresence";
 import { useSheets } from "../navigation/SheetHost";
+import { AdaptiveText, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { readCachedArkAddress, writeCachedArkAddress } from "../wallet/addressCache";
 import { peekArkAddress } from "../wallet/hdWallet";
@@ -218,6 +219,7 @@ function confirmAmountBump(
 }
 
 export function SendScreen() {
+  const { t } = useI18n();
   const route = useRoute<RouteProp<RootStackParamList, "Send">>();
   const { openFundsSent } = useSheets();
   const insets = useSafeAreaInsets();
@@ -1424,7 +1426,7 @@ export function SendScreen() {
 
     return (
       <ScreenChrome logoScale={0.77}>
-        <Text style={styles.title}>SEND</Text>
+        <Text style={styles.title}>{t("send.title")}</Text>
         <Pressable onPress={toggleBalanceHidden}>
           <Text style={styles.balance}>{bal}</Text>
         </Pressable>
@@ -1450,7 +1452,7 @@ export function SendScreen() {
           </Text>
           {address.trim() ? (
             <Pressable onPress={() => setScanOpen(true)} hitSlop={8}>
-              <Text style={styles.scanLink}>Scan QR</Text>
+              <AdaptiveText style={styles.scanLink} baseFontSize={14}>{t("send.scanQr")}</AdaptiveText>
             </Pressable>
           ) : null}
         </View>
@@ -1535,7 +1537,7 @@ export function SendScreen() {
           {busy ? (
             <ActivityIndicator color="#000" />
           ) : (
-            <Text style={styles.primaryText}>Confirm send</Text>
+            <AdaptiveText style={styles.primaryText} baseFontSize={15}>{t("send.confirmSend")}</AdaptiveText>
           )}
         </Pressable>
 
@@ -1550,7 +1552,7 @@ export function SendScreen() {
               <View style={styles.scanRing}>
                 <IconQr size={30} />
               </View>
-              <Text style={styles.scanLabel}>scan QR</Text>
+              <AdaptiveText style={styles.scanLabel} baseFontSize={12}>{t("send.scanQrLower")}</AdaptiveText>
             </Pressable>
           </View>
         ) : null}
@@ -1577,11 +1579,11 @@ export function SendScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.title}>SEND</Text>
+          <Text style={styles.title}>{t("send.title")}</Text>
           <Pressable onPress={toggleBalanceHidden}>
             <Text style={styles.balance}>{bal}</Text>
           </Pressable>
-          <Text style={styles.caption}>Arkade → ark… · {network.label}</Text>
+          <Text style={styles.caption}>{t("send.networkCaption", { network: network.label })}</Text>
 
           {sendBlocked ? (
             <Text style={styles.warn}>
@@ -1675,7 +1677,7 @@ export function SendScreen() {
                 style={styles.input}
               />
 
-              <Text style={styles.fieldLabel}>To:</Text>
+              <Text style={styles.fieldLabel}>{t("send.to")}</Text>
               {primaryHasDest ? (
                 <View style={styles.destPreview}>
                   <View style={styles.destPreviewTextWrap}>
@@ -1693,7 +1695,7 @@ export function SendScreen() {
                     hitSlop={8}
                     accessibilityLabel="Clear destination"
                   >
-                    <Text style={styles.scanLink}>Clear</Text>
+                    <Text style={styles.scanLink}>{t("common.clear")}</Text>
                   </Pressable>
                 </View>
               ) : null}
@@ -1708,7 +1710,7 @@ export function SendScreen() {
                   <View style={styles.toActionIcon}>
                     <IconEnter />
                   </View>
-                  <Text style={styles.toActionLabel}>Enter</Text>
+                  <AdaptiveText style={styles.toActionLabel} baseFontSize={13}>{t("send.enter")}</AdaptiveText>
                 </Pressable>
                 <Pressable
                   style={styles.toAction}
@@ -1719,7 +1721,7 @@ export function SendScreen() {
                   <View style={styles.toActionIcon}>
                     <IconPaste />
                   </View>
-                  <Text style={styles.toActionLabel}>Paste</Text>
+                  <AdaptiveText style={styles.toActionLabel} baseFontSize={13}>{t("send.paste")}</AdaptiveText>
                 </Pressable>
                 {showMyWalletsAction ? (
                   <Pressable
@@ -1734,7 +1736,7 @@ export function SendScreen() {
                     <View style={styles.toActionIcon}>
                       <IconMyWallets />
                     </View>
-                    <Text style={styles.toActionLabel}>My wallets</Text>
+                    <AdaptiveText style={styles.toActionLabel} baseFontSize={13}>{t("send.myWallets")}</AdaptiveText>
                   </Pressable>
                 ) : null}
                 <Pressable
@@ -1749,7 +1751,7 @@ export function SendScreen() {
                   <View style={styles.toActionIcon}>
                     <IconQr size={28} />
                   </View>
-                  <Text style={styles.toActionLabel}>Scan</Text>
+                  <AdaptiveText style={styles.toActionLabel} baseFontSize={13}>{t("send.scan")}</AdaptiveText>
                 </Pressable>
               </View>
             </>
@@ -1762,7 +1764,7 @@ export function SendScreen() {
             accessibilityRole="button"
             accessibilityLabel="Add recipient"
           >
-            <Text style={styles.addRecipientText}>+ Add recipient</Text>
+            <AdaptiveText style={styles.addRecipientText} baseFontSize={14}>{t("send.addRecipient")}</AdaptiveText>
           </Pressable>
           {lines.length === 1 && !canAddRecipient && !primaryHasDest ? (
             <Text style={styles.addHint}>
@@ -1772,7 +1774,7 @@ export function SendScreen() {
 
           {lines.length > 1 ? (
             <View style={styles.totalRow}>
-              <Text style={styles.totalLabel}>Total</Text>
+              <Text style={styles.totalLabel}>{t("send.total")}</Text>
               <Text style={styles.totalValue}>
                 {arkTotal.toLocaleString("en-US")} sats
               </Text>
@@ -1819,8 +1821,8 @@ export function SendScreen() {
           nestedScrollEnabled
           showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.sheetTitle}>ADD RECIPIENT</Text>
-          <Text style={styles.sheetCaption}>Same pickers as To:</Text>
+          <Text style={styles.sheetTitle}>{t("send.addRecipientTitle")}</Text>
+          <Text style={styles.sheetCaption}>{t("send.addRecipientCaption")}</Text>
 
           {addDraftAddress.trim() ? (
             <View style={[styles.destPreview, { marginBottom: 12 }]}>
@@ -1842,7 +1844,7 @@ export function SendScreen() {
                 hitSlop={8}
                 accessibilityLabel="Clear destination"
               >
-                <Text style={styles.scanLink}>Clear</Text>
+                <Text style={styles.scanLink}>{t("common.clear")}</Text>
               </Pressable>
             </View>
           ) : null}
@@ -1857,7 +1859,7 @@ export function SendScreen() {
               <View style={styles.toActionIcon}>
                 <IconEnter />
               </View>
-              <Text style={styles.toActionLabel}>Enter</Text>
+              <AdaptiveText style={styles.toActionLabel} baseFontSize={13}>{t("send.enter")}</AdaptiveText>
             </Pressable>
             <Pressable
               style={styles.toAction}
@@ -1868,7 +1870,7 @@ export function SendScreen() {
               <View style={styles.toActionIcon}>
                 <IconPaste />
               </View>
-              <Text style={styles.toActionLabel}>Paste</Text>
+              <AdaptiveText style={styles.toActionLabel} baseFontSize={13}>{t("send.paste")}</AdaptiveText>
             </Pressable>
             {showMyWalletsAction ? (
               <Pressable
@@ -1883,7 +1885,7 @@ export function SendScreen() {
                 <View style={styles.toActionIcon}>
                   <IconMyWallets />
                 </View>
-                <Text style={styles.toActionLabel}>My wallets</Text>
+                <AdaptiveText style={styles.toActionLabel} baseFontSize={13}>{t("send.myWallets")}</AdaptiveText>
               </Pressable>
             ) : null}
           </View>
@@ -1932,10 +1934,10 @@ export function SendScreen() {
             disabled={!addDraftAddress.trim() || !addDraftAmount.trim()}
             onPress={confirmAddRecipient}
           >
-            <Text style={styles.primaryText}>Add</Text>
+            <Text style={styles.primaryText}>{t("common.add")}</Text>
           </Pressable>
           <Pressable onPress={closeAddRecipientSheet} hitSlop={8} style={{ marginTop: 14 }}>
-            <Text style={[styles.sheetCaption, { marginBottom: 0 }]}>Cancel</Text>
+            <Text style={[styles.sheetCaption, { marginBottom: 0 }]}>{t("common.cancel")}</Text>
           </Pressable>
         </ScrollView>
       </InteractiveBottomSheet>
@@ -1947,7 +1949,7 @@ export function SendScreen() {
         avoidKeyboard
       >
         <View style={styles.sheetBody}>
-          <Text style={styles.sheetTitle}>ENTER</Text>
+          <Text style={styles.sheetTitle}>{t("send.enterTitle")}</Text>
           <Text style={styles.sheetCaption}>
             Paste a destination or pick a contact
           </Text>
@@ -1967,7 +1969,7 @@ export function SendScreen() {
             disabled={!enterDraft.trim() || contactResolveBusy}
             onPress={confirmEnterDestination}
           >
-            <Text style={styles.primaryText}>Use destination</Text>
+            <AdaptiveText style={styles.primaryText} baseFontSize={15}>{t("send.useDestination")}</AdaptiveText>
           </Pressable>
 
           <TextInput
@@ -2008,7 +2010,7 @@ export function SendScreen() {
         visibleFraction={0.5}
       >
         <View style={styles.sheetBody}>
-          <Text style={styles.sheetTitle}>PICK IDENTIFIER</Text>
+          <Text style={styles.sheetTitle}>{t("send.pickIdentifier")}</Text>
           <Text style={styles.sheetCaption}>{idPickerContact?.name}</Text>
           <ScrollView keyboardShouldPersistTaps="handled">
             {(idPickerContact?.identifiers ?? []).map((ident) => {
@@ -2054,8 +2056,8 @@ export function SendScreen() {
         visibleFraction={0.5}
       >
         <View style={styles.sheetBody}>
-          <Text style={styles.sheetTitle}>MY WALLETS</Text>
-          <Text style={styles.sheetCaption}>Send to another wallet on this device</Text>
+          <Text style={styles.sheetTitle}>{t("send.myWalletsTitle")}</Text>
+          <Text style={styles.sheetCaption}>{t("send.myWalletsCaption")}</Text>
           <ScrollView
             style={styles.sheetScroll}
             contentContainerStyle={styles.sheetScrollContent}
@@ -2084,7 +2086,7 @@ export function SendScreen() {
                   {peeking ? (
                     <ActivityIndicator color={colors.fg} size="small" />
                   ) : (
-                    <Text style={styles.myWalletAction}>Use</Text>
+                    <Text style={styles.myWalletAction}>{t("common.use")}</Text>
                   )}
                 </Pressable>
               );

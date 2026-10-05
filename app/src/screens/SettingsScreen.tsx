@@ -7,11 +7,13 @@ import { useNavigation } from "@react-navigation/native";
 import { Pressable, ScrollView, StyleSheet, Text } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { AdaptiveText, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 
 const DANGER = "#E07070";
 
 type NavTarget =
+  | "Language"
   | "DisplayCurrencies"
   | "BitcoinMaxiSettings"
   | "FiatModeSettings"
@@ -31,81 +33,88 @@ type NavTarget =
   | "About";
 
 type Row = {
-  label: string;
+  labelKey: string;
   stub?: boolean;
   danger?: boolean;
   on?: NavTarget;
 };
 
 type Block =
-  | { kind: "section"; title: string }
+  | { kind: "section"; titleKey: string }
   | { kind: "row"; row: Row };
 
 const BLOCKS: Block[] = [
-  { kind: "row", row: { label: "Display currencies", on: "DisplayCurrencies" } },
-  { kind: "row", row: { label: "Bitcoin Maxi Mode", on: "BitcoinMaxiSettings" } },
-  { kind: "row", row: { label: "Fiat Mode", on: "FiatModeSettings" } },
+  { kind: "row", row: { labelKey: "settings.language", on: "Language" } },
+  { kind: "row", row: { labelKey: "settings.displayCurrencies", on: "DisplayCurrencies" } },
+  { kind: "row", row: { labelKey: "settings.bitcoinMaxiMode", on: "BitcoinMaxiSettings" } },
+  { kind: "row", row: { labelKey: "settings.fiatMode", on: "FiatModeSettings" } },
 
-  { kind: "section", title: "Account" },
-  { kind: "row", row: { label: "Privacy", on: "Privacy" } },
-  { kind: "row", row: { label: "Notifications", on: "Notifications" } },
-  { kind: "row", row: { label: "Archived wallets", on: "ArchivedWallets" } },
-  { kind: "row", row: { label: "Duress PIN", stub: true } },
+  { kind: "section", titleKey: "settings.sectionAccount" },
+  { kind: "row", row: { labelKey: "settings.privacy", on: "Privacy" } },
+  { kind: "row", row: { labelKey: "settings.notifications", on: "Notifications" } },
+  { kind: "row", row: { labelKey: "settings.archivedWallets", on: "ArchivedWallets" } },
+  { kind: "row", row: { labelKey: "settings.duressPin", stub: true } },
 
-  { kind: "section", title: "Provider Settings" },
-  { kind: "row", row: { label: "Arkade", on: "ArkadeSettings" } },
-  { kind: "row", row: { label: "Cursor", on: "CursorAgentSettings" } },
+  { kind: "section", titleKey: "settings.sectionProvider" },
+  { kind: "row", row: { labelKey: "settings.arkade", on: "ArkadeSettings" } },
+  { kind: "row", row: { labelKey: "settings.cursor", on: "CursorAgentSettings" } },
 
-  { kind: "section", title: "Nostr" },
-  { kind: "row", row: { label: "Nostr Identity", on: "NostrIdentity" } },
-  { kind: "row", row: { label: "Chat & Pay", on: "PayHub" } },
-  { kind: "row", row: { label: "Contacts", on: "Contacts" } },
+  { kind: "section", titleKey: "settings.sectionNostr" },
+  { kind: "row", row: { labelKey: "settings.nostrIdentity", on: "NostrIdentity" } },
+  { kind: "row", row: { labelKey: "settings.chatAndPay", on: "PayHub" } },
+  { kind: "row", row: { labelKey: "settings.contacts", on: "Contacts" } },
 
-  { kind: "section", title: "Advanced settings" },
-  { kind: "row", row: { label: "Logs", on: "Logs" } },
-  { kind: "row", row: { label: "Connected node", on: "ConnectedNode" } },
-  { kind: "row", row: { label: "Hardware wallet", stub: true } },
-  { kind: "row", row: { label: "Multisig", stub: true } },
-  { kind: "row", row: { label: "Backup", on: "AdvancedBackup" } },
-  { kind: "row", row: { label: "Pair with Bluetooth", on: "PairBluetooth" } },
-  { kind: "row", row: { label: "Reset app", on: "ResetApp", danger: true } },
+  { kind: "section", titleKey: "settings.sectionAdvanced" },
+  { kind: "row", row: { labelKey: "settings.logs", on: "Logs" } },
+  { kind: "row", row: { labelKey: "settings.connectedNode", on: "ConnectedNode" } },
+  { kind: "row", row: { labelKey: "settings.hardwareWallet", stub: true } },
+  { kind: "row", row: { labelKey: "settings.multisig", stub: true } },
+  { kind: "row", row: { labelKey: "settings.backup", on: "AdvancedBackup" } },
+  { kind: "row", row: { labelKey: "settings.pairBluetooth", on: "PairBluetooth" } },
+  { kind: "row", row: { labelKey: "settings.resetApp", on: "ResetApp", danger: true } },
 
-  { kind: "row", row: { label: "About", on: "About" } },
+  { kind: "row", row: { labelKey: "settings.about", on: "About" } },
 ];
 
 export function SettingsScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={styles.title}>SETTINGS</Text>
+      <Text style={styles.title}>{t("settings.title")}</Text>
       <ScrollView style={styles.list} contentContainerStyle={{ paddingBottom: 40 }}>
         {BLOCKS.map((block, i) => {
           if (block.kind === "section") {
+            const title = t(block.titleKey);
             return (
               <Text
-                key={`sec-${block.title}`}
+                key={`sec-${block.titleKey}`}
                 style={[styles.section, i === 0 && styles.sectionFirst]}
               >
-                {block.title}
+                {title}
               </Text>
             );
           }
           const { row } = block;
+          const label = t(row.labelKey);
           return (
             <Pressable
-              key={row.label}
+              key={row.labelKey}
               style={styles.row}
               onPress={() => {
                 if (!row.on) return;
                 navigation.navigate(row.on);
               }}
             >
-              <Text style={[styles.rowLabel, row.danger && styles.dangerLabel]}>
-                {row.label}
-              </Text>
+              <AdaptiveText
+                style={[styles.rowLabel, row.danger && styles.dangerLabel]}
+                baseFontSize={16}
+              >
+                {label}
+              </AdaptiveText>
               <Text style={[styles.chevron, row.danger && styles.dangerLabel]}>
-                {row.stub ? "soon" : "›"}
+                {row.stub ? t("common.soon") : "›"}
               </Text>
             </Pressable>
           );

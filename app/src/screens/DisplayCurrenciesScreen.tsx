@@ -6,6 +6,7 @@ import { useCallback, useState } from "react";
 import { StyleSheet, Switch, Text, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { useI18n } from "../i18n";
 import {
   DISPLAY_CURRENCY_CODES,
   readDisplayCurrencies,
@@ -17,6 +18,7 @@ import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
 export function DisplayCurrenciesScreen() {
+  const { t } = useI18n();
   const [settings, setSettings] = useState<DisplayCurrencySettings | null>(null);
 
   useFocusEffect(
@@ -32,8 +34,8 @@ export function DisplayCurrenciesScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={ui.title}>CURRENCIES</Text>
-      <Text style={ui.caption}>Shown under balances on Home.</Text>
+      <Text style={ui.title}>{t("settings.currenciesTitle")}</Text>
+      <Text style={ui.caption}>{t("settings.currenciesCaption")}</Text>
 
       {DISPLAY_CURRENCY_CODES.map((code) => {
         const on = settings?.enabled.includes(code) ?? false;

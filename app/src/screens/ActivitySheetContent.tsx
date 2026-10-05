@@ -25,6 +25,7 @@ import { filterFiatModeActivityRows } from "../fiat/fiatActivityFilter";
 import { useFiatMode } from "../fiat/FiatModeProvider";
 import { useWallet } from "../wallet/WalletProvider";
 import { activityDepixAtomic, formatActivityAmountSigned, formatWhen, statusLabel } from "../wallet/activity";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 
 type Props = {
@@ -40,6 +41,7 @@ type Props = {
 const REFRESH_ARM_MS = 700;
 
 export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
+  const { t } = useI18n();
   const { selectedWallet, activityEpoch, refreshActivity, bumpActivity } = useWallet();
   const { fiatMode, depixDisplay } = useFiatMode();
   const network = getNetworkConfig();
@@ -157,7 +159,7 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
     <View style={styles.root}>
       <View style={styles.titleRow}>
         <View style={styles.titleSide} />
-        <Text style={styles.title}>ACTIVITY</Text>
+        <Text style={styles.title}>{t("activity.title")}</Text>
         <Pressable
           style={[styles.titleSide, styles.exportBtn]}
           onPress={() => void onExportCsv()}
@@ -168,7 +170,7 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
           {exporting ? (
             <ActivityIndicator color={colors.fg} size="small" />
           ) : (
-            <Text style={styles.exportLabel}>CSV</Text>
+            <Text style={styles.exportLabel}>{t("activity.exportCsv")}</Text>
           )}
         </Pressable>
       </View>

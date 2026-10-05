@@ -1,0 +1,21 @@
+{
+  "title": "INVIA",
+  "scanQr": "Scansiona QR",
+  "scanQrLower": "scansiona QR",
+  "confirmSend": "Conferma invio",
+  "to": "A:",
+  "enter": "Inserisci",
+  "paste": "Incolla",
+  "myWallets": "I miei wallet",
+  "scan": "Scansiona",
+  "addRecipient": "+ Aggiungi destinatario",
+  "total": "Totale",
+  "addRecipientTitle": "AGGIUNGI DESTINATARIO",
+  "addRecipientCaption": "Stessi selettori di A:",
+  "enterTitle": "INSERISCI",
+  "useDestination": "Usa destinazione",
+  "pickIdentifier": "SCEGLI IDENTIFICATORE",
+  "myWalletsTitle": "I MIEI WALLET",
+  "myWalletsCaption": "Invia a un altro wallet su questo dispositivo",
+  "networkCaption": "Arkade → ark… · %{network}"
+}

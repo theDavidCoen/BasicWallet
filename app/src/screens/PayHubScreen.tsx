@@ -18,16 +18,12 @@ import type { ChatThread } from "../chat/types";
 import { getContact, listContacts } from "../contacts/contactStore";
 import { contactDisplayName, contactInitials } from "../contacts/types";
 import type { Contact } from "../contacts/types";
+import { CURSOR_BOT_CONTACT_ID } from "../agent/botConstants";
 import {
-  CURSOR_BOT_CONTACT_ID,
-  CURSOR_HUB_CAPTION,
-  CURSOR_SUGGESTION_CHIPS,
-} from "../agent/botConstants";
-import {
-  cursorBotAskTitle,
   getCursorBotContact,
   isCursorBotContact,
 } from "../agent/botContact";
+import { AdaptiveText, suggestionChipsFor, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -54,6 +50,7 @@ function ThreadRow({
   onOpen: () => void;
   onLongPress?: () => void;
 }) {
+  const { t } = useI18n();
   const name = contactDisplayName(row.contact);
   return (
     <Pressable
@@ -62,7 +59,7 @@ function ThreadRow({
       onLongPress={onLongPress}
       delayLongPress={350}
       accessibilityRole="button"
-      accessibilityLabel={`Open chat with ${name}`}
+      accessibilityLabel={t("chat.openChatWith", { name })}
     >
       <View style={styles.avatar}>
         <Text style={styles.avatarText}>{contactInitials(row.contact)}</Text>
@@ -71,13 +68,13 @@ function ThreadRow({
         <Text style={styles.rowName} numberOfLines={1}>
           {name}
         </Text>
-        <Text style={styles.rowSub} numberOfLines={1}>
+        <AdaptiveText style={styles.rowSub} baseFontSize={12} numberOfLines={1}>
           {row.thread.unreadCount > 0
-            ? `${row.thread.unreadCount} unread`
+            ? t("chat.unread", { count: row.thread.unreadCount })
             : row.thread.archived
-              ? "Archived · long-press to unarchive"
-              : "Private chat"}
-        </Text>
+              ? t("chat.archivedLongPress")
+              : t("chat.privateChat")}
+        </AdaptiveText>
       </View>
       <View style={styles.rowRight}>
         <Text style={styles.rowDate}>{formatDay(row.thread.lastMessageAt)}</Text>
@@ -95,6 +92,8 @@ function ThreadRow({
 
 export function PayHubScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t, locale } = useI18n();
+  const suggestionChips = suggestionChipsFor(locale);
   const [threads, setThreads] = useState<ChatThread[]>(() =>
     listChatThreads({ archived: false }),
   );
@@ -157,12 +156,13 @@ export function PayHubScreen() {
   const botThread = botContact ? getChatThread(CURSOR_BOT_CONTACT_ID) : null;
   const botUnread = botThread?.unreadCount ?? 0;
 
+  const askTitle = t("chat.askCursor");
+  const aiCaption = t("chat.aiConcierge");
+
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={ui.title}>CHAT & PAY</Text>
-      <Text style={ui.caption}>
-        Private chats with contacts. Encrypted with your account data.
-      </Text>
+      <Text style={ui.title}>{t("chat.hubTitle")}</Text>
+      <Text style={ui.caption}>{t("chat.hubCaption")}</Text>
 
       <ScrollView
         style={styles.list}
@@ -175,19 +175,19 @@ export function PayHubScreen() {
               style={styles.botRow}
               onPress={() => openThread(CURSOR_BOT_CONTACT_ID)}
               accessibilityRole="button"
-              accessibilityLabel={`${cursorBotAskTitle(botContact)}. ${CURSOR_HUB_CAPTION}`}
+              accessibilityLabel={`${askTitle}. ${aiCaption}`}
             >
               <View style={styles.botAvatar}>
                 <Text style={styles.botAvatarText}>AI</Text>
               </View>
               <View style={styles.rowMeta}>
-                <Text style={styles.botTitle} numberOfLines={1}>
-                  {cursorBotAskTitle(botContact)}
-                </Text>
-                <Text style={styles.botCaption} numberOfLines={1}>
-                  {CURSOR_HUB_CAPTION}
-                  {botUnread > 0 ? ` · ${botUnread} unread` : ""}
-                </Text>
+                <AdaptiveText style={styles.botTitle} baseFontSize={15}>
+                  {askTitle}
+                </AdaptiveText>
+                <AdaptiveText style={styles.botCaption} baseFontSize={12}>
+                  {aiCaption}
+                  {botUnread > 0 ? t("chat.unreadDot", { count: botUnread }) : ""}
+                </AdaptiveText>
               </View>
               <View style={styles.rowRight}>
                 <Text style={styles.rowDate}>
@@ -208,7 +208,7 @@ export function PayHubScreen() {
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.chipRow}
             >
-              {CURSOR_SUGGESTION_CHIPS.map((chip) => (
+              {suggestionChips.map((chip) => (
                 <Pressable
                   key={chip}
                   style={styles.chip}
@@ -228,12 +228,10 @@ export function PayHubScreen() {
         {rows.length === 0 ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyTitle}>
-              {botContact ? "No contact chats yet" : "No chats yet"}
+              {botContact ? t("chat.noContactChatsYet") : t("chat.noChatsYet")}
             </Text>
             <Text style={styles.emptyBody}>
-              {botContact
-                ? "Open a contact to start a private payment chat, or ask Cursor above."
-                : "Open a contact to start a private payment chat. Text, requests, and payments live in one thread."}
+              {botContact ? t("chat.emptyWithBot") : t("chat.emptyWithoutBot")}
             </Text>
           </View>
         ) : (
@@ -255,12 +253,13 @@ export function PayHubScreen() {
             onPress={() => setShowArchived((v) => !v)}
             accessibilityRole="button"
             accessibilityLabel={
-              showArchived ? "Hide archived chats" : "Show archived chats"
+              showArchived ? t("chat.hideArchived") : t("chat.showArchived")
             }
           >
-            <Text style={styles.archivedToggleText}>
-              {showArchived ? "▾" : "▸"} Archived ({archivedCount})
-            </Text>
+            <AdaptiveText style={styles.archivedToggleText} baseFontSize={13}>
+              {showArchived ? "▾" : "▸"}{" "}
+              {t("chat.archivedToggle", { count: archivedCount })}
+            </AdaptiveText>
           </Pressable>
         ) : null}
 
@@ -279,7 +278,9 @@ export function PayHubScreen() {
 
         {contactCount > 0 && rows.length === 0 ? (
           <Text style={styles.hint}>
-            {contactCount} contact{contactCount === 1 ? "" : "s"} available
+            {contactCount === 1
+              ? t("chat.contactsAvailable", { count: contactCount })
+              : t("chat.contactsAvailablePlural", { count: contactCount })}
           </Text>
         ) : null}
       </ScrollView>
@@ -288,9 +289,11 @@ export function PayHubScreen() {
         style={ui.secondaryBtn}
         onPress={() => navigation.navigate("Contacts", { selectForChat: true })}
         accessibilityRole="button"
-        accessibilityLabel="Open contacts"
+        accessibilityLabel={t("chat.openContacts")}
       >
-        <Text style={ui.secondaryBtnText}>Open contacts</Text>
+        <AdaptiveText style={ui.secondaryBtnText} baseFontSize={15}>
+          {t("chat.openContacts")}
+        </AdaptiveText>
       </Pressable>
     </ScreenChrome>
   );

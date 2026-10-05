@@ -52,6 +52,7 @@ import {
   listUnreadChatThreads,
   subscribeChatStore,
 } from "../chat/chatStore";
+import { AdaptiveText, useI18n } from "../i18n";
 
 const MUTINYNET_OK = "#7DCEA0";
 const MUTINYNET_DOWN = "#E07070";
@@ -76,6 +77,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 
 export function HomeScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
   const {
     balanceSats,
     balance,
@@ -361,12 +363,12 @@ export function HomeScreen() {
         }
         lastBackAt = now;
         if (Platform.OS === "android") {
-          ToastAndroid.show("Tap again to exit the app", ToastAndroid.SHORT);
+          ToastAndroid.show(t("home.tapAgainToExit"), ToastAndroid.SHORT);
         }
         return true;
       });
       return () => sub.remove();
-    }, [navigation]),
+    }, [navigation, t]),
   );
 
   const rateFooter = useMemo(() => {
@@ -692,7 +694,9 @@ export function HomeScreen() {
                   onPress={fiatMode ? openFiatModeExit : openFiatModeEnter}
                   hitSlop={8}
                   accessibilityRole="button"
-                  accessibilityLabel={fiatMode ? "Exit Fiat Mode" : "Enter Fiat Mode"}
+                  accessibilityLabel={
+                    fiatMode ? t("home.exitFiatMode") : t("home.enterFiatMode")
+                  }
                   style={styles.fiatModeBtn}
                 >
                   <Text style={styles.fiatModeBtnLabel}>{fiatMode ? "₿" : "R$"}</Text>
@@ -703,26 +707,30 @@ export function HomeScreen() {
                   onPress={() => navigation.navigate("UnilateralExitHub")}
                   hitSlop={8}
                   accessibilityRole="button"
-                  accessibilityLabel="Unilateral exit in progress"
+                  accessibilityLabel={t("home.unilateralExitA11y")}
                   style={styles.exitBadgeRow}
                 >
                   <View style={styles.exitDot} />
-                  <Text style={styles.exitBadge}>
-                    {activeCount === 1 ? "exit in progress" : `${activeCount} exits`}
-                  </Text>
+                  <AdaptiveText style={styles.exitBadge} baseFontSize={11}>
+                    {activeCount === 1
+                      ? t("home.exitInProgress")
+                      : t("home.exitsCount", { count: activeCount })}
+                  </AdaptiveText>
                 </Pressable>
               ) : pendingSweep.count > 0 ? (
                 <Pressable
                   onPress={() => navigation.navigate("UnilateralExitHub")}
                   hitSlop={8}
                   accessibilityRole="button"
-                  accessibilityLabel="Exit remaining funds onchain"
+                  accessibilityLabel={t("home.exitRemainingA11y")}
                   style={styles.exitBadgeRow}
                 >
                   <View style={styles.exitDot} />
-                  <Text style={styles.exitBadge}>
-                    {`exit remaining · ${pendingSweep.sats.toLocaleString("en-US")}`}
-                  </Text>
+                  <AdaptiveText style={styles.exitBadge} baseFontSize={11}>
+                    {t("home.exitRemaining", {
+                      sats: pendingSweep.sats.toLocaleString("en-US"),
+                    })}
+                  </AdaptiveText>
                 </Pressable>
               ) : null}
               {network.id === "mutinynet" ? (
@@ -732,8 +740,8 @@ export function HomeScreen() {
                   accessibilityRole="link"
                   accessibilityLabel={
                     mutinynetOnline
-                      ? "Mutinynet online, open explorer"
-                      : "Mutinynet offline, open explorer"
+                      ? t("home.mutinynetOnline")
+                      : t("home.mutinynetOffline")
                   }
                   style={styles.mutinynetBadgeRow}
                 >
@@ -753,17 +761,24 @@ export function HomeScreen() {
             <GestureDetector gesture={pullResync}>
             <View
               style={styles.center}
-              accessibilityHint="Swipe down to resync balance and activity"
+              accessibilityHint={t("home.pullResyncHint")}
             >
               <View style={styles.pullResyncAnchor}>
                 <PullResyncIndicator pullY={pullY} busy={pullResyncBusy} />
                 <View style={styles.walletTagRow}>
                   <Text style={styles.walletTag}>
-                    {stripFiatModeLabelSuffix(selectedWallet?.label ?? "Personal")}
+                    {stripFiatModeLabelSuffix(
+                      selectedWallet?.label ?? t("common.personal"),
+                    )}
                   </Text>
                   {fiatMode ? (
-                    <View style={styles.fiatModeBadge} accessibilityLabel="Fiat Mode on">
-                      <Text style={styles.fiatModeBadgeLabel}>FIAT MODE</Text>
+                    <View
+                      style={styles.fiatModeBadge}
+                      accessibilityLabel={t("home.fiatModeOn")}
+                    >
+                      <AdaptiveText style={styles.fiatModeBadgeLabel} baseFontSize={10}>
+                        {t("home.fiatModeBadge")}
+                      </AdaptiveText>
                     </View>
                   ) : null}
                 </View>
@@ -784,7 +799,7 @@ export function HomeScreen() {
                     onPress={cycleBalanceUnit}
                     style={styles.swapBtn}
                     hitSlop={12}
-                    accessibilityLabel="Switch balance unit"
+                    accessibilityLabel={t("home.switchBalanceUnit")}
                   >
                     <Text style={styles.swapIco}>⇅</Text>
                   </Pressable>
@@ -804,9 +819,13 @@ export function HomeScreen() {
               {!fiatMode && pendingExitSats != null && pendingExitSats > 0 ? (
                 <Text
                   style={styles.pendingExitHint}
-                  accessibilityLabel={`${pendingExitSats} sats pending`}
+                  accessibilityLabel={t("home.satsPending", {
+                    sats: pendingExitSats.toLocaleString("en-US"),
+                  })}
                 >
-                  {`+ ${pendingExitSats.toLocaleString("en-US")} sats pending`}
+                  {t("home.satsPending", {
+                    sats: pendingExitSats.toLocaleString("en-US"),
+                  })}
                 </Text>
               ) : null}
               {statusHint ? <Text style={styles.statusHint}>{statusHint}</Text> : null}
@@ -816,13 +835,17 @@ export function HomeScreen() {
                   style={styles.ghostBtn}
                   onPressIn={() => navigation.navigate("Receive")}
                 >
-                  <Text style={styles.ghostLabel}>Receive</Text>
+                  <AdaptiveText style={styles.ghostLabel} baseFontSize={16}>
+                    {t("home.receive")}
+                  </AdaptiveText>
                 </Pressable>
                 <Pressable
                   style={styles.ghostBtn}
                   onPressIn={() => navigation.navigate("Send")}
                 >
-                  <Text style={styles.ghostLabel}>Send</Text>
+                  <AdaptiveText style={styles.ghostLabel} baseFontSize={16}>
+                    {t("home.send")}
+                  </AdaptiveText>
                 </Pressable>
               </View>
             </View>
@@ -834,8 +857,8 @@ export function HomeScreen() {
               accessibilityRole="button"
               accessibilityLabel={
                 chatUnreadTotal > 0
-                  ? `Chat and Pay, ${chatUnreadTotal} unread`
-                  : "Chat and Pay"
+                  ? t("home.chatAndPayA11yUnread", { count: chatUnreadTotal })
+                  : t("home.chatAndPayA11y")
               }
             >
               {chatUnreadTotal > 0 ? (
@@ -845,8 +868,12 @@ export function HomeScreen() {
                   </Text>
                 </View>
               ) : null}
-              <Text style={styles.chatPayTitle}>Chat & Pay</Text>
-              <Text style={styles.chatPayHint}>Private chats · pay contacts</Text>
+              <AdaptiveText style={styles.chatPayTitle} baseFontSize={16}>
+                {t("home.chatAndPay")}
+              </AdaptiveText>
+              <AdaptiveText style={styles.chatPayHint} baseFontSize={12} fit={false} numberOfLines={2}>
+                {t("home.chatAndPayHint")}
+              </AdaptiveText>
             </Pressable>
 
             <GestureDetector gesture={pan}>

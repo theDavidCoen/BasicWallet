@@ -1,0 +1,21 @@
+{
+  "title": "SEND",
+  "scanQr": "Scan QR",
+  "scanQrLower": "scan QR",
+  "confirmSend": "Confirm send",
+  "to": "To:",
+  "enter": "Enter",
+  "paste": "Paste",
+  "myWallets": "My wallets",
+  "scan": "Scan",
+  "addRecipient": "+ Add recipient",
+  "total": "Total",
+  "addRecipientTitle": "ADD RECIPIENT",
+  "addRecipientCaption": "Same pickers as To:",
+  "enterTitle": "ENTER",
+  "useDestination": "Use destination",
+  "pickIdentifier": "PICK IDENTIFIER",
+  "myWalletsTitle": "MY WALLETS",
+  "myWalletsCaption": "Send to another wallet on this device",
+  "networkCaption": "Arkade → ark… · %{network}"
+}

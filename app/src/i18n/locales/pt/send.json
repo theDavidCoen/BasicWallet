@@ -1,0 +1,21 @@
+{
+  "title": "ENVIAR",
+  "scanQr": "Escanear QR",
+  "scanQrLower": "escanear QR",
+  "confirmSend": "Confirmar envio",
+  "to": "Para:",
+  "enter": "Inserir",
+  "paste": "Colar",
+  "myWallets": "Minhas carteiras",
+  "scan": "Escanear",
+  "addRecipient": "+ Adicionar destinatário",
+  "total": "Total",
+  "addRecipientTitle": "ADICIONAR DESTINATÁRIO",
+  "addRecipientCaption": "Mesmos seletores de Para:",
+  "enterTitle": "INSERIR",
+  "useDestination": "Usar destino",
+  "pickIdentifier": "ESCOLHER IDENTIFICADOR",
+  "myWalletsTitle": "MINHAS CARTEIRAS",
+  "myWalletsCaption": "Enviar para outra carteira neste dispositivo",
+  "networkCaption": "Arkade → ark… · %{network}"
+}

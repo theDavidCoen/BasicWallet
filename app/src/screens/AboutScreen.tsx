@@ -27,6 +27,7 @@ import {
 import { getNetworkConfig } from "../config/network";
 import { prettyDelta } from "../lib/prettyDelta";
 import { midEllipsis } from "../nostr/keys";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -41,9 +42,6 @@ type AspState =
   | { status: "loading" }
   | { status: "ok"; rows: AspRow[] }
   | { status: "error"; message: string; rows: AspRow[] };
-
-const CAPTION =
-  "Bitcoin p2p payments, for your daily needs.\nYour money, your keys.\nPowered by Arkade, Nostr, LND.";
 
 const COPYABLE_LABELS = new Set([
   "Server URL",
@@ -136,6 +134,7 @@ function staticFallbackRows(serverUrl: string, networkId: string): AspRow[] {
 }
 
 export function AboutScreen() {
+  const { t } = useI18n();
   const [asp, setAsp] = useState<AspState>({ status: "loading" });
   const [copiedLabel, setCopiedLabel] = useState<string | null>(null);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -194,8 +193,8 @@ export function AboutScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={ui.title}>ABOUT</Text>
-        <Text style={styles.caption}>{CAPTION}</Text>
+        <Text style={ui.title}>{t("about.title")}</Text>
+        <Text style={styles.caption}>{t("about.caption")}</Text>
 
         <Text style={styles.section}>ARKADE</Text>
 

@@ -53,6 +53,7 @@ export const BACKUP_REMINDER_HIDDEN_ROUTES = new Set<string>([
   "ResetApp",
   "PairBluetooth",
   "RestoreWallet",
+  "Language",
   "DisplayCurrencies",
   "Delegates",
   "ExitRecoveryAddress",

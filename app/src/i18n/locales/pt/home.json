@@ -1,0 +1,23 @@
+{
+  "receive": "Receber",
+  "send": "Enviar",
+  "chatAndPay": "Chat e pagar",
+  "chatAndPayHint": "Chats privados · pague contatos",
+  "chatAndPayA11y": "Chat e pagar",
+  "chatAndPayA11yUnread": "Chat e pagar, %{count} não lidas",
+  "fiatModeBadge": "MODO FIAT",
+  "enterFiatMode": "Entrar no Modo Fiat",
+  "exitFiatMode": "Sair do Modo Fiat",
+  "fiatModeOn": "Modo Fiat ativo",
+  "switchBalanceUnit": "Alternar unidade do saldo",
+  "exitInProgress": "saída em andamento",
+  "exitsCount": "%{count} saídas",
+  "exitRemaining": "saída restante · %{sats}",
+  "exitRemainingA11y": "Enviar fundos restantes onchain",
+  "unilateralExitA11y": "Saída unilateral em andamento",
+  "mutinynetOnline": "Mutinynet online, abrir explorer",
+  "mutinynetOffline": "Mutinynet offline, abrir explorer",
+  "pullResyncHint": "Deslize para baixo para ressincronizar saldo e atividade",
+  "satsPending": "+ %{sats} sats pendentes",
+  "tapAgainToExit": "Toque novamente para sair do app"
+}

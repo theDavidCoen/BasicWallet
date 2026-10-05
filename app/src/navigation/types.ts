@@ -44,6 +44,8 @@ export type RootStackParamList = {
   ArkadeSettings: undefined;
   /** Arkade network + custom ASP */
   ArkadeNetwork: undefined;
+  /** App language (system / en / it / pt) */
+  Language: undefined;
   /** Penpot 05b */
   DisplayCurrencies: undefined;
   /** Bitcoin Maxi Mode (auto-swap inbound assets → sats) */

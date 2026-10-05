@@ -1,0 +1,8 @@
+{
+  "title": "RECEIVE",
+  "amountSats": "Amount (sats)",
+  "memoOptional": "Memo (optional)",
+  "createInvoice": "Create invoice",
+  "newInvoice": "New invoice",
+  "newReceiveAddress": "New receive address"
+}

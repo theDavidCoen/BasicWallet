@@ -29,6 +29,7 @@ import {
   maskCursorApiKey,
   saveCursorAgentCredentials,
 } from "../settings/cursorAgentCredentials";
+import { AdaptiveText, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -36,6 +37,7 @@ const CURSOR_DASHBOARD_KEYS = "https://cursor.com/dashboard?tab=integrations";
 const CURSOR_API_KEYS_HINT = "https://cursor.com/dashboard";
 
 export function CursorAgentSettingsScreen() {
+  const { t } = useI18n();
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [hasIdentity, setHasIdentity] = useState(false);
@@ -151,7 +153,7 @@ export function CursorAgentSettingsScreen() {
   return (
     <ScreenChrome logoScale={0.77}>
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-        <Text style={ui.title}>CURSOR AGENT</Text>
+        <Text style={ui.title}>{t("cursor.title")}</Text>
         <Text style={ui.caption}>
           Paste your Cursor API key to activate Ask Cursor in Chat & Pay. Bitrefill
           and other shopping MCPs stay on your Cursor Cloud / Dashboard — Basic never
@@ -181,7 +183,7 @@ export function CursorAgentSettingsScreen() {
               </View>
             ) : null}
 
-            <Text style={styles.fieldLabel}>Cursor API key</Text>
+            <Text style={styles.fieldLabel}>{t("cursor.apiKey")}</Text>
             <TextInput
               value={draftKey}
               onChangeText={setDraftKey}
@@ -214,18 +216,22 @@ export function CursorAgentSettingsScreen() {
               style={styles.linkBtn}
               onPress={() => void Linking.openURL(CURSOR_API_KEYS_HINT)}
             >
-              <Text style={styles.linkText}>Open Cursor Dashboard →</Text>
+              <AdaptiveText style={styles.linkText} baseFontSize={14}>
+                {t("cursor.openDashboard")}
+              </AdaptiveText>
             </Pressable>
             <Pressable
               style={styles.linkBtn}
               onPress={() => void Linking.openURL(CURSOR_DASHBOARD_KEYS)}
             >
-              <Text style={styles.linkText}>Configure Dashboard MCPs →</Text>
+              <AdaptiveText style={styles.linkText} baseFontSize={14}>
+                {t("cursor.configureMcps")}
+              </AdaptiveText>
             </Pressable>
 
             {botNpub ? (
               <View style={styles.botCard}>
-                <Text style={styles.fieldLabel}>Bot npub</Text>
+                <Text style={styles.fieldLabel}>{t("cursor.botNpub")}</Text>
                 <Pressable onPress={() => void copyBotNpub()}>
                   <Text style={styles.botNpub}>{midEllipsis(botNpub, 16, 10)}</Text>
                   <Text style={styles.statusSub}>
@@ -249,7 +255,9 @@ export function CursorAgentSettingsScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Disable Cursor agent"
               >
-                <Text style={styles.dangerText}>Disable & wipe</Text>
+                <AdaptiveText style={styles.dangerText} baseFontSize={14}>
+                  {t("cursor.disableWipe")}
+                </AdaptiveText>
               </Pressable>
             ) : null}
           </>

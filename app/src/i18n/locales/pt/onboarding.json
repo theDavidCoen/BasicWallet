@@ -1,0 +1,16 @@
+{
+  "tagline": "Seu app de pagamentos.\nSem seed phrase no setup.\nPasskey do SO + backups multi-cloud.",
+  "continue": "Continuar",
+  "continueWithoutPasskey": "Continuar sem passkey",
+  "pair": "emparelhar",
+  "pairA11y": "emparelhar",
+  "pairHint": "Emparelhar conta com Bluetooth",
+  "restoreOptions": "Opções de restauração",
+  "pairSheetTitle": "Emparelhar conta com Bluetooth",
+  "pairingCodeLabel": "Seu código de emparelhamento",
+  "pairingCodeHint": "Mostre este código no telefone já logado e aprove só se coincidir.",
+  "pairSheetBody": "Conceda Bluetooth quando solicitado. Mantenha esta tela aberta enquanto o outro telefone escaneia, confere este código e aprova. Carteiras, nsec e a senha de backup (se o outro telefone tiver backup na nuvem) transferem por Bluetooth criptografado. O backup permanece totalmente ativo neste telefone. Passkeys não são transferidas. Se o outro telefone não tinha backup Nostr ou Home, você verá um lembrete para configurar um.",
+  "waitingNearby": "Aguardando dispositivo próximo…",
+  "decrypting": "Descriptografando…",
+  "applyingLogin": "Aplicando login…"
+}

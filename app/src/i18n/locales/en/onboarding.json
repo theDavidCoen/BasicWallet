@@ -1,0 +1,16 @@
+{
+  "tagline": "Your payments app.\nNo seed phrase in setup.\nOS passkey + multi-cloud backups.",
+  "continue": "Continue",
+  "continueWithoutPasskey": "Continue without passkey",
+  "pair": "pair",
+  "pairA11y": "pair",
+  "pairHint": "Pair account with Bluetooth",
+  "restoreOptions": "Restore options",
+  "pairSheetTitle": "Pair account with Bluetooth",
+  "pairingCodeLabel": "Your pairing code",
+  "pairingCodeHint": "Show this code on the logged-in phone and approve only if it matches.",
+  "pairSheetBody": "Grant Bluetooth when prompted. Keep this screen open while the other phone scans, matches this code, and approves. Wallets, nsec, and the backup passphrase (if the other phone has cloud backup on) transfer over encrypted Bluetooth. Backup stays fully active on this phone. Passkeys are not transferred. If the other phone had no Nostr or Home backup, you will see a reminder to set one up.",
+  "waitingNearby": "Waiting for nearby device…",
+  "decrypting": "Decrypting…",
+  "applyingLogin": "Applying login…"
+}

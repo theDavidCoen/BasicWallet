@@ -27,6 +27,7 @@ import {
   generatePairEphemeralKeypair,
   type PairEphemeralKeypair,
 } from "../pair/pairProtocol";
+import { AdaptiveText, useI18n } from "../i18n";
 import { useWallet } from "../wallet/WalletProvider";
 
 /**
@@ -61,11 +62,12 @@ function BluetoothIcon({ size = 18, color = colors.fg }: { size?: number; color?
 
 export function OnboardingCreateScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
   const insets = useSafeAreaInsets();
   const { beginQuietImportSync, selectWallet } = useWallet();
   const [busy, setBusy] = useState(false);
   const [pairInfoOpen, setPairInfoOpen] = useState(false);
-  const [pairStatus, setPairStatus] = useState("Waiting for nearby device…");
+  const [pairStatus, setPairStatus] = useState(() => t("onboarding.waitingNearby"));
   const [pairBusy, setPairBusy] = useState(false);
   const [lobbyId, setLobbyId] = useState<string | null>(null);
   const [sessionKey, setSessionKey] = useState(0);
@@ -83,7 +85,7 @@ export function OnboardingCreateScreen() {
     void (async () => {
       setPairBusy(true);
       try {
-        setPairStatus("Waiting for nearby device…");
+        setPairStatus(t("onboarding.waitingNearby"));
         const wire = await runRequesterBleSession({
           lobbyHash8: eph.lobbyHash8,
           pubCompressed: eph.pubCompressed,
@@ -93,11 +95,11 @@ export function OnboardingCreateScreen() {
           signal: ac.signal,
         });
         if (cancelled || ac.signal.aborted) return;
-        setPairStatus("Decrypting…");
+        setPairStatus(t("onboarding.decrypting"));
         const envelope = decodeWireEnvelope(wire);
         const plain = decryptPairPayload(envelope, eph.sk);
         const pkg = decodePairLoginPackage(plain);
-        setPairStatus("Applying login…");
+        setPairStatus(t("onboarding.applyingLogin"));
         const applied = await applyPairLoginPackage(pkg);
         beginQuietImportSync();
         await selectWallet(applied.preferredWalletId);
@@ -220,9 +222,7 @@ export function OnboardingCreateScreen() {
       </View>
 
       <Text style={[styles.tagline, { marginTop: Math.max(16, tagMarginTop) }]}>
-        Your payments app.{"\n"}
-        No seed phrase in setup.{"\n"}
-        OS passkey + multi-cloud backups.
+        {t("onboarding.tagline")}
       </Text>
 
       <View style={{ marginTop: Math.max(24, btnMarginTop) }}>
@@ -234,7 +234,9 @@ export function OnboardingCreateScreen() {
           {busy ? (
             <ActivityIndicator color="#000" />
           ) : (
-            <Text style={styles.primaryBtnText}>Continue</Text>
+            <AdaptiveText style={styles.primaryBtnText} baseFontSize={16}>
+              {t("onboarding.continue")}
+            </AdaptiveText>
           )}
         </Pressable>
 
@@ -242,7 +244,7 @@ export function OnboardingCreateScreen() {
           style={[styles.textLink, { marginTop: Math.max(16, btnGap) }]}
           onPress={() => void goCreate("device-only")}
         >
-          Continue without passkey
+          {t("onboarding.continueWithoutPasskey")}
         </Text>
       </View>
 
@@ -253,19 +255,23 @@ export function OnboardingCreateScreen() {
           style={styles.chip}
           onPress={() => void openPairInfo()}
           accessibilityRole="button"
-          accessibilityLabel="pair"
-          accessibilityHint={pairBusy ? pairStatus : "Pair account with Bluetooth"}
+          accessibilityLabel={t("onboarding.pairA11y")}
+          accessibilityHint={pairBusy ? pairStatus : t("onboarding.pairHint")}
         >
           <BluetoothIcon />
-          <Text style={styles.chipText}>pair</Text>
+          <AdaptiveText style={styles.chipText} baseFontSize={13}>
+            {t("onboarding.pair")}
+          </AdaptiveText>
         </Pressable>
         <Pressable
           style={styles.chip}
           onPress={() => void goCreate("restore")}
           accessibilityRole="button"
-          accessibilityLabel="Restore options"
+          accessibilityLabel={t("onboarding.restoreOptions")}
         >
-          <Text style={styles.chipText}>Restore options</Text>
+          <AdaptiveText style={styles.chipText} baseFontSize={13}>
+            {t("onboarding.restoreOptions")}
+          </AdaptiveText>
         </Pressable>
       </View>
 
@@ -276,25 +282,18 @@ export function OnboardingCreateScreen() {
         fitContent
         portal
       >
-        <Text style={styles.sheetTitle}>Pair account with Bluetooth</Text>
+        <Text style={styles.sheetTitle}>{t("onboarding.pairSheetTitle")}</Text>
         {lobbyId ? (
           <View style={styles.codeBlock}>
-            <Text style={styles.codeLabel}>Your pairing code</Text>
+            <Text style={styles.codeLabel}>{t("onboarding.pairingCodeLabel")}</Text>
             <Text style={styles.codeValue} selectable>
               {lobbyId}
             </Text>
-            <Text style={styles.codeHint}>
-              Show this code on the logged-in phone and approve only if it matches.
-            </Text>
+            <Text style={styles.codeHint}>{t("onboarding.pairingCodeHint")}</Text>
           </View>
         ) : null}
         <Text style={[styles.sheetBody, { paddingBottom: sheetBottomPad }]}>
-          Grant Bluetooth when prompted. Keep this screen open while the other
-          phone scans, matches this code, and approves. Wallets, nsec, and the
-          backup passphrase (if the other phone has cloud backup on) transfer
-          over encrypted Bluetooth. Backup stays fully active on this phone.
-          Passkeys are not transferred. If the other phone had no Nostr or Home
-          backup, you will see a reminder to set one up.
+          {t("onboarding.pairSheetBody")}
           {pairStatus ? `\n\n${pairStatus}` : ""}
         </Text>
       </InteractiveBottomSheet>

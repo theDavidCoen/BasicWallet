@@ -73,12 +73,12 @@ import { getContact } from "../contacts/contactStore";
 import { contactDisplayName, contactInitials } from "../contacts/types";
 import { catchUpGiftWraps } from "../contacts/contactShareWatch";
 import { isCursorBotContact } from "../agent/botContact";
-import { CURSOR_HUB_CAPTION, CURSOR_SUGGESTION_CHIPS } from "../agent/botConstants";
 import { enqueueBotFulfillAfterPay } from "../agent/botFulfill";
 import { catchUpBotWatch } from "../agent/botWatch";
 import { getNetworkConfig } from "../config/network";
 import { fetchFiatSpot } from "../fiat/depixAssets";
 import { useFiatMode } from "../fiat/FiatModeProvider";
+import { AdaptiveText, suggestionChipsFor, useI18n } from "../i18n";
 import { hasNostrIdentity } from "../nostr/identityStore";
 import { requireUserPresence } from "../security/userPresence";
 import { useWallet } from "../wallet/WalletProvider";
@@ -101,6 +101,8 @@ function formatTime(ms: number): string {
 export function ChatThreadScreen() {
   const navigation = useNavigation<RootNav>();
   const route = useRoute<RouteProp<RootStackParamList, "ChatThread">>();
+  const { t, locale } = useI18n();
+  const suggestionChips = suggestionChipsFor(locale);
   const { height: windowHeight } = useWindowDimensions();
   const contactId = route.params.contactId;
   const seedDraft = route.params.seedDraft;
@@ -340,15 +342,15 @@ export function ChatThreadScreen() {
     const body = draft.trim();
     if (!body || sending) return;
     if (!hasIdentity) {
-      Alert.alert("Nostr identity", "Create a Nostr identity to send encrypted messages.", [
-        { text: "Cancel", style: "cancel" },
-        { text: "Create", onPress: () => navigation.navigate("NostrIdentity") },
+      Alert.alert(t("chat.alertNostrTitle"), t("chat.alertNostrSend"), [
+        { text: t("common.cancel"), style: "cancel" },
+        { text: t("common.continue"), onPress: () => navigation.navigate("NostrIdentity") },
       ]);
       return;
     }
     const gate = chatGateMessage(contactId);
     if (gate) {
-      Alert.alert("Chat unavailable", gate);
+      Alert.alert(t("chat.alertChatUnavailable"), gate);
       return;
     }
     setSending(true);
@@ -356,7 +358,10 @@ export function ChatThreadScreen() {
     try {
       await sendChatText(contactId, body);
     } catch (e) {
-      Alert.alert("Send failed", e instanceof Error ? e.message : "Unknown error");
+      Alert.alert(
+        t("chat.alertSendFailed"),
+        e instanceof Error ? e.message : t("common.unknownError"),
+      );
       setDraft(body);
     } finally {
       setSending(false);
@@ -365,15 +370,15 @@ export function ChatThreadScreen() {
 
   function openRequest() {
     if (!hasIdentity) {
-      Alert.alert("Nostr identity", "Create a Nostr identity to request payment.", [
-        { text: "Cancel", style: "cancel" },
-        { text: "Create", onPress: () => navigation.navigate("NostrIdentity") },
+      Alert.alert(t("chat.alertNostrTitle"), t("chat.alertNostrRequest"), [
+        { text: t("common.cancel"), style: "cancel" },
+        { text: t("common.continue"), onPress: () => navigation.navigate("NostrIdentity") },
       ]);
       return;
     }
     const gate = chatGateMessage(contactId);
     if (gate) {
-      Alert.alert("Request unavailable", gate);
+      Alert.alert(t("chat.alertRequestUnavailable"), gate);
       return;
     }
     navigation.navigate("ChatAmount", { contactId, mode: "request" });
@@ -395,7 +400,10 @@ export function ChatThreadScreen() {
     try {
       await declinePayRequest({ contactId, requestId });
     } catch (e) {
-      Alert.alert("Decline failed", e instanceof Error ? e.message : "Unknown error");
+      Alert.alert(
+        t("chat.alertDeclineFailed"),
+        e instanceof Error ? e.message : t("common.unknownError"),
+      );
     } finally {
       setActionBusy(null);
     }
@@ -408,7 +416,7 @@ export function ChatThreadScreen() {
     // `wallet` is still null and Home is only showing a cached balance.
     const payWallet = await ensureChatPayWallet({ wallet, selectedWallet });
     if (!payWallet.ok) {
-      Alert.alert("Wallet", payWallet.message);
+      Alert.alert(t("chat.alertWallet"), payWallet.message);
       return;
     }
 
@@ -727,15 +735,15 @@ export function ChatThreadScreen() {
   if (!contact) {
     return (
       <ScreenChrome logoScale={0.77}>
-        <Text style={ui.title}>CHAT</Text>
-        <Text style={ui.caption}>Contact not found.</Text>
+        <Text style={ui.title}>{t("chat.threadTitle")}</Text>
+        <Text style={ui.caption}>{t("chat.contactNotFound")}</Text>
         <Pressable
           style={ui.secondaryBtn}
           onPress={() => navigation.goBack()}
           accessibilityRole="button"
-          accessibilityLabel="Go back"
+          accessibilityLabel={t("common.back")}
         >
-          <Text style={ui.secondaryBtnText}>Back</Text>
+          <Text style={ui.secondaryBtnText}>{t("common.back")}</Text>
         </Pressable>
       </ScreenChrome>
     );
@@ -756,18 +764,18 @@ export function ChatThreadScreen() {
             <Text style={styles.avatarText}>{isBot ? "AI" : initials}</Text>
           </View>
           <View style={styles.headerMeta}>
-            <Text style={styles.headerName} numberOfLines={1}>
-              {isBot ? `Ask ${name}` : name}
-            </Text>
-            <Text style={styles.headerSub}>
+            <AdaptiveText style={styles.headerName} baseFontSize={16}>
+              {isBot ? t("chat.askName", { name }) : name}
+            </AdaptiveText>
+            <AdaptiveText style={styles.headerSub} baseFontSize={12}>
               {archived
-                ? "Archived"
+                ? t("chat.archived")
                 : isBot
-                  ? CURSOR_HUB_CAPTION
+                  ? t("chat.aiConcierge")
                   : canNostr
-                    ? "Private · encrypted"
-                    : "Add npub for encrypted chat"}
-            </Text>
+                    ? t("chat.privateEncrypted")
+                    : t("chat.addNpubForChat")}
+            </AdaptiveText>
           </View>
           {!isBot ? (
             <>
@@ -775,17 +783,23 @@ export function ChatThreadScreen() {
                 onPress={onArchiveToggle}
                 hitSlop={8}
                 accessibilityRole="button"
-                accessibilityLabel={archived ? `Unarchive ${name}` : `Archive ${name}`}
+                accessibilityLabel={
+                  archived
+                    ? t("chat.unarchiveA11y", { name })
+                    : t("chat.archiveA11y", { name })
+                }
               >
-                <Text style={styles.editLink}>{archived ? "Unarchive" : "Archive"}</Text>
+                <AdaptiveText style={styles.editLink} baseFontSize={13}>
+                  {archived ? t("chat.unarchive") : t("chat.archive")}
+                </AdaptiveText>
               </Pressable>
               <Pressable
                 onPress={() => navigation.navigate("ContactEdit", { contactId })}
                 hitSlop={8}
                 accessibilityRole="button"
-                accessibilityLabel={`Edit ${name}`}
+                accessibilityLabel={t("chat.editA11y", { name })}
               >
-                <Text style={styles.editLink}>Edit</Text>
+                <Text style={styles.editLink}>{t("common.edit")}</Text>
               </Pressable>
             </>
           ) : null}
@@ -804,15 +818,15 @@ export function ChatThreadScreen() {
           ListEmptyComponent={
             <View style={styles.emptyCard}>
               <Text style={styles.emptyTitle}>
-                {isBot ? "Ask Cursor anything" : "No messages yet"}
+                {isBot ? t("chat.askAnything") : t("chat.noMessagesYet")}
               </Text>
               <Text style={styles.emptyBody}>
                 {isBot
-                  ? "Your AI concierge. Shopping MCPs (e.g. Bitrefill) use your Cursor Dashboard — Basic never stores those keys. Pay invoices here with Confirm + biometrics."
-                  : `Private chat with ${name}. Encrypted with your account data. Send or request sats anytime.`}
+                  ? t("chat.botEmptyBody")
+                  : t("chat.threadEmptyBody", { name })}
               </Text>
               {isBot
-                ? CURSOR_SUGGESTION_CHIPS.map((chip) => (
+                ? suggestionChips.map((chip) => (
                     <Pressable
                       key={chip}
                       style={styles.suggestChip}
@@ -896,7 +910,9 @@ export function ChatThreadScreen() {
             }
             if (item.kind === "system") {
               return (
-                <Text style={styles.system}>{item.bodyText ?? "Update"}</Text>
+                <Text style={styles.system}>
+                  {item.bodyText ?? t("common.update")}
+                </Text>
               );
             }
             return null;
@@ -909,17 +925,24 @@ export function ChatThreadScreen() {
               style={[styles.actionBtn, !canNostr && styles.actionDisabled]}
               onPress={openRequest}
               accessibilityRole="button"
-              accessibilityLabel="Request"
+              accessibilityLabel={t("chat.requestA11y")}
             >
-              <Text style={styles.actionBtnText}>← Request</Text>
+              <AdaptiveText style={styles.actionBtnText} baseFontSize={14}>
+                {t("chat.request")}
+              </AdaptiveText>
             </Pressable>
             <Pressable
               style={[styles.actionBtn, styles.actionBtnPrimary]}
               onPress={openSend}
               accessibilityRole="button"
-              accessibilityLabel="Send"
+              accessibilityLabel={t("chat.sendA11y")}
             >
-              <Text style={[styles.actionBtnText, styles.actionBtnPrimaryText]}>Send →</Text>
+              <AdaptiveText
+                style={[styles.actionBtnText, styles.actionBtnPrimaryText]}
+                baseFontSize={14}
+              >
+                {t("chat.send")}
+              </AdaptiveText>
             </Pressable>
           </View>
         ) : null}
@@ -930,10 +953,10 @@ export function ChatThreadScreen() {
             onChangeText={setDraft}
             placeholder={
               isBot
-                ? "Ask Cursor…"
+                ? t("chat.placeholderBot")
                 : canNostr
-                  ? "Type a message…"
-                  : "Add npub to chat…"
+                  ? t("chat.placeholderMessage")
+                  : t("chat.placeholderAddNpub")
             }
             placeholderTextColor={colors.hint}
             style={styles.composer}
@@ -948,7 +971,7 @@ export function ChatThreadScreen() {
             disabled={!draft.trim() || sending || !canNostr}
             onPress={() => void onSendText()}
             accessibilityRole="button"
-            accessibilityLabel="Send message"
+            accessibilityLabel={t("chat.sendMessageA11y")}
           >
             {sending ? (
               <ActivityIndicator color="#000" />

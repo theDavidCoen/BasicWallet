@@ -20,6 +20,7 @@ import { SettingsScreen } from "../screens/SettingsScreen";
 import { PairBluetoothScreen } from "../screens/PairBluetoothScreen";
 import { ArkadeSettingsScreen } from "../screens/ArkadeSettingsScreen";
 import { ArkadeNetworkScreen } from "../screens/ArkadeNetworkScreen";
+import { LanguageScreen } from "../screens/LanguageScreen";
 import { DisplayCurrenciesScreen } from "../screens/DisplayCurrenciesScreen";
 import { FiatModeSettingsScreen } from "../screens/FiatModeSettingsScreen";
 import { BitcoinMaxiSettingsScreen } from "../screens/BitcoinMaxiSettingsScreen";
@@ -146,6 +147,7 @@ export function RootNavigator() {
             <Stack.Screen name="PairBluetooth" component={PairBluetoothScreen} />
             <Stack.Screen name="ArkadeSettings" component={ArkadeSettingsScreen} />
             <Stack.Screen name="ArkadeNetwork" component={ArkadeNetworkScreen} />
+            <Stack.Screen name="Language" component={LanguageScreen} />
             <Stack.Screen name="DisplayCurrencies" component={DisplayCurrenciesScreen} />
             <Stack.Screen name="BitcoinMaxiSettings" component={BitcoinMaxiSettingsScreen} />
             <Stack.Screen name="FiatModeSettings" component={FiatModeSettingsScreen} />

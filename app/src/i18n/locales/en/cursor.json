@@ -1,0 +1,8 @@
+{
+  "title": "CURSOR AGENT",
+  "apiKey": "Cursor API key",
+  "openDashboard": "Open Cursor Dashboard →",
+  "configureMcps": "Configure Dashboard MCPs →",
+  "botNpub": "Bot npub",
+  "disableWipe": "Disable & wipe"
+}

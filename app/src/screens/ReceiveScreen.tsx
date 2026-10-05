@@ -38,6 +38,7 @@ import { encodeReceiveBip21 } from "../wallet/bip21Receive";
 import { encodeReceiveBip21Asset } from "../wallet/bip21Asset";
 import { useWallet } from "../wallet/WalletProvider";
 import { formatSatsLabel } from "../wallet/formatSats";
+import { AdaptiveText, useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ReceivePosPanel } from "./ReceivePosPanel";
 import { useFiatMode } from "../fiat/FiatModeProvider";
@@ -51,6 +52,7 @@ function midEllipsis(s: string, left = 16, right = 6): string {
 }
 
 export function ReceiveScreen() {
+  const { t } = useI18n();
   const navigation = useNavigation<RootNav>();
   const { openFundsReceived } = useSheets();
   const {
@@ -558,7 +560,7 @@ export function ReceiveScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.title}>RECEIVE</Text>
+          <Text style={styles.title}>{t("receive.title")}</Text>
           <Pressable onPress={toggleBalanceHidden}>
             <Text style={styles.balance}>{bal}</Text>
           </Pressable>
@@ -568,7 +570,7 @@ export function ReceiveScreen() {
 
           {!lnInvoice ? (
             <>
-              <Text style={styles.fieldLabel}>Amount (sats)</Text>
+              <Text style={styles.fieldLabel}>{t("receive.amountSats")}</Text>
               <TextInput
                 value={lnAmount}
                 onChangeText={setLnAmount}
@@ -577,7 +579,7 @@ export function ReceiveScreen() {
                 placeholderTextColor={colors.hint}
                 style={styles.input}
               />
-              <Text style={styles.fieldLabel}>Memo (optional)</Text>
+              <Text style={styles.fieldLabel}>{t("receive.memoOptional")}</Text>
               <TextInput
                 value={lnMemo}
                 onChangeText={setLnMemo}
@@ -593,7 +595,7 @@ export function ReceiveScreen() {
                 {lnBusy ? (
                   <ActivityIndicator color="#000" />
                 ) : (
-                  <Text style={styles.primaryText}>Create invoice</Text>
+                  <AdaptiveText style={styles.primaryText} baseFontSize={15}>{t("receive.createInvoice")}</AdaptiveText>
                 )}
               </Pressable>
             </>
@@ -620,11 +622,11 @@ export function ReceiveScreen() {
                   <Text style={styles.icoLabel}>{copied ? "✓" : "Copy"}</Text>
                 </Pressable>
                 <Pressable style={styles.icoBtn} onPress={() => void onShare()}>
-                  <Text style={styles.icoLabel}>Share</Text>
+                  <Text style={styles.icoLabel}>{t("common.share")}</Text>
                 </Pressable>
               </View>
               <Pressable style={styles.secondary} onPress={onNewLnInvoice}>
-                <Text style={styles.secondaryText}>New invoice</Text>
+                <AdaptiveText style={styles.secondaryText} baseFontSize={14}>{t("receive.newInvoice")}</AdaptiveText>
               </Pressable>
             </>
           )}
@@ -644,7 +646,7 @@ export function ReceiveScreen() {
         showsVerticalScrollIndicator={false}
         bounces={false}
       >
-        <Text style={styles.title}>RECEIVE</Text>
+        <Text style={styles.title}>{t("receive.title")}</Text>
         <Pressable onPress={toggleBalanceHidden} onLongPress={() => void refresh()}>
           <Text style={styles.balance}>{bal}</Text>
         </Pressable>
@@ -738,7 +740,7 @@ export function ReceiveScreen() {
             onPress={() => void onShare()}
             disabled={!displayPayload}
           >
-            <Text style={styles.icoLabel}>Share</Text>
+            <Text style={styles.icoLabel}>{t("common.share")}</Text>
           </Pressable>
         </View>
 
@@ -763,7 +765,7 @@ export function ReceiveScreen() {
               {busy ? (
                 <ActivityIndicator color={colors.fg} />
               ) : (
-                <Text style={styles.secondaryText}>New receive address</Text>
+                <AdaptiveText style={styles.secondaryText} baseFontSize={14}>{t("receive.newReceiveAddress")}</AdaptiveText>
               )}
             </Pressable>
           </>
@@ -787,7 +789,7 @@ export function ReceiveScreen() {
               {busy ? (
                 <ActivityIndicator color={colors.fg} />
               ) : (
-                <Text style={styles.secondaryText}>New receive address</Text>
+                <AdaptiveText style={styles.secondaryText} baseFontSize={14}>{t("receive.newReceiveAddress")}</AdaptiveText>
               )}
             </Pressable>
           </>
@@ -800,7 +802,7 @@ export function ReceiveScreen() {
             {busy ? (
               <ActivityIndicator color={colors.fg} />
             ) : (
-              <Text style={styles.secondaryText}>New receive address</Text>
+              <AdaptiveText style={styles.secondaryText} baseFontSize={14}>{t("receive.newReceiveAddress")}</AdaptiveText>
             )}
           </Pressable>
         )}
