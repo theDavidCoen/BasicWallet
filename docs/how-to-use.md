@@ -159,6 +159,12 @@ Both phones need Bluetooth (and nearby-devices) permission. Stay within range un
 - Local encrypted directory; optional always-on Nostr directory sync (separate from Path C passphrase).
 - Share a contact over Nostr gift wraps when identity is set.
 
+### Pay in Chat
+
+- Open a contact → **Chat & Pay** for a 1:1 Nostr thread (text, send/request cards).
+- Needs an npub or NIP-05 on the contact; classic Send stays for paste / QR / multisend.
+- Optional Android tray wake: Settings → Notifications (opaque push; tap opens the thread after unlock).
+
 ### Lightning
 
 - Connect a node (BTCPay LND REST / LNDHub) from Add Wallet / Settings.
