@@ -170,6 +170,7 @@ Not binding package names; mirrors Edge plugin responsibilities without Edge/Bol
 
 - Create wallet: https://docs.arkadeos.com/wallets/getting-started/create-your-wallet  
 - Lightning intents: https://docs.arkadeos.com/intents/integrate/lightning  
+- Basic LN product plan (branch `david/arkadeLN`, plan-only): [`arkade-ln.md`](./arkade-ln.md)  
 - Corridor swaps (HD preimage): https://docs.arkadeos.com/intents/reference/corridor-swaps  
 - Boltz deprecated: https://docs.arkadeos.com/contracts/lightning-swaps  
 - Unilateral exit: https://docs.arkadeos.com/wallets/advanced/ramps  

@@ -10,6 +10,7 @@ Product-wide screens, copy, and interaction rules. Penpot boards in `penpot_rebu
 | **This file**                                                | UX/UI across the app                                          |
 | `[backup-passkey-nostr.md](./backup-passkey-nostr.md)`       | Passkey, backup, restore flows + exact captions               |
 | `[arkade-wallet-tech-spec.md](./arkade-wallet-tech-spec.md)` | Arkade SDK only (HD mode, intents LN, unilateral exit engine) |
+| `[arkade-ln.md](./arkade-ln.md)`                             | LN from Arkade balance: plan-only pointer (`david/arkadeLN`)  |
 | `[activity-storage.md](./activity-storage.md)`               | Multi-wallet registry + account activity DB                   |
 | `[../figma-scene-comments.md](../figma-scene-comments.md)`   | Historical review comments / scene annotations                |
 
