@@ -77,5 +77,12 @@
   "alertCannotPayTitle": "Cannot pay",
   "alertCannotPayBody": "Add an ark address for this contact, or wait for them to include a pay destination on the request.",
   "alertNoArkTitle": "No ark address",
-  "alertNoArkBody": "Add an ark… address for this contact, or wait for them to include one on a request."
+  "alertNoArkBody": "Add an ark… address for this contact, or wait for them to include one on a request.",
+  "newSession": "New session",
+  "newSessionA11y": "Start a new Ask Cursor session",
+  "newSessionStarted": "New session started",
+  "sessionStopped": "Stopped.",
+  "workingStopped": "Stopped.",
+  "slashNewCaption": "New session",
+  "slashStopCaption": "Cancel current reply"
 }

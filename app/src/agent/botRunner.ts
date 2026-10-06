@@ -17,14 +17,57 @@ import {
   loadStoredCursorAgentId,
   storeCursorAgentId,
 } from "./botIdentity";
-import { runCursorPrompt } from "./cursorCloud";
+import { matchBotSlashCommand } from "./botSlashCommands";
+import { cancelAgentRun, runCursorPrompt } from "./cursorCloud";
 
 const PROCESSED_KEY = "basic.wallet.cursor.bot.processed.v1";
 const PROCESSED_MAX = 400;
 
+/** Ack shown while Cloud is working — matched locally for /stop UX. */
+export const BOT_WORKING_ACK = "Working on it…";
+
 let chain: Promise<void> = Promise.resolve();
 const processedWrapIds = new Set<string>();
 let processedHydrated = false;
+
+type ActiveCloudWork = {
+  controller: AbortController;
+  apiKey: string;
+  agentId: string | null;
+  runId: string | null;
+};
+
+let activeCloudWork: ActiveCloudWork | null = null;
+
+/**
+ * Abort in-flight poll and best-effort cancel the Cloud run.
+ * Does not clear stored agentId (use resetBotCloudSession for /new).
+ */
+export async function cancelActiveBotCloudWork(): Promise<{
+  cancelled: boolean;
+}> {
+  const work = activeCloudWork;
+  if (!work) return { cancelled: false };
+  try {
+    work.controller.abort();
+  } catch {
+    /* */
+  }
+  if (work.agentId && work.runId) {
+    try {
+      await cancelAgentRun(work.apiKey, work.agentId, work.runId);
+    } catch (e) {
+      console.warn("[basic] cancelAgentRun failed", e);
+    }
+  }
+  return { cancelled: true };
+}
+
+/** Cancel in-flight work and drop stored Cloud agentId (next ask = new agent). */
+export async function resetBotCloudSession(): Promise<void> {
+  await cancelActiveBotCloudWork();
+  await storeCursorAgentId(null);
+}
 
 export async function hydrateBotProcessedWraps(): Promise<void> {
   if (processedHydrated) return;
@@ -99,6 +142,8 @@ export function enqueueOwnerBotText(opts: {
 async function handleOwnerBotText(bodyRaw: string): Promise<void> {
   const body = bodyRaw.trim();
   if (!body) return;
+  // Safety: slash commands are UI-only; never forward to Cloud/Bitrefill.
+  if (matchBotSlashCommand(body)) return;
   if (!(await isBotEnabled())) return;
 
   const apiKey = await loadCursorApiKey();
@@ -109,7 +154,16 @@ async function handleOwnerBotText(bodyRaw: string): Promise<void> {
     return;
   }
 
-  await botReplyText("Working on it…");
+  await botReplyText(BOT_WORKING_ACK);
+
+  const controller = new AbortController();
+  const work: ActiveCloudWork = {
+    controller,
+    apiKey,
+    agentId: null,
+    runId: null,
+  };
+  activeCloudWork = work;
 
   try {
     const existingAgentId = await loadStoredCursorAgentId();
@@ -118,6 +172,11 @@ async function handleOwnerBotText(bodyRaw: string): Promise<void> {
       apiKey,
       promptText,
       existingAgentId,
+      signal: controller.signal,
+      onRunStarted: (info) => {
+        work.agentId = info.agentId;
+        work.runId = info.runId;
+      },
     });
     await storeCursorAgentId(agentId);
 
@@ -136,12 +195,18 @@ async function handleOwnerBotText(bodyRaw: string): Promise<void> {
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
+    if (/cancelled/i.test(msg)) {
+      // /stop or /new aborted the poll — UI shows local feedback; no Cloud error bubble.
+      return;
+    }
     // Never echo API keys.
     const safe = msg.replace(/Bearer\s+\S+/gi, "Bearer ***").slice(0, 400);
     await botReplyText(
       `I couldn’t complete that with Cursor Cloud: ${safe}\n\n` +
         "Tips: no-repo agents must be enabled for your Cursor account; Bitrefill (and other MCPs) must be attached in your Cursor Cloud / Dashboard — Basic never stores those keys.",
     );
+  } finally {
+    if (activeCloudWork === work) activeCloudWork = null;
   }
 }
 

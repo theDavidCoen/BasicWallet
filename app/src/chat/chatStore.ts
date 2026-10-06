@@ -597,6 +597,34 @@ export function bumpChatOutboxFailure(id: string, error: string): void {
   );
 }
 
+/**
+ * Clear messages + outbox for a contact but keep the thread row (and contact).
+ * Used by Ask Cursor `/new` so the bot contact stays in hub.
+ */
+export function clearChatMessagesLocal(contactId: string): void {
+  if (!contactId) return;
+  const database = db();
+  try {
+    database.runSync(`DELETE FROM chat_outbox WHERE contact_id = ?`, [contactId]);
+  } catch {
+    /* */
+  }
+  try {
+    database.runSync(`DELETE FROM chat_message WHERE contact_id = ?`, [contactId]);
+  } catch {
+    /* */
+  }
+  try {
+    database.runSync(
+      `UPDATE chat_thread SET last_message_at = NULL, unread_count = 0, updated_at = ? WHERE contact_id = ?`,
+      [Date.now(), contactId],
+    );
+  } catch {
+    /* */
+  }
+  notify();
+}
+
 /** Wipe one thread (messages + outbox + thread row). Used when disabling the Cursor bot. */
 export function deleteChatThreadLocal(contactId: string): void {
   if (!contactId) return;

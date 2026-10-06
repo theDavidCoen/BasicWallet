@@ -161,7 +161,43 @@ export async function getAgentRun(
   return (await res.json()) as CursorRun;
 }
 
+/**
+ * Best-effort cancel of an in-flight Cloud run.
+ * 404/409 are treated as already terminal (soft success).
+ */
+export async function cancelAgentRun(
+  apiKey: string,
+  agentId: string,
+  runId: string,
+): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/v1/agents/${encodeURIComponent(agentId)}/runs/${encodeURIComponent(runId)}/cancel`,
+    { method: "POST", headers: authHeaders(apiKey) },
+  );
+  if (res.ok || res.status === 404 || res.status === 409) return;
+  const err = await parseError(res);
+  throw new Error(err.message || "Failed to cancel Cursor run.");
+}
+
 const TERMINAL = new Set(["FINISHED", "ERROR", "CANCELLED", "EXPIRED"]);
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("Cancelled."));
+      return;
+    }
+    const t = setTimeout(() => {
+      if (signal) signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    function onAbort() {
+      clearTimeout(t);
+      reject(new Error("Cancelled."));
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
 
 /**
  * Poll Get A Run until terminal. Prefer poll over SSE for React Native v1.
@@ -181,7 +217,7 @@ export async function waitForRunResult(
     if (opts?.signal?.aborted) throw new Error("Cancelled.");
     last = await getAgentRun(apiKey, agentId, runId);
     if (TERMINAL.has((last.status || "").toUpperCase())) return last;
-    await new Promise((r) => setTimeout(r, intervalMs));
+    await sleep(intervalMs, opts?.signal);
   }
   throw new Error(
     last
@@ -199,8 +235,11 @@ export async function runCursorPrompt(opts: {
   promptText: string;
   existingAgentId?: string | null;
   timeoutMs?: number;
+  signal?: AbortSignal;
+  onRunStarted?: (info: { agentId: string; runId: string }) => void;
 }): Promise<{ agentId: string; run: CursorRun; resultText: string }> {
   const { apiKey, promptText } = opts;
+  if (opts.signal?.aborted) throw new Error("Cancelled.");
   let agentId = opts.existingAgentId?.trim() || "";
   let run: CursorRun;
 
@@ -225,10 +264,16 @@ export async function runCursorPrompt(opts: {
     run = created.run;
   }
 
+  opts.onRunStarted?.({ agentId, runId: run.id });
+
   const finished = await waitForRunResult(apiKey, agentId, run.id, {
     timeoutMs: opts.timeoutMs,
+    signal: opts.signal,
   });
   const status = (finished.status || "").toUpperCase();
+  if (status === "CANCELLED") {
+    throw new Error("Cancelled.");
+  }
   if (status !== "FINISHED") {
     throw new Error(
       finished.result?.trim() ||

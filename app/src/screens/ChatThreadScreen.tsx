@@ -42,6 +42,7 @@ import {
 } from "../chat/chatActions";
 import {
   clearThreadUnread,
+  clearChatMessagesLocal,
   ensureChatThread,
   failStaleOutboundPayments,
   getChatMessage,
@@ -74,6 +75,16 @@ import { contactDisplayName, contactInitials } from "../contacts/types";
 import { catchUpGiftWraps } from "../contacts/contactShareWatch";
 import { isCursorBotContact } from "../agent/botContact";
 import { enqueueBotFulfillAfterPay } from "../agent/botFulfill";
+import {
+  BOT_WORKING_ACK,
+  cancelActiveBotCloudWork,
+  resetBotCloudSession,
+} from "../agent/botRunner";
+import {
+  botSlashSuggestions,
+  matchBotSlashCommand,
+  type BotSlashCommand,
+} from "../agent/botSlashCommands";
 import { catchUpBotWatch } from "../agent/botWatch";
 import { getNetworkConfig } from "../config/network";
 import { fetchFiatSpot } from "../fiat/depixAssets";
@@ -147,6 +158,10 @@ export function ChatThreadScreen() {
     ? !!contactArkAddress(contact) ||
       messages.some((m) => m.kind === "request" && !!m.payToJson)
     : false;
+  const slashSuggestions = useMemo(
+    () => (isBot ? botSlashSuggestions(draft) : []),
+    [isBot, draft],
+  );
 
   const reloadLight = useCallback(() => {
     // Clear unread immediately so Home banner/badge update before paint work.
@@ -338,6 +353,65 @@ export function ChatThreadScreen() {
       ? Math.max(0, windowHeight - keyboardTopY)
       : 0;
 
+  async function onBotNewSession() {
+    if (!isBot) return;
+    setDraft("");
+    try {
+      await resetBotCloudSession();
+      clearChatMessagesLocal(contactId);
+      ensureChatThread(contactId);
+      insertChatMessage({
+        contactId,
+        kind: "system",
+        direction: "in",
+        bodyText: t("chat.newSessionStarted"),
+        bumpUnread: false,
+      });
+    } catch (e) {
+      Alert.alert(
+        t("chat.alertSendFailed"),
+        e instanceof Error ? e.message : t("common.unknownError"),
+      );
+    }
+  }
+
+  async function onBotStop() {
+    if (!isBot) return;
+    setDraft("");
+    try {
+      await cancelActiveBotCloudWork();
+      const msgs = listChatMessages(contactId);
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        if (
+          m.kind === "text" &&
+          m.direction === "in" &&
+          m.bodyText === BOT_WORKING_ACK
+        ) {
+          updateChatMessage(m.id, { bodyText: t("chat.workingStopped") });
+          break;
+        }
+      }
+      insertChatMessage({
+        contactId,
+        kind: "system",
+        direction: "in",
+        bodyText: t("chat.sessionStopped"),
+        bumpUnread: false,
+      });
+    } catch (e) {
+      Alert.alert(
+        t("chat.alertSendFailed"),
+        e instanceof Error ? e.message : t("common.unknownError"),
+      );
+    }
+  }
+
+  async function runBotSlash(cmd: BotSlashCommand) {
+    if (cmd === "/new") await onBotNewSession();
+    else if (cmd === "/stop") await onBotStop();
+  }
+
   async function onSendText() {
     const body = draft.trim();
     if (!body || sending) return;
@@ -353,6 +427,17 @@ export function ChatThreadScreen() {
       Alert.alert(t("chat.alertChatUnavailable"), gate);
       return;
     }
+
+    // Bot composer only: intercept /new and /stop — never publish to Nostr/Cloud.
+    if (isBot) {
+      const slash = matchBotSlashCommand(body);
+      if (slash) {
+        setDraft("");
+        await runBotSlash(slash);
+        return;
+      }
+    }
+
     setSending(true);
     setDraft("");
     try {
@@ -772,7 +857,16 @@ export function ChatThreadScreen() {
                     : t("chat.addNpubForChat")}
             </Text>
           </View>
-          {!isBot ? (
+          {isBot ? (
+            <Pressable
+              onPress={() => void onBotNewSession()}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={t("chat.newSessionA11y")}
+            >
+              <Text style={styles.editLink}>{t("chat.newSession")}</Text>
+            </Pressable>
+          ) : (
             <>
               <Pressable
                 onPress={onArchiveToggle}
@@ -797,7 +891,7 @@ export function ChatThreadScreen() {
                 <Text style={styles.editLink}>{t("common.edit")}</Text>
               </Pressable>
             </>
-          ) : null}
+          )}
         </View>
 
         <FlatList
@@ -940,6 +1034,31 @@ export function ChatThreadScreen() {
                 {t("chat.send")}
               </Text>
             </Pressable>
+          </View>
+        ) : null}
+
+        {isBot && slashSuggestions.length > 0 ? (
+          <View style={styles.slashStrip}>
+            {slashSuggestions.map((cmd) => (
+              <Pressable
+                key={cmd}
+                style={styles.slashChip}
+                onPress={() => void runBotSlash(cmd)}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  cmd === "/new"
+                    ? t("chat.slashNewCaption")
+                    : t("chat.slashStopCaption")
+                }
+              >
+                <Text style={styles.slashChipCmd}>{cmd}</Text>
+                <Text style={styles.slashChipCaption}>
+                  {cmd === "/new"
+                    ? t("chat.slashNewCaption")
+                    : t("chat.slashStopCaption")}
+                </Text>
+              </Pressable>
+            ))}
           </View>
         ) : null}
 
@@ -1134,5 +1253,31 @@ const styles = StyleSheet.create({
     fontFamily: "JetBrainsMono_700Bold",
     fontSize: 18,
     color: "#000",
+  },
+  slashStrip: {
+    gap: 8,
+    marginBottom: 8,
+  },
+  slashChip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: colors.card,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  slashChipCmd: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 12,
+    color: colors.fg,
+  },
+  slashChipCaption: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.caption,
+    flexShrink: 1,
   },
 });
