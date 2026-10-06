@@ -351,14 +351,37 @@ export function formatRedemptionBubble(red: ParsedRedemption): string {
     lines.push("Bitrefill marked the invoice complete, but no redemption code or link was returned yet. Check Bitrefill or ask me to check status again.");
     return lines.join("\n");
   }
+  let hasHttps = false;
+  let hasPinWithoutLink = false;
   red.orders.forEach((o, i) => {
     if (red.orders.length > 1) lines.push(`\nItem ${i + 1}`);
     if (o.code) lines.push(`Code: ${o.code}`);
-    if (o.pin) lines.push(`PIN: ${o.pin}`);
-    if (o.link) lines.push(`Redeem: ${o.link}`);
-    if (o.esimInstallLink) lines.push(`eSIM install: ${o.esimInstallLink}`);
+    // Prefer deeplink on the PIN value when Bitrefill returns a claim URL.
+    // ChatTextBubble parses `PIN: <code> <https://…>` and shows only the PIN as tappable.
+    if (o.pin && o.link) {
+      lines.push(`PIN: ${o.pin} ${o.link}`);
+      hasHttps = true;
+    } else if (o.pin) {
+      lines.push(`PIN: ${o.pin}`);
+      hasPinWithoutLink = true;
+    } else if (o.link) {
+      lines.push(`Redeem: ${o.link}`);
+      hasHttps = true;
+    }
+    if (o.esimInstallLink) {
+      lines.push(`eSIM install: ${o.esimInstallLink}`);
+      hasHttps = true;
+    }
     if (o.instructions) lines.push(o.instructions.slice(0, 400));
   });
-  lines.push("\nTap a link to open (may hand off to a merchant app). Long-press this message to copy.");
+  if (hasHttps) {
+    lines.push(
+      "\nTap a link (or PIN) to open (may hand off to a merchant app). Long-press this message to copy.",
+    );
+  } else if (hasPinWithoutLink) {
+    lines.push("\nTap PIN to copy. Long-press this message to copy all.");
+  } else {
+    lines.push("\nLong-press this message to copy.");
+  }
   return lines.join("\n").trim().slice(0, 2000);
 }

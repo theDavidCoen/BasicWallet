@@ -456,6 +456,8 @@ export function ChatAmountScreen() {
         onChatRequestConfirm={onChatSendConfirm}
         chatRequestBusy={busy}
         fiatMode={fiatMode}
+        maxSpendableSats={spendable ?? null}
+        maxFiatDisplay={depixDisplay ?? null}
         active
       />
     </View>

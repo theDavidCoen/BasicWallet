@@ -109,6 +109,8 @@ export function ReceivePosPanel({
   contactLabel,
   onChatRequestConfirm,
   chatRequestBusy = false,
+  maxSpendableSats = null,
+  maxFiatDisplay = null,
 }: {
   /** Base BIP21 (boarding + ark) without amount — used when enabling Request. */
   bip21Uri: string | null;
@@ -141,6 +143,10 @@ export function ReceivePosPanel({
     meta?: { fiatDisplay?: number },
   ) => void | Promise<void>;
   chatRequestBusy?: boolean;
+  /** Chat Send: max spendable sats (classic). */
+  maxSpendableSats?: number | null;
+  /** Chat Send: max stable display units when Fiat Mode is on. */
+  maxFiatDisplay?: number | null;
 }) {
   const insets = useSafeAreaInsets();
   const networkId = getNetworkConfig().id;
@@ -297,6 +303,27 @@ export function ReceivePosPanel({
   const isChatRequest = variant === "chat-request";
   const isChatSend = variant === "chat-send";
   const isChatAmount = isChatRequest || isChatSend;
+
+  const fillMaxSend = useCallback(() => {
+    if (!isChatSend) return;
+    if (fiatMode) {
+      const max = maxFiatDisplay ?? 0;
+      if (!(max > 0)) return;
+      setUnit("fiat");
+      setDigits(String(Math.round(max * 100)));
+      return;
+    }
+    const max = Math.floor(maxSpendableSats ?? 0);
+    if (max <= 0) return;
+    setUnit("sats");
+    setDigits(String(Math.min(max, MAX_POS_SATS)));
+  }, [fiatMode, isChatSend, maxFiatDisplay, maxSpendableSats]);
+
+  const maxEnabled = isChatSend
+    ? fiatMode
+      ? (maxFiatDisplay ?? 0) > 0
+      : (maxSpendableSats ?? 0) > 0
+    : false;
 
   const applyRequestUri = useCallback((uriOrPromise: string | null | Promise<string | null>) => {
     const go = (uri: string | null) => {
@@ -515,6 +542,23 @@ export function ReceivePosPanel({
       </View>
       {secondaryLine ? <Text style={styles.secondaryLine}>{secondaryLine}</Text> : null}
 
+      {isChatSend ? (
+        <View style={styles.maxRow}>
+          <Pressable
+            onPress={fillMaxSend}
+            disabled={!maxEnabled}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Max send"
+            accessibilityState={{ disabled: !maxEnabled }}
+          >
+            <Text style={[styles.maxLink, !maxEnabled && styles.maxLinkDisabled]}>
+              Max
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       <View style={styles.pad}>
         {KEYS.map((row, ri) => (
           <View key={`r${ri}`} style={styles.padRow}>
@@ -666,6 +710,22 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 8,
     minHeight: 18,
+  },
+  maxRow: {
+    alignItems: "center",
+    marginTop: 10,
+    marginBottom: -8,
+  },
+  maxLink: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 14,
+    color: colors.fg,
+    textDecorationLine: "underline",
+  },
+  maxLinkDisabled: {
+    color: colors.hint,
+    textDecorationLine: "none",
+    opacity: 0.45,
   },
   pad: {
     marginTop: 28,

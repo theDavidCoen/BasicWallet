@@ -21,7 +21,6 @@ import type { RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
 import { InteractiveBottomSheet } from "../components/sheet/InteractiveBottomSheet";
 import { ContactPickList } from "../components/contacts/ContactPickList";
-import { SaveToContactsSheet } from "../components/contacts/SaveToContactsSheet";
 import { filterContacts } from "../contacts/contactSearch";
 import { listContacts } from "../contacts/contactStore";
 import { resolveBip353ForContacts } from "../contacts/resolveBip353";
@@ -288,8 +287,6 @@ export function SendScreen() {
   const [contactQuery, setContactQuery] = useState("");
   const [contactList, setContactList] = useState<Contact[]>([]);
   const [idPickerContact, setIdPickerContact] = useState<Contact | null>(null);
-  const [saveAfterEnterOpen, setSaveAfterEnterOpen] = useState(false);
-  const [saveAfterEnterDest, setSaveAfterEnterDest] = useState("");
   const [contactResolveBusy, setContactResolveBusy] = useState(false);
   const enterInputRef = useRef<TextInputType>(null);
   const isLightning = selectedWallet?.kind === "lightning";
@@ -757,21 +754,8 @@ export function SendScreen() {
   }
 
   function confirmEnterDestination() {
-    const raw = enterDraft.trim();
     applyDestinationInput(enterDraft);
     closeEnterSheet();
-    if (raw) {
-      Alert.alert("Save to contacts?", contactMidEllipsis(raw, 16, 10), [
-        { text: "Skip", style: "cancel" },
-        {
-          text: "Save",
-          onPress: () => {
-            setSaveAfterEnterDest(raw);
-            setSaveAfterEnterOpen(true);
-          },
-        },
-      ]);
-    }
   }
 
   function identifierEligible(ident: ContactIdentifier): boolean {
@@ -893,16 +877,6 @@ export function SendScreen() {
         return;
       }
       applyDestinationToActive(clip, null);
-      Alert.alert("Save to contacts?", contactMidEllipsis(clip, 16, 10), [
-        { text: "Skip", style: "cancel" },
-        {
-          text: "Save",
-          onPress: () => {
-            setSaveAfterEnterDest(clip);
-            setSaveAfterEnterOpen(true);
-          },
-        },
-      ]);
     } catch (e) {
       console.warn("[basic] clipboard paste failed", e);
       Alert.alert("Paste failed", "Could not read the clipboard.");
@@ -2399,15 +2373,6 @@ export function SendScreen() {
           </ScrollView>
         </View>
       </InteractiveBottomSheet>
-
-      <SaveToContactsSheet
-        open={saveAfterEnterOpen}
-        destination={saveAfterEnterDest}
-        onDismiss={() => {
-          setSaveAfterEnterOpen(false);
-          setSaveAfterEnterDest("");
-        }}
-      />
 
       <InteractiveBottomSheet
         open={myWalletsSheetOpen}

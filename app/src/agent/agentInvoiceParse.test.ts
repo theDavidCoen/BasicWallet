@@ -70,5 +70,55 @@ assert(red?.orders[0]?.link?.startsWith("https://redeem.amazon.com"), "link");
 const bubble = formatRedemptionBubble(red!);
 assert(bubble.includes("AMZN-TEST-CODE"), "bubble code");
 assert(bubble.includes("https://redeem.amazon.com"), "bubble link");
+assert(bubble.includes("Tap a link"), "bubble has link caption");
+
+const pinOnlySample = `Ready.
+
+\`\`\`json
+{
+  "type": "basic.wallet.chat.redemption",
+  "invoiceId": "6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34",
+  "status": "complete",
+  "orders": [
+    {
+      "pin": "KY9F-TEST-PIN",
+      "link": null
+    }
+  ]
+}
+\`\`\`
+`;
+const pinOnly = parseAgentRedemption(pinOnlySample);
+assert(pinOnly?.orders[0]?.pin === "KY9F-TEST-PIN", "pin only");
+const pinBubble = formatRedemptionBubble(pinOnly!);
+assert(pinBubble.includes("PIN: KY9F-TEST-PIN"), "pin bubble");
+assert(!pinBubble.includes("Tap a link"), "no link caption without URL");
+assert(pinBubble.includes("Tap PIN to copy"), "pin copy caption");
+
+const pinLinkSample = `Ready.
+
+\`\`\`json
+{
+  "type": "basic.wallet.chat.redemption",
+  "invoiceId": "6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34",
+  "status": "complete",
+  "orders": [
+    {
+      "pin": "KY9F-LINK-PIN",
+      "link": "https://redeem.amazon.com/claim?code=KY9F-LINK-PIN"
+    }
+  ]
+}
+\`\`\`
+`;
+const pinLink = parseAgentRedemption(pinLinkSample);
+const pinLinkBubble = formatRedemptionBubble(pinLink!);
+assert(
+  pinLinkBubble.includes(
+    "PIN: KY9F-LINK-PIN https://redeem.amazon.com/claim?code=KY9F-LINK-PIN",
+  ),
+  "pin deeplink line",
+);
+assert(!pinLinkBubble.includes("Redeem:"), "no separate Redeem line when PIN has link");
 
 console.log("agentInvoiceParse.test.ts OK");
