@@ -77,5 +77,12 @@
   "alertCannotPayTitle": "Não é possível pagar",
   "alertCannotPayBody": "Adicione um endereço ark para este contato, ou espere que ele inclua um destino de pagamento no pedido.",
   "alertNoArkTitle": "Sem endereço ark",
-  "alertNoArkBody": "Adicione um endereço ark… para este contato, ou espere que ele inclua um em um pedido."
+  "alertNoArkBody": "Adicione um endereço ark… para este contato, ou espere que ele inclua um em um pedido.",
+  "newSession": "Nova sessão",
+  "newSessionA11y": "Iniciar uma nova sessão Ask Cursor",
+  "newSessionStarted": "Nova sessão iniciada",
+  "sessionStopped": "Parado.",
+  "workingStopped": "Parado.",
+  "slashNewCaption": "Nova sessão",
+  "slashStopCaption": "Cancelar resposta atual"
 }
