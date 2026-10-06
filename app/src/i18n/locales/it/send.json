@@ -20,5 +20,9 @@
   "networkCaption": "Arkade → ark… · %{network}",
   "networkCaptionLn": "Arkade → invoice Lightning · %{network}",
   "corridorFee": "Fee corridoio ~%{fee} sats · invii %{total} sats",
-  "corridorFeeHint": "La fee Lightning viene quotata all'invio (non e zero)."
+  "corridorFeeHint": "La fee Lightning viene quotata all'invio (non e zero).",
+  "corridorFeeQuoting": "Quotazione fee corridoio…",
+  "corridorFeeNeedAmount": "Inserisci un importo per quotare la fee del corridoio.",
+  "lnDestChecking": "Verifica destinazione Lightning…",
+  "lnDestValid": "Destinazione Lightning valida"
 }

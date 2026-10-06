@@ -23,6 +23,10 @@ import {
   toArkadeLnInvoiceFacts,
 } from "./arkadeLnInvoice";
 import betaSolverCard from "./beta-solver.card.json";
+import {
+  formatLnError,
+  withArkadeLnClaimWallet,
+} from "./arkadeLnClaimWallet";
 
 const FUNDED_OUTCOMES = new Set([
   "funded",
@@ -155,9 +159,10 @@ export async function getOrCreateArkadeLnClient(
 
   const repository = getAssetSwapRepository(networkId, walletId);
   const { localCards, snapshot } = await bundledLnDiscovery(networkId);
+  const claimWallet = withArkadeLnClaimWallet(wallet);
 
   const client = createSwapClient({
-    wallet,
+    wallet: claimWallet,
     repository,
     discovery: {
       localCards,
@@ -405,7 +410,7 @@ export async function tryRequestArkadeLnReceive(opts: {
   try {
     return await requestArkadeLnReceive(opts);
   } catch (e) {
-    console.warn("[basic] arkade ln receive mint skipped", e);
+    console.warn("[basic] arkade ln receive mint skipped", formatLnError(e));
     return null;
   }
 }

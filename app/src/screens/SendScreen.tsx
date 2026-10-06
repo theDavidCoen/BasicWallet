@@ -44,6 +44,7 @@ import {
   type ArkadeLnQuotePreview,
 } from "../lightning/arkadeLnSwap";
 import {
+  LNURL_FETCH_TIMEOUT_MS,
   looksLikeBolt12,
   looksLikeLightningPayInput,
   probeLightningPay,
@@ -90,6 +91,10 @@ import type { WalletRecord } from "../account/walletRegistry";
 const SEND_TIMEOUT_MS = 45_000;
 /** LNDHub can hang after payment already settled. */
 const LN_SEND_TIMEOUT_MS = 30_000;
+/** Probe + LNURL invoice + RFQ quote must finish before Confirm. */
+const LN_QUOTE_TIMEOUT_MS = LNURL_FETCH_TIMEOUT_MS + 8_000;
+const LN_DEST_OK = "#3DDC84";
+const LN_DEST_BAD = "#F07178";
 
 type SendLine = {
   id: string;
@@ -387,6 +392,10 @@ export function SendScreen() {
   const [lnQuotePreview, setLnQuotePreview] = useState<ArkadeLnQuotePreview | null>(
     null,
   );
+  const [lnQuoteBusy, setLnQuoteBusy] = useState(false);
+  const [lnQuoteError, setLnQuoteError] = useState<string | null>(null);
+  const [lnResolvedBolt11, setLnResolvedBolt11] = useState<string | null>(null);
+  const lnResolvedBolt11Ref = useRef<string | null>(null);
 
   const spendable = balance?.available ?? null;
   const fiatUnit = fiatStableForNetwork(network.id).displayCode;
@@ -467,7 +476,11 @@ export function SendScreen() {
     setLnProbeError(null);
     void (async () => {
       try {
-        const probe = await probeLightningPay(dest);
+        const probe = await withTimeout(
+          probeLightningPay(dest),
+          LN_QUOTE_TIMEOUT_MS,
+          "probeLightningPay",
+        );
         if (cancelled) return;
         setLnProbe(probe);
         if (
@@ -481,7 +494,12 @@ export function SendScreen() {
       } catch (e) {
         if (!cancelled) {
           setLnProbe(null);
-          setLnProbeError(e instanceof Error ? e.message : "Unrecognized destination");
+          const msg = e instanceof Error ? e.message : "Unrecognized destination";
+          setLnProbeError(
+            /timed out/i.test(msg)
+              ? "Lightning Address / LNURL timed out. Check the destination and try again."
+              : msg,
+          );
         }
       } finally {
         if (!cancelled) setLnProbeBusy(false);
@@ -498,35 +516,123 @@ export function SendScreen() {
 
   useEffect(() => {
     if (isLightning || !arkadeLnDest || !wallet || !selectedWallet?.id) {
-      if (!isLightning) setLnQuotePreview(null);
-      return;
-    }
-    const bolt11 = lnProbe?.bolt11;
-    if (!bolt11) {
-      setLnQuotePreview(null);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const preview = await previewArkadeLnPay({
-          wallet,
-          networkId: network.id,
-          walletId: selectedWallet.id,
-          bolt11,
-        });
-        if (!cancelled) setLnQuotePreview(preview);
-      } catch {
-        if (!cancelled) setLnQuotePreview(null);
+      if (!isLightning) {
+        setLnQuotePreview(null);
+        setLnQuoteError(null);
+        setLnQuoteBusy(false);
+        setLnResolvedBolt11(null);
+        lnResolvedBolt11Ref.current = null;
       }
-    })();
+      return;
+    }
+    if (lnProbeBusy || lnProbeError || !lnProbe || lnProbe.kind === "bolt12") {
+      setLnQuotePreview(null);
+      setLnQuoteError(null);
+      setLnQuoteBusy(false);
+      setLnResolvedBolt11(null);
+      lnResolvedBolt11Ref.current = null;
+      return;
+    }
+    const dest = (lines[0]?.address ?? "").trim();
+    const amount =
+      lnProbe.amountSats != null && lnProbe.amountSats > 0
+        ? lnProbe.amountSats
+        : parseAmountSats(lines[0]?.amountStr ?? "");
+    if (lnProbe.needsAmount && (amount == null || amount <= 0)) {
+      setLnQuotePreview(null);
+      setLnQuoteError(null);
+      setLnQuoteBusy(false);
+      setLnResolvedBolt11(null);
+      lnResolvedBolt11Ref.current = null;
+      return;
+    }
+    if (
+      amount != null &&
+      lnProbe.minSats != null &&
+      amount < lnProbe.minSats
+    ) {
+      setLnQuotePreview(null);
+      setLnQuoteError(
+        `Amount below minimum (${lnProbe.minSats.toLocaleString("en-US")} sats).`,
+      );
+      setLnQuoteBusy(false);
+      return;
+    }
+    if (
+      amount != null &&
+      lnProbe.maxSats != null &&
+      lnProbe.maxSats > 0 &&
+      amount > lnProbe.maxSats
+    ) {
+      setLnQuotePreview(null);
+      setLnQuoteError(
+        `Amount above maximum (${lnProbe.maxSats.toLocaleString("en-US")} sats).`,
+      );
+      setLnQuoteBusy(false);
+      return;
+    }
+
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      setLnQuoteBusy(true);
+      setLnQuoteError(null);
+      void (async () => {
+        try {
+          const resolved = await withTimeout(
+            resolveLightningPay(dest, amount, lnProbe),
+            LN_QUOTE_TIMEOUT_MS,
+            "resolveLightningPay",
+          );
+          if (cancelled) return;
+          try {
+            toArkadeLnInvoiceFacts(resolved.bolt11, network.id);
+          } catch (e) {
+            throw e;
+          }
+          const preview = await withTimeout(
+            previewArkadeLnPay({
+              wallet,
+              networkId: network.id,
+              walletId: selectedWallet.id,
+              bolt11: resolved.bolt11,
+            }),
+            LN_QUOTE_TIMEOUT_MS,
+            "previewArkadeLnPay",
+          );
+          if (cancelled) return;
+          setLnResolvedBolt11(resolved.bolt11);
+          lnResolvedBolt11Ref.current = resolved.bolt11;
+          setLnQuotePreview(preview);
+          setLnQuoteError(null);
+        } catch (e) {
+          if (cancelled) return;
+          setLnQuotePreview(null);
+          setLnResolvedBolt11(null);
+          lnResolvedBolt11Ref.current = null;
+          const msg =
+            e instanceof Error ? friendlyArkadeLnError(e) : "Could not quote corridor fee.";
+          setLnQuoteError(
+            /timed out/i.test(msg)
+              ? "Lightning Address / LNURL timed out. Check the destination and try again."
+              : msg,
+          );
+        } finally {
+          if (!cancelled) setLnQuoteBusy(false);
+        }
+      })();
+    }, 350);
     return () => {
       cancelled = true;
+      clearTimeout(handle);
     };
   }, [
     isLightning,
     arkadeLnDest,
-    lnProbe?.bolt11,
+    lnProbe,
+    lnProbeBusy,
+    lnProbeError,
+    lines[0]?.address,
+    lines[0]?.amountStr,
     wallet,
     selectedWallet?.id,
     network.id,
@@ -979,7 +1085,11 @@ export function SendScreen() {
           throw new Error("LNDHub not connected for this wallet");
         }
 
-        const resolved = await resolveLightningPay(raw, payHint, lnProbe ?? undefined);
+        const resolved = await withTimeout(
+          resolveLightningPay(raw, payHint, lnProbe ?? undefined),
+          LN_QUOTE_TIMEOUT_MS,
+          "resolveLightningPay",
+        );
         if (spendable !== null && resolved.amountSats > spendable) {
           Alert.alert("Insufficient balance", `Available: ${bal}`);
           return;
@@ -1064,8 +1174,15 @@ export function SendScreen() {
       Alert.alert("Amount required", "Enter how many sats to send.");
       return;
     }
+    const bolt11 = lnResolvedBolt11Ref.current;
+    if (!bolt11 || !lnQuotePreview) {
+      Alert.alert(
+        "Fee not ready",
+        "Wait for the corridor fee quote before confirming.",
+      );
+      return;
+    }
 
-    setBusy(true);
     try {
       const auth = await requireUserPresence(t("send.confirmSend"));
       if (!auth.ok) {
@@ -1073,16 +1190,17 @@ export function SendScreen() {
         return;
       }
 
-      const resolved = await resolveLightningPay(raw, payHint, lnProbe ?? undefined);
+      setBusy(true);
+
       let facts;
       try {
-        facts = toArkadeLnInvoiceFacts(resolved.bolt11, network.id);
+        facts = toArkadeLnInvoiceFacts(bolt11, network.id);
       } catch (e) {
         Alert.alert("Cannot pay invoice", friendlyLnInvoiceError(e));
         return;
       }
 
-      const need = lnQuotePreview?.fundSats ?? facts.amountSats;
+      const need = lnQuotePreview.fundSats ?? facts.amountSats;
       if (spendable !== null && need > spendable) {
         Alert.alert(
           "Insufficient balance",
@@ -1099,13 +1217,13 @@ export function SendScreen() {
           network.id,
           walletId,
           facts.amountSats,
-          resolved.display,
+          lnProbe?.display ?? raw,
         );
         const paid = await payArkadeLightning({
           wallet,
           networkId: network.id,
           walletId,
-          bolt11: resolved.bolt11,
+          bolt11,
         });
         applyLocalSpend(paid.fundSats);
         recordArkadeLnCorridorPay({
@@ -1120,11 +1238,13 @@ export function SendScreen() {
         setLines([newSendLine()]);
         setLnProbe(null);
         setLnQuotePreview(null);
+        setLnResolvedBolt11(null);
+        lnResolvedBolt11Ref.current = null;
         setBusy(false);
         openFundsSent({
           amount: paid.invoiceSats,
           txid: paid.swapId,
-          address: resolved.display,
+          address: lnProbe?.display ?? raw,
           rail: "lightning",
         });
         void refresh().catch((e) =>
@@ -1660,10 +1780,20 @@ export function SendScreen() {
         />
 
         {lnProbeBusy ? (
-          <ActivityIndicator color={colors.fg} style={{ marginBottom: 12 }} />
+          <Text style={styles.destStatusChecking}>{t("send.lnDestChecking")}</Text>
         ) : lnProbeError ? (
-          <Text style={[styles.warn, { marginBottom: 12 }]}>{lnProbeError}</Text>
+          <Text style={[styles.destStatusBad, { marginBottom: 12 }]}>{lnProbeError}</Text>
+        ) : lnProbe && lnProbe.kind === "bolt12" ? (
+          <Text style={[styles.destStatusBad, { marginBottom: 12 }]}>
+            BOLT12 offers are not payable via this LNDHub node.
+          </Text>
         ) : lnProbe ? (
+          <Text style={styles.destStatusGood}>{t("send.lnDestValid")}</Text>
+        ) : null}
+
+        {lnProbeBusy ? (
+          <ActivityIndicator color={colors.fg} style={{ marginBottom: 12 }} />
+        ) : lnProbe && lnProbe.kind !== "bolt12" ? (
           <View style={styles.preview}>
             <Text style={styles.previewMemo}>{kindLabel}</Text>
             {previewAmt != null ? (
@@ -1673,15 +1803,11 @@ export function SendScreen() {
             ) : (
               <>
                 <Text style={[styles.previewMemo, { marginTop: 8 }]}>
-                  {lnProbe.kind === "bolt12"
-                    ? "BOLT12 offer — not payable via this LNDHub node"
-                    : lnProbe.minSats != null && lnProbe.maxSats != null
-                      ? `Enter ${lnProbe.minSats.toLocaleString("en-US")}–${lnProbe.maxSats.toLocaleString("en-US")} sats`
-                      : "Enter how many sats to send"}
+                  {lnProbe.minSats != null && lnProbe.maxSats != null
+                    ? `Enter ${lnProbe.minSats.toLocaleString("en-US")}–${lnProbe.maxSats.toLocaleString("en-US")} sats`
+                    : "Enter how many sats to send"}
                 </Text>
-                {lnProbe.kind !== "bolt12" ? (
-                  <>
-                    <View style={[styles.toRow, { marginTop: 12 }]}>
+                <View style={[styles.toRow, { marginTop: 12 }]}>
                       <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>
                         Amount (sats)
                       </Text>
@@ -1709,8 +1835,6 @@ export function SendScreen() {
                       placeholderTextColor={colors.hint}
                       style={[styles.input, { marginBottom: 0 }]}
                     />
-                  </>
-                ) : null}
               </>
             )}
             {lnProbe.description ? (
@@ -1872,19 +1996,6 @@ export function SendScreen() {
                 placeholderTextColor={colors.hint}
                 style={styles.input}
               />
-              {arkadeLnDest && lnQuotePreview ? (
-                <Text style={styles.previewMemo}>
-                  {t("send.corridorFee", {
-                    fee: lnQuotePreview.feeSats.toLocaleString("en-US"),
-                    total: lnQuotePreview.fundSats.toLocaleString("en-US"),
-                  })}
-                </Text>
-              ) : arkadeLnDest ? (
-                <Text style={styles.previewMemo}>{t("send.corridorFeeHint")}</Text>
-              ) : null}
-              {arkadeLnDest && lnProbeError ? (
-                <Text style={[styles.warn, { marginTop: 8 }]}>{lnProbeError}</Text>
-              ) : null}
 
               <Text style={styles.fieldLabel}>{t("send.to")}</Text>
               {primaryHasDest ? (
@@ -1907,6 +2018,17 @@ export function SendScreen() {
                     <Text style={styles.scanLink}>{t("common.clear")}</Text>
                   </Pressable>
                 </View>
+              ) : null}
+              {arkadeLnDest && lnProbeBusy ? (
+                <Text style={styles.destStatusChecking}>{t("send.lnDestChecking")}</Text>
+              ) : arkadeLnDest && (lnProbeError || lnProbe?.kind === "bolt12") ? (
+                <Text style={styles.destStatusBad}>
+                  {lnProbe?.kind === "bolt12"
+                    ? "BOLT12 offers are not payable here."
+                    : lnProbeError}
+                </Text>
+              ) : arkadeLnDest && lnProbe ? (
+                <Text style={styles.destStatusGood}>{t("send.lnDestValid")}</Text>
               ) : null}
 
               <View style={styles.toActions}>
@@ -1975,6 +2097,23 @@ export function SendScreen() {
           >
             <Text style={styles.addRecipientText}>{t("send.addRecipient")}</Text>
           </Pressable>
+          {arkadeLnDest && lnQuotePreview ? (
+            <Text style={styles.feeQuote}>
+              {t("send.corridorFee", {
+                fee: lnQuotePreview.feeSats.toLocaleString("en-US"),
+                total: lnQuotePreview.fundSats.toLocaleString("en-US"),
+              })}
+            </Text>
+          ) : arkadeLnDest && lnQuoteBusy ? (
+            <View style={styles.feeQuoteRow}>
+              <ActivityIndicator color={colors.fg} size="small" />
+              <Text style={styles.feeQuote}>{t("send.corridorFeeQuoting")}</Text>
+            </View>
+          ) : arkadeLnDest && lnQuoteError ? (
+            <Text style={styles.destStatusBad}>{lnQuoteError}</Text>
+          ) : arkadeLnDest && lnProbe && lnProbe.needsAmount && !parseAmountSats(primaryLine?.amountStr ?? "") ? (
+            <Text style={styles.feeQuote}>{t("send.corridorFeeNeedAmount")}</Text>
+          ) : null}
           {lines.length === 1 && !canAddRecipient && !primaryHasDest ? (
             <Text style={styles.addHint}>
               Set the first ark… destination to add more recipients.
@@ -1991,12 +2130,18 @@ export function SendScreen() {
           ) : null}
 
           <Pressable
-            style={[styles.primary, (busy || sendBlocked || !!myWalletPeekId) && { opacity: 0.6 }]}
+            style={[styles.primary, (busy || sendBlocked || !!myWalletPeekId || (arkadeLnDest && !lnQuotePreview)) && { opacity: 0.6 }]}
             disabled={
               busy ||
               sendBlocked ||
               !!myWalletPeekId ||
-              (arkadeLnDest && (lnProbeBusy || lnProbe?.kind === "bolt12"))
+              (arkadeLnDest &&
+                (lnProbeBusy ||
+                  lnQuoteBusy ||
+                  !lnQuotePreview ||
+                  !!lnQuoteError ||
+                  !!lnProbeError ||
+                  lnProbe?.kind === "bolt12"))
             }
             onPress={() => void onSend()}
           >
@@ -2378,6 +2523,42 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginBottom: 12,
     lineHeight: 16,
+  },
+  destStatusGood: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: LN_DEST_OK,
+    marginTop: 6,
+    marginBottom: 10,
+  },
+  destStatusBad: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: LN_DEST_BAD,
+    marginTop: 6,
+    marginBottom: 10,
+  },
+  destStatusChecking: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.caption,
+    marginTop: 6,
+    marginBottom: 10,
+  },
+  feeQuote: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.caption,
+    textAlign: "center",
+    marginBottom: 12,
+    lineHeight: 18,
+  },
+  feeQuoteRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginBottom: 4,
   },
   totalRow: {
     flexDirection: "row",

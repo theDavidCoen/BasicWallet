@@ -20,5 +20,9 @@
   "networkCaption": "Arkade → ark… · %{network}",
   "networkCaptionLn": "Arkade → invoice Lightning · %{network}",
   "corridorFee": "Taxa do corredor ~%{fee} sats · voce envia %{total} sats",
-  "corridorFeeHint": "A taxa Lightning e cotada no envio (nao e zero)."
+  "corridorFeeHint": "A taxa Lightning e cotada no envio (nao e zero).",
+  "corridorFeeQuoting": "Cotando taxa do corredor…",
+  "corridorFeeNeedAmount": "Informe um valor para cotar a taxa do corredor.",
+  "lnDestChecking": "Verificando destino Lightning…",
+  "lnDestValid": "Destino Lightning valido"
 }

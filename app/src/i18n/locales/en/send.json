@@ -20,5 +20,9 @@
   "networkCaption": "Arkade → ark… · %{network}",
   "networkCaptionLn": "Arkade → Lightning invoice · %{network}",
   "corridorFee": "Corridor fee ~%{fee} sats · you send %{total} sats",
-  "corridorFeeHint": "Lightning corridor fee is quoted at send (not zero)."
+  "corridorFeeHint": "Lightning corridor fee is quoted at send (not zero).",
+  "corridorFeeQuoting": "Quoting corridor fee…",
+  "corridorFeeNeedAmount": "Enter an amount to quote the corridor fee.",
+  "lnDestChecking": "Checking Lightning destination…",
+  "lnDestValid": "Lightning destination is valid"
 }

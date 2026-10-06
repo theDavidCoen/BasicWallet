@@ -106,15 +106,46 @@ const FETCH_HEADERS: Record<string, string> = {
   "User-Agent": "BasicWallet/0.1 (Lightning Address; +https://davidcoen.it)",
 };
 
+/** Per-request cap so LNURL / Lightning Address cannot hang Send. */
+export const LNURL_FETCH_TIMEOUT_MS = 8_000;
+
+const LNURL_TIMEOUT_MESSAGE =
+  "Lightning Address / LNURL timed out. Check the destination and try again.";
+
+function isAbortError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const name = (err as { name?: string }).name;
+  const msg = err instanceof Error ? err.message : String(err);
+  return name === "AbortError" || /aborted|timed out/i.test(msg);
+}
+
 async function fetchJson(url: string, init?: RequestInit): Promise<unknown> {
-  const res = await fetch(url, {
-    ...init,
-    redirect: "follow",
-    headers: {
-      ...FETCH_HEADERS,
-      ...(init?.headers as Record<string, string> | undefined),
-    },
-  });
+  const ac = new AbortController();
+  const parent = init?.signal;
+  const onParentAbort = () => ac.abort();
+  if (parent) {
+    if (parent.aborted) ac.abort();
+    else parent.addEventListener("abort", onParentAbort, { once: true });
+  }
+  const timer = setTimeout(() => ac.abort(), LNURL_FETCH_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      signal: ac.signal,
+      redirect: "follow",
+      headers: {
+        ...FETCH_HEADERS,
+        ...(init?.headers as Record<string, string> | undefined),
+      },
+    });
+  } catch (e) {
+    if (isAbortError(e)) throw new Error(LNURL_TIMEOUT_MESSAGE);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+    parent?.removeEventListener("abort", onParentAbort);
+  }
   const text = await res.text();
   let json: unknown = null;
   try {
@@ -297,12 +328,23 @@ async function resolveBip353Dns(
   // Cloudflare DoH (JSON). DNSSEC validated on their side when present.
   const url =
     `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=TXT`;
-  const res = await fetch(url, {
-    headers: {
-      Accept: "application/dns-json",
-      "User-Agent": FETCH_HEADERS["User-Agent"]!,
-    },
-  });
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), LNURL_FETCH_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      signal: ac.signal,
+      headers: {
+        Accept: "application/dns-json",
+        "User-Agent": FETCH_HEADERS["User-Agent"]!,
+      },
+    });
+  } catch (e) {
+    if (isAbortError(e)) return null;
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) return null;
   const json = (await res.json()) as {
     Status?: number;
