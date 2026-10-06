@@ -21,7 +21,7 @@ Use at your own risk. There is no warranty.
 
 ## Download
 
-Latest release: **[v0.8.5](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.8.5)** (arm64-v8a APK + SHA256).
+Latest release: **[v0.9.0](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.9.0)** (arm64-v8a APK + SHA256).
 
 All builds: [Releases](https://github.com/theDavidCoen/BasicWallet/releases). Prefer verifying the checksum before install.
 
@@ -35,7 +35,7 @@ Basic (`app.basic.wallet`) is an experimental mobile wallet built with **Expo / 
 | **Bitcoin UX** | Receive / send, activity, multi-wallet switcher, recovery |
 | **Fiat Mode** | Per-wallet stable unit (DePix/BRL mainnet, USDT Mutinynet) via Arkade swaps |
 | **Bitcoin Maxi Mode** | Default ON: inbound alt-assets → sats when Fiat Mode is off |
-| **Lightning** | User-linked node (e.g. BTCPay / LNDHub) and Arkade↔Lightning **intents** (not Boltz) |
+| **Lightning** | **Arkade intents** (Personal Send BOLT11 / LNURL / Lightning Address; BIP21 receive may embed `lightning=`) plus optional user-linked node (BTCPay / LNDHub). Not Boltz. |
 | **Backup** | Passkey-oriented onboarding, Advanced Backup via Nostr and/or home server |
 | **Contacts** | Local encrypted contacts, share over Nostr gift wraps |
 | **Ask Cursor** | Optional on-device Nostr bot (Cursor Cloud Agents) under Chat & Pay for shopping / pay flows |
@@ -58,6 +58,7 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 - **Bitcoin Maxi Mode** — quietly convert inbound designated stables to sats when Fiat Mode is off (default ON)
 - Browse activity and manage **multiple wallets**
 - **Connect a Lightning node** (BTCPay LND REST, LNDHub) for node balance / LN flows
+- **Arkade Lightning** — from a Personal (Arkade seed) wallet: pay BOLT11 / LNURL / Lightning Address via the intents corridor (Confirm + biometrics, no auto-pay); Receive BIP21 may embed a minted `lightning=` invoice when a solver can mint for the amount
 - Collaborative offboard and **unilateral exit** related settings (escape hatches)
 - Set app PIN / biometrics gates for sensitive actions
 - Export recovery phrase only after presence checks (screen capture blocked where wired)
@@ -108,7 +109,7 @@ Ideas on the roadmap (design, Penpot, or partial code; not commitments):
 - **Multi-asset** — more stable corridors when intents exist (Fiat Mode already explores DePix/USDT)
 - **Hardware wallet & multisig** — colder signing paths beyond the soft wallet
 - **Passkey PRF hardening** — PRF already ships; harden defaults and edge cases
-- **Richer Lightning** — smoother Arkade↔LN intents, clearer node vs Personal UX
+- **Richer Lightning** — more solvers / corridors; clearer node vs Personal UX (Personal Arkade LN pay + BIP21 embed shipped in 0.9.0)
 - **Contacts** — richer identifiers, better share/receive reliability across relays
 - **iOS** — first-class iOS build (Android is the current focus)
 - **License + public audit trail** — ship a `LICENSE` on GitHub and keep reproducible artifacts easy to verify

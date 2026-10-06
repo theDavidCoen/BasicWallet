@@ -200,8 +200,9 @@ Both phones need Bluetooth (and nearby-devices) permission. Stay within range un
 
 ### Lightning
 
-- Connect a node (BTCPay LND REST / LNDHub) from Add Wallet / Settings.
-- LN send/receive and Arkade↔Lightning intents where wired; not a full Lightning wallet product.
+- **Arkade Personal (intents):** on a seed Arkade wallet, classic **Send** accepts BOLT11, LNURL, and Lightning Address (green/red validation + fee quote before Confirm). Confirm + biometrics required; no auto-pay. Pay in Chat / Ask Cursor invoices use the same corridor. **Receive** stays BIP21 / Arkade / Boarding — when a solver mints for the requested sats amount, the BOLT11 is embedded as `lightning=` on the unified URI (no separate Lightning receive chip).
+- **Connect a node** (BTCPay LND REST / LNDHub) from Add Wallet / Settings for node balance / LN flows (separate product surface).
+- Not Boltz. Not a full Lightning wallet product.
 
 ### Escape hatches
 
