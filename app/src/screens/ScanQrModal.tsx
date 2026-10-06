@@ -105,6 +105,11 @@ export function extractLightningPayFromScan(raw: string): string | null {
   return null;
 }
 
+/** Personal Send: ark first, then Lightning (never raw bc1). */
+export function extractArkOrLightningPayFromScan(raw: string): string | null {
+  return extractArkAddressFromScan(raw) ?? extractLightningPayFromScan(raw);
+}
+
 type ScanQrViewProps = {
   /** When false, camera pauses and lock resets. */
   active: boolean;

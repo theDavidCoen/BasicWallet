@@ -1,6 +1,6 @@
 {
   "name": "basic-wallet",
-  "version": "0.8.5",
+  "version": "0.9.0",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -13,7 +13,8 @@
     "check:activity-refresh": "npx tsx scripts/check-activity-refresh.ts",
     "check:chat-pay-settle": "npx tsx scripts/check-chat-pay-settle.ts",
     "check:false-inbound-rollback": "npx tsx scripts/check-false-inbound-rollback.ts",
-    "check:wallet-guards": "npm run check:catch-up-credit && npm run check:post-send-balance && npm run check:activity-refresh && npm run check:chat-pay-settle && npm run check:false-inbound-rollback",
+    "check:arkade-ln-invoice": "npx tsx scripts/check-arkade-ln-invoice.ts",
+    "check:wallet-guards": "npm run check:catch-up-credit && npm run check:post-send-balance && npm run check:activity-refresh && npm run check:chat-pay-settle && npm run check:false-inbound-rollback && npm run check:arkade-ln-invoice",
     "prebuild:android": "expo prebuild --platform android --clean"
   },
   "dependencies": {

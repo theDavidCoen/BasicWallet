@@ -4,5 +4,9 @@
   "memoOptional": "Memo (optional)",
   "createInvoice": "Create invoice",
   "newInvoice": "New invoice",
-  "newReceiveAddress": "New receive address"
+  "newReceiveAddress": "New receive address",
+  "lightning": "Lightning",
+  "lnChecking": "Checking Lightning receive…",
+  "lnUnavailable": "Lightning receive unavailable",
+  "lnUnavailableBody": "No solver is offering Lightning into this Arkade wallet right now. Use an Arkade QR, or Connect Lightning Node for a node invoice."
 }

@@ -17,5 +17,8 @@
   "pickIdentifier": "PICK IDENTIFIER",
   "myWalletsTitle": "MY WALLETS",
   "myWalletsCaption": "Send to another wallet on this device",
-  "networkCaption": "Arkade → ark… · %{network}"
+  "networkCaption": "Arkade → ark… · %{network}",
+  "networkCaptionLn": "Arkade → Lightning invoice · %{network}",
+  "corridorFee": "Corridor fee ~%{fee} sats · you send %{total} sats",
+  "corridorFeeHint": "Lightning corridor fee is quoted at send (not zero)."
 }

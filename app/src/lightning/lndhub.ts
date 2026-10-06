@@ -319,7 +319,7 @@ function parseAmountField(raw: Record<string, unknown>): number | null {
  */
 export function parseBolt11AmountSats(bolt11: string): number | null {
   const t = normalizeBolt11(bolt11).toLowerCase();
-  const m = t.match(/^ln(bc|tb|bcrt|sb)(\d+)([munp]?)1/);
+  const m = t.match(/^ln(bcrt|tbs|bc|tb|sb)(\d+)([munp]?)1/);
   if (!m) return null;
   const n = Number(m[2]);
   if (!Number.isFinite(n) || n <= 0) return null;

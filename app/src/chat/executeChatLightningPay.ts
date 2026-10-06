@@ -1,12 +1,15 @@
 /**
- * Pay a BOLT11 invoice from the selected Arkade wallet (swap corridor).
+ * Pay a BOLT11 invoice from the selected Arkade wallet (intents corridor).
  * Used for bot Bitrefill (and any chat pay_request with preferredReceive bolt11).
- * Always cancel-capable via AbortSignal; no Promise.race on watchers.
+ * Confirm + biometrics stay in ChatThreadScreen. Always cancel-capable via AbortSignal.
  */
 
-import { btcOn } from "@arkade-os/swap";
 import type { ArkadeNetworkId } from "../config/network";
-import { getOrCreateDepixSwapClient } from "../fiat/depixSwapClient";
+import { recordArkadeLnCorridorPay } from "../lightning/arkadeLnActivity";
+import {
+  friendlyArkadeLnError,
+  payArkadeLightning,
+} from "../lightning/arkadeLnSwap";
 import { normalizeBolt11 } from "../lightning/lndhub";
 import type { BasicWallet } from "../wallet/hdWallet";
 import {
@@ -18,8 +21,6 @@ import {
 import { publishPaymentReceipt } from "./chatActions";
 import { newChatId } from "./types";
 
-const LN_PAY_TIMEOUT_MS = 10 * 60_000;
-
 export type ChatLightningPayHooks = {
   wallet: BasicWallet;
   walletId: string;
@@ -30,11 +31,6 @@ export type ChatLightningPayHooks = {
   bumpActivity?: () => void;
   refreshActivity?: () => Promise<void>;
 };
-
-function maxFeeSats(amountSats: number): bigint {
-  const pct = Math.ceil(amountSats * 0.02);
-  return BigInt(Math.max(500, pct) + 500);
-}
 
 export async function executeChatLightningPay(opts: {
   contactId: string;
@@ -55,8 +51,6 @@ export async function executeChatLightningPay(opts: {
 
   const { wallet, walletId, networkId } = opts.hooks;
   const paymentId = opts.paymentId?.trim() || newChatId("pay");
-  const netLabel = networkId === "mutinynet" ? "mutinynet" : "bitcoin";
-  const BTC = btcOn("arkade", netLabel);
 
   opts.hooks.beginOutboundSend();
   try {
@@ -64,68 +58,29 @@ export async function executeChatLightningPay(opts: {
       updateChatMessage(opts.localMessageId, { status: "sending" });
     }
 
-    const client = await getOrCreateDepixSwapClient(wallet, networkId, walletId);
-    const result = await client.pay(invoice, {
-      maxFee: { amount: maxFeeSats(amount), asset: BTC },
-    });
-
-    if (result.kind !== "swap") {
-      throw new Error("Unexpected payment result for Lightning invoice.");
-    }
-
-    const swapId = result.swap.id;
-    let settled = false;
-    let finalOutcome = "open";
-
-    const unsub = client.onUpdate(({ swap: s, outcome }) => {
-      if (s.id !== swapId) return;
-      const o = String(outcome);
-      if (o === "paid" || o === "filled" || o === "claimed") {
-        settled = true;
-        finalOutcome = "paid";
-      } else if (
-        o === "cancelled" ||
-        o === "refunded" ||
-        o === "refunding" ||
-        o === "failed" ||
-        o === "lapsed" ||
-        o === "needs_recovery"
-      ) {
-        settled = true;
-        finalOutcome = o;
-      }
-    });
-
+    let paid: Awaited<ReturnType<typeof payArkadeLightning>>;
     try {
-      const started = Date.now();
-      while (!settled) {
-        if (opts.signal?.aborted) {
-          try {
-            await client.cancel(swapId);
-          } catch (e) {
-            console.warn("[basic] chat ln pay cancel failed", e);
-          }
-          throw new Error("Payment cancelled.");
-        }
-        if (Date.now() - started > LN_PAY_TIMEOUT_MS) {
-          try {
-            await client.cancel(swapId);
-          } catch {
-            /* ignore */
-          }
-          throw new Error("Lightning payment timed out.");
-        }
-        await new Promise((r) => setTimeout(r, 500));
-      }
-    } finally {
-      unsub();
+      paid = await payArkadeLightning({
+        wallet,
+        networkId,
+        walletId,
+        bolt11: invoice,
+        signal: opts.signal,
+      });
+    } catch (e) {
+      throw new Error(friendlyArkadeLnError(e));
     }
 
-    if (finalOutcome !== "paid") {
-      throw new Error(`Lightning payment failed (${finalOutcome}).`);
-    }
+    const spend = paid.fundSats > 0 ? paid.fundSats : amount;
+    opts.hooks.applyLocalSpend(spend);
 
-    opts.hooks.applyLocalSpend(amount);
+    recordArkadeLnCorridorPay({
+      networkId,
+      walletId,
+      swapId: paid.swapId,
+      invoiceSats: paid.invoiceSats || amount,
+      feeSats: paid.feeSats,
+    });
 
     let localId = opts.localMessageId ?? null;
     if (localId) {
@@ -155,7 +110,7 @@ export async function executeChatLightningPay(opts: {
       paymentId,
       amountSats: amount,
       memo: opts.memo,
-      txid: swapId,
+      txid: paid.swapId,
       rail: "lightning",
       relatedRequestId: opts.requestId ?? undefined,
     });
@@ -165,7 +120,6 @@ export async function executeChatLightningPay(opts: {
       console.warn("[basic] chat ln pay refreshActivity failed", e),
     );
 
-    // Confirm local bubble stayed paid (hang recovery parity).
     if (localId) {
       const cur = getChatMessage(localId);
       if (cur && cur.status !== "paid") {
@@ -173,7 +127,7 @@ export async function executeChatLightningPay(opts: {
       }
     }
 
-    return { swapId, paymentId };
+    return { swapId: paid.swapId, paymentId };
   } finally {
     opts.hooks.endOutboundSend();
   }

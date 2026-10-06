@@ -17,5 +17,8 @@
   "pickIdentifier": "SCEGLI IDENTIFICATORE",
   "myWalletsTitle": "I MIEI WALLET",
   "myWalletsCaption": "Invia a un altro wallet su questo dispositivo",
-  "networkCaption": "Arkade → ark… · %{network}"
+  "networkCaption": "Arkade → ark… · %{network}",
+  "networkCaptionLn": "Arkade → invoice Lightning · %{network}",
+  "corridorFee": "Fee corridoio ~%{fee} sats · invii %{total} sats",
+  "corridorFeeHint": "La fee Lightning viene quotata all'invio (non e zero)."
 }

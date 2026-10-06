@@ -17,5 +17,8 @@
   "pickIdentifier": "ESCOLHER IDENTIFICADOR",
   "myWalletsTitle": "MINHAS CARTEIRAS",
   "myWalletsCaption": "Enviar para outra carteira neste dispositivo",
-  "networkCaption": "Arkade → ark… · %{network}"
+  "networkCaption": "Arkade → ark… · %{network}",
+  "networkCaptionLn": "Arkade → invoice Lightning · %{network}",
+  "corridorFee": "Taxa do corredor ~%{fee} sats · voce envia %{total} sats",
+  "corridorFeeHint": "A taxa Lightning e cotada no envio (nao e zero)."
 }

@@ -33,6 +33,13 @@ import {
   type LndHubInvoice,
 } from "../lightning/lndhub";
 import { loadLndHubCredentials } from "../lightning/lndhubCredentials";
+import {
+  friendlyArkadeLnError,
+  probeArkadeLnReceive,
+  requestArkadeLnReceive,
+  watchArkadeLnReceive,
+  type ArkadeLnReceiveProbe,
+} from "../lightning/arkadeLnSwap";
 import { useSheets } from "../navigation/SheetHost";
 import { encodeReceiveBip21 } from "../wallet/bip21Receive";
 import { encodeReceiveBip21Asset } from "../wallet/bip21Asset";
@@ -44,7 +51,7 @@ import { ReceivePosPanel } from "./ReceivePosPanel";
 import { useFiatMode } from "../fiat/FiatModeProvider";
 import { depixAssetIdForNetwork, fiatStableForNetwork, formatBrlDisplay, padSatsForDepixSwap } from "../fiat/depixAssets";
 
-type ReceiveMode = "bip21" | "arkade" | "boarding" | "brl";
+type ReceiveMode = "bip21" | "arkade" | "boarding" | "brl" | "lightning";
 
 function midEllipsis(s: string, left = 16, right = 6): string {
   if (s.length <= left + right + 1) return s;
@@ -72,6 +79,7 @@ export function ReceiveScreen() {
     bumpActivity,
     setPosUiHold,
     setIncomingWatchBoost,
+    wallet,
   } = useWallet();
   const { fiatMode, depixDisplay } = useFiatMode();
   const network = getNetworkConfig();
@@ -163,6 +171,12 @@ export function ReceiveScreen() {
   const [lnSettled, setLnSettled] = useState(false);
   const [lnBusy, setLnBusy] = useState(false);
   const settleStopRef = useRef(false);
+  const [arkLnProbe, setArkLnProbe] = useState<ArkadeLnReceiveProbe | null>(null);
+  const [arkLnChecking, setArkLnChecking] = useState(false);
+  const [arkLnBolt11, setArkLnBolt11] = useState<string | null>(null);
+  const [arkLnSwapId, setArkLnSwapId] = useState<string | null>(null);
+  const [arkLnSettled, setArkLnSettled] = useState(false);
+  const arkLnStopRef = useRef<(() => void) | null>(null);
 
   const loadBoarding = useCallback(async () => {
     setBoardingLoading(true);
@@ -198,6 +212,38 @@ export function ReceiveScreen() {
     boardingError,
     loadBoarding,
   ]);
+
+  useEffect(() => {
+    if (isLightning || fiatMode || mode !== "lightning") return;
+    if (!wallet || !selectedWallet?.id) {
+      setArkLnProbe({
+        available: false,
+        reason: "Wallet still opening.",
+      });
+      return;
+    }
+    let cancelled = false;
+    setArkLnChecking(true);
+    void probeArkadeLnReceive({
+      wallet,
+      networkId: network.id,
+      walletId: selectedWallet.id,
+    }).then((p) => {
+      if (!cancelled) setArkLnProbe(p);
+    }).finally(() => {
+      if (!cancelled) setArkLnChecking(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isLightning, fiatMode, mode, wallet, selectedWallet?.id, network.id]);
+
+  useEffect(() => {
+    return () => {
+      arkLnStopRef.current?.();
+      arkLnStopRef.current = null;
+    };
+  }, []);
 
   // BIP21 / Boarding: cheap getBalance only — defer first pull so navigate paints first.
   useEffect(() => {
@@ -335,7 +381,7 @@ export function ReceiveScreen() {
    * the left (L→R open). Never wrap the keypad in a Pan — that steals taps.
    */
   const overlayOpenPan = useMemo(() => {
-    if (isLightning) return Gesture.Pan().enabled(false);
+    if (isLightning || mode === "lightning") return Gesture.Pan().enabled(false);
     return Gesture.Pan()
       .activeOffsetX([-14, 14])
       .failOffsetY([-40, 40])
@@ -393,6 +439,7 @@ export function ReceiveScreen() {
     overlayOffX,
     overlayOpenSV,
     overlayX,
+    mode,
   ]);
 
   /** Dismiss overlay: right-edge grabber, swipe left. */
@@ -439,7 +486,9 @@ export function ReceiveScreen() {
         ? bip21Uri
         : mode === "arkade"
           ? arkAddress
-          : boardingAddress;
+          : mode === "lightning"
+            ? arkLnBolt11
+            : boardingAddress;
 
   const bal = fiatMode
     ? formatBrlDisplay(depixDisplay ?? 0, { hidden: balanceHidden, networkId: network.id })
@@ -460,7 +509,9 @@ export function ReceiveScreen() {
       ? `BIP21 · boarding + Arkade · ${network.label}`
       : mode === "arkade"
         ? `Arkade · ${network.label}`
-        : `Onchain boarding · ${network.label}`;
+        : mode === "lightning"
+          ? `Lightning · ${network.label}`
+          : `Onchain boarding · ${network.label}`;
 
   const qrReady =
     mode === "brl"
@@ -548,6 +599,64 @@ export function ReceiveScreen() {
     settleStopRef.current = true;
     setLnInvoice(null);
     setLnSettled(false);
+    setCopied(false);
+  }
+
+  async function onCreateArkadeLnInvoice() {
+    const amount = Number.parseInt(lnAmount.replace(/[,\s]/g, ""), 10);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      Alert.alert("Invalid amount", "Enter a positive amount in sats.");
+      return;
+    }
+    if (!wallet || !selectedWallet?.id) {
+      Alert.alert("Wallet closed", "Re-open the wallet and try again.");
+      return;
+    }
+    setLnBusy(true);
+    try {
+      arkLnStopRef.current?.();
+      arkLnStopRef.current = null;
+      const rec = await requestArkadeLnReceive({
+        wallet,
+        networkId: network.id,
+        walletId: selectedWallet.id,
+        amountSats: amount,
+      });
+      setArkLnBolt11(rec.bolt11);
+      setArkLnSwapId(rec.swapId);
+      setArkLnSettled(false);
+      arkLnStopRef.current = watchArkadeLnReceive({
+        wallet,
+        networkId: network.id,
+        walletId: selectedWallet.id,
+        swapId: rec.swapId,
+        onPaid: () => {
+          setArkLnSettled(true);
+          bumpActivity();
+          openFundsReceived({ amount, kind: "lightning" });
+        },
+        onFailed: (outcome) => {
+          Alert.alert(
+            "Lightning receive failed",
+            `The corridor swap ended (${outcome}). No invoice should be paid.`,
+          );
+        },
+      });
+    } catch (e) {
+      setArkLnBolt11(null);
+      setArkLnSwapId(null);
+      Alert.alert("Could not create invoice", friendlyArkadeLnError(e));
+    } finally {
+      setLnBusy(false);
+    }
+  }
+
+  function onNewArkadeLnInvoice() {
+    arkLnStopRef.current?.();
+    arkLnStopRef.current = null;
+    setArkLnBolt11(null);
+    setArkLnSwapId(null);
+    setArkLnSettled(false);
     setCopied(false);
   }
 
@@ -706,10 +815,73 @@ export function ReceiveScreen() {
                   Boarding
                 </Text>
               </Pressable>
+              <Pressable
+                style={[styles.modeBtn, mode === "lightning" && styles.modeBtnOn]}
+                onPress={() => setMode("lightning")}
+              >
+                <Text style={[styles.modeLabel, mode === "lightning" && styles.modeLabelOn]}>
+                  {t("receive.lightning")}
+                </Text>
+              </Pressable>
             </>
           )}
         </View>
 
+        {mode === "lightning" ? (
+          arkLnChecking && !arkLnProbe ? (
+            <Text style={styles.caption}>{t("receive.lnChecking")}</Text>
+          ) : arkLnProbe && !arkLnProbe.available ? (
+            <>
+              <Text style={styles.fieldLabel}>{t("receive.lnUnavailable")}</Text>
+              <Text style={styles.caption}>
+                {arkLnProbe.reason ?? t("receive.lnUnavailableBody")}
+              </Text>
+            </>
+          ) : !arkLnBolt11 ? (
+            <>
+              <Text style={styles.fieldLabel}>{t("receive.amountSats")}</Text>
+              <TextInput
+                value={lnAmount}
+                onChangeText={setLnAmount}
+                keyboardType="number-pad"
+                placeholder="0"
+                placeholderTextColor={colors.hint}
+                style={styles.input}
+              />
+              <Pressable
+                style={[styles.primary, lnBusy && { opacity: 0.6 }]}
+                disabled={lnBusy}
+                onPress={() => void onCreateArkadeLnInvoice()}
+              >
+                {lnBusy ? (
+                  <ActivityIndicator color="#000" />
+                ) : (
+                  <Text style={styles.primaryText}>{t("receive.createInvoice")}</Text>
+                )}
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <View style={styles.qrWrap}>
+                <ExpandableQrCode value={arkLnBolt11} size={220} />
+              </View>
+              <Text style={styles.lnStatus}>{arkLnSettled ? "Paid" : "Waiting for payment"}</Text>
+              <Text style={styles.pillText} selectable>
+                {midEllipsis(arkLnBolt11, 18, 10)}
+              </Text>
+              <Pressable style={styles.secondary} onPress={() => void onCopy()}>
+                <Text style={styles.secondaryText}>{copied ? t("common.copied") : t("common.copy")}</Text>
+              </Pressable>
+              <Pressable style={styles.secondary} onPress={() => void onShare()}>
+                <Text style={styles.secondaryText}>{t("common.share")}</Text>
+              </Pressable>
+              <Pressable style={styles.secondary} onPress={onNewArkadeLnInvoice}>
+                <Text style={styles.secondaryText}>{t("receive.newInvoice")}</Text>
+              </Pressable>
+            </>
+          )
+        ) : (
+        <>
         <View style={styles.qrWrap}>
           {qrReady && displayPayload ? (
             <ExpandableQrCode value={displayPayload} size={220} />
@@ -805,6 +977,8 @@ export function ReceiveScreen() {
               <Text style={styles.secondaryText}>{t("receive.newReceiveAddress")}</Text>
             )}
           </Pressable>
+        )}
+        </>
         )}
 
         <View style={{ height: 24 }} />

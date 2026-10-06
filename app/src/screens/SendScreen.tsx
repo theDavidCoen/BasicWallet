@@ -32,7 +32,19 @@ import { getNetworkConfig } from "../config/network";
 import { upsertLightningPayments } from "../account/lightningActivity";
 import { recordSentFromThisDevice, notePendingSendFromThisDevice } from "../account/txMeta";
 import { lndhubPayInvoice, parseBolt11AmountSats } from "../lightning/lndhub";
+import { recordArkadeLnCorridorPay } from "../lightning/arkadeLnActivity";
 import {
+  friendlyLnInvoiceError,
+  toArkadeLnInvoiceFacts,
+} from "../lightning/arkadeLnInvoice";
+import {
+  friendlyArkadeLnError,
+  payArkadeLightning,
+  previewArkadeLnPay,
+  type ArkadeLnQuotePreview,
+} from "../lightning/arkadeLnSwap";
+import {
+  looksLikeBolt12,
   looksLikeLightningPayInput,
   probeLightningPay,
   resolveLightningPay,
@@ -59,7 +71,11 @@ import {
 import { useWallet } from "../wallet/WalletProvider";
 import { selectedVtxoSum } from "../wallet/postSendBalanceGuard";
 import { formatSatsLabel } from "../wallet/formatSats";
-import { ScanQrModal, extractLightningPayFromScan, extractArkAddressFromScan } from "./ScanQrModal";
+import {
+  ScanQrModal,
+  extractLightningPayFromScan,
+  extractArkOrLightningPayFromScan,
+} from "./ScanQrModal";
 import { useFiatMode } from "../fiat/FiatModeProvider";
 import {
   depixAssetIdForNetwork,
@@ -306,12 +322,15 @@ export function SendScreen() {
     }
     return sum;
   }, [lines]);
+  const primaryHasDest = !!primaryLine?.address.trim();
+  const arkadeLnDest =
+    !isLightning && looksLikeLightningPayInput(primaryLine?.address.trim() ?? "");
   const canAddRecipient =
     !isLightning &&
+    !arkadeLnDest &&
     lines.length < MAX_SEND_RECIPIENTS &&
     !!primaryLine &&
     isValidArkAddress(primaryLine.address.trim());
-  const primaryHasDest = !!primaryLine?.address.trim();
 
   // Focus Enter field only after the sheet is open — never on Send mount
   // (hidden TextInput + autoFocus was stealing the keyboard).
@@ -365,6 +384,9 @@ export function SendScreen() {
   const [lnProbe, setLnProbe] = useState<LnPayProbe | null>(null);
   const [lnProbeBusy, setLnProbeBusy] = useState(false);
   const [lnProbeError, setLnProbeError] = useState<string | null>(null);
+  const [lnQuotePreview, setLnQuotePreview] = useState<ArkadeLnQuotePreview | null>(
+    null,
+  );
 
   const spendable = balance?.available ?? null;
   const fiatUnit = fiatStableForNetwork(network.id).displayCode;
@@ -427,26 +449,35 @@ export function SendScreen() {
   }, [isLightning, selectedWallet?.id]);
 
   useEffect(() => {
-    if (!isLightning) {
+    const dest = isLightning ? address.trim() : (lines[0]?.address.trim() ?? "");
+    if (!isLightning && !looksLikeLightningPayInput(dest)) {
       setLnProbe(null);
       setLnProbeError(null);
+      setLnQuotePreview(null);
       return;
     }
-    const raw = address.trim();
-    if (!raw || !looksLikeLightningPayInput(raw)) {
+    if (!dest || !looksLikeLightningPayInput(dest)) {
       setLnProbe(null);
       setLnProbeError(null);
+      setLnQuotePreview(null);
       return;
     }
-    // New destination — keep amount when BIP21 / route already set it;
-    // fixed bolt11 amounts ignore amountStr anyway.
     let cancelled = false;
     setLnProbeBusy(true);
     setLnProbeError(null);
     void (async () => {
       try {
-        const probe = await probeLightningPay(raw);
-        if (!cancelled) setLnProbe(probe);
+        const probe = await probeLightningPay(dest);
+        if (cancelled) return;
+        setLnProbe(probe);
+        if (
+          !isLightning &&
+          probe.amountSats != null &&
+          probe.amountSats > 0 &&
+          lines[0]?.id
+        ) {
+          patchLine(lines[0].id, { amountStr: String(probe.amountSats) });
+        }
       } catch (e) {
         if (!cancelled) {
           setLnProbe(null);
@@ -459,11 +490,47 @@ export function SendScreen() {
     return () => {
       cancelled = true;
     };
-  }, [isLightning, address]);
+  }, [isLightning, address, lines[0]?.address]);
 
   function patchLine(id: string, patch: Partial<SendLine>) {
     setLines((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
   }
+
+  useEffect(() => {
+    if (isLightning || !arkadeLnDest || !wallet || !selectedWallet?.id) {
+      if (!isLightning) setLnQuotePreview(null);
+      return;
+    }
+    const bolt11 = lnProbe?.bolt11;
+    if (!bolt11) {
+      setLnQuotePreview(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const preview = await previewArkadeLnPay({
+          wallet,
+          networkId: network.id,
+          walletId: selectedWallet.id,
+          bolt11,
+        });
+        if (!cancelled) setLnQuotePreview(preview);
+      } catch {
+        if (!cancelled) setLnQuotePreview(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isLightning,
+    arkadeLnDest,
+    lnProbe?.bolt11,
+    wallet,
+    selectedWallet?.id,
+    network.id,
+  ]);
 
   function applyDestinationToActive(text: string, walletLabel: string | null = null) {
     const prefer = isLightning ? "lightning" : "arkade";
@@ -602,7 +669,15 @@ export function SendScreen() {
   }
 
   function identifierEligible(ident: ContactIdentifier): boolean {
-    if (sendMode === "arkade") return ident.kind === "ark";
+    if (sendMode === "arkade") {
+      return (
+        ident.kind === "ark" ||
+        ident.kind === "lightning_address" ||
+        ident.kind === "lnurl" ||
+        ident.kind === "bip353" ||
+        ident.kind === "nip05"
+      );
+    }
     return (
       ident.kind === "lightning_address" ||
       ident.kind === "bip353" ||
@@ -620,7 +695,7 @@ export function SendScreen() {
           Alert.alert("NIP-05", r.message);
           return;
         }
-        if (r.lud16 && sendMode === "lightning") {
+        if (r.lud16 && (sendMode === "lightning" || sendMode === "arkade")) {
           applyDestinationToActive(r.lud16, contact.name);
           closeEnterSheet();
           return;
@@ -650,6 +725,14 @@ export function SendScreen() {
           "On-chain not on soft path",
           "This soft Arkade wallet can’t send on-chain. Use an ark… address.",
         );
+        return;
+      }
+      if (
+        sendMode === "arkade" &&
+        (ident.kind === "lightning_address" || ident.kind === "lnurl")
+      ) {
+        applyDestinationToActive(ident.value.trim(), contact.name);
+        closeEnterSheet();
         return;
       }
       if (sendMode === "arkade" && ident.kind !== "ark") {
@@ -951,6 +1034,112 @@ export function SendScreen() {
     }
   }
 
+  async function onSendArkadeLightning() {
+    const raw = (linesRef.current[0]?.address ?? "").trim();
+    if (!wallet || !selectedWallet?.id) {
+      Alert.alert("Wallet closed", "Re-open the wallet and try again.");
+      return;
+    }
+    if (looksLikeBolt12(raw)) {
+      Alert.alert(
+        "BOLT12 not supported",
+        "Paste a BOLT11 invoice, LNURL, or Lightning Address.",
+      );
+      return;
+    }
+    if (!looksLikeLightningPayInput(raw)) {
+      Alert.alert(
+        "Invalid destination",
+        "Paste or scan a BOLT11 invoice, LNURL, or Lightning Address.",
+      );
+      return;
+    }
+    const walletId = selectedWallet.id;
+    const manual = parseAmountSats(linesRef.current[0]?.amountStr ?? "");
+    const payHint =
+      lnProbe?.amountSats != null && lnProbe.amountSats > 0
+        ? lnProbe.amountSats
+        : manual;
+    if (lnProbe?.needsAmount && payHint == null) {
+      Alert.alert("Amount required", "Enter how many sats to send.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const auth = await requireUserPresence(t("send.confirmSend"));
+      if (!auth.ok) {
+        Alert.alert("Authentication required", auth.reason);
+        return;
+      }
+
+      const resolved = await resolveLightningPay(raw, payHint, lnProbe ?? undefined);
+      let facts;
+      try {
+        facts = toArkadeLnInvoiceFacts(resolved.bolt11, network.id);
+      } catch (e) {
+        Alert.alert("Cannot pay invoice", friendlyLnInvoiceError(e));
+        return;
+      }
+
+      const need = lnQuotePreview?.fundSats ?? facts.amountSats;
+      if (spendable !== null && need > spendable) {
+        Alert.alert(
+          "Insufficient balance",
+          fiatMode
+            ? `Lightning pay uses Arkade sats (invoice plus corridor fee). Available: ${spendable.toLocaleString("en-US")} sats.`
+            : `Available: ${bal}`,
+        );
+        return;
+      }
+
+      beginOutboundSend();
+      try {
+        notePendingSendFromThisDevice(
+          network.id,
+          walletId,
+          facts.amountSats,
+          resolved.display,
+        );
+        const paid = await payArkadeLightning({
+          wallet,
+          networkId: network.id,
+          walletId,
+          bolt11: resolved.bolt11,
+        });
+        applyLocalSpend(paid.fundSats);
+        recordArkadeLnCorridorPay({
+          networkId: network.id,
+          walletId,
+          swapId: paid.swapId,
+          invoiceSats: paid.invoiceSats,
+          feeSats: paid.feeSats,
+          paymentHash: facts.paymentHash,
+        });
+        bumpActivity();
+        setLines([newSendLine()]);
+        setLnProbe(null);
+        setLnQuotePreview(null);
+        setBusy(false);
+        openFundsSent({
+          amount: paid.invoiceSats,
+          txid: paid.swapId,
+          address: resolved.display,
+          rail: "lightning",
+        });
+        void refresh().catch((e) =>
+          console.warn("[basic] post-arkade-ln-send refresh failed", e),
+        );
+      } finally {
+        endOutboundSend();
+      }
+    } catch (e) {
+      Alert.alert("Send failed", friendlyArkadeLnError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function buildRecipientsFromLines(
     source: SendLine[],
   ): Promise<
@@ -1031,6 +1220,11 @@ export function SendScreen() {
   async function onSend() {
     if (isLightning) {
       await onSendLightning();
+      return;
+    }
+    const dest = (linesRef.current[0]?.address ?? "").trim();
+    if (looksLikeLightningPayInput(dest) && linesRef.current.length === 1) {
+      await onSendArkadeLightning();
       return;
     }
     if (!wallet) {
@@ -1581,7 +1775,11 @@ export function SendScreen() {
           <Pressable onPress={toggleBalanceHidden}>
             <Text style={styles.balance}>{bal}</Text>
           </Pressable>
-          <Text style={styles.caption}>{t("send.networkCaption", { network: network.label })}</Text>
+          <Text style={styles.caption}>
+            {arkadeLnDest
+              ? t("send.networkCaptionLn", { network: network.label })
+              : t("send.networkCaption", { network: network.label })}
+          </Text>
 
           {sendBlocked ? (
             <Text style={styles.warn}>
@@ -1655,7 +1853,7 @@ export function SendScreen() {
               </View>
               <TextInput
                 value={primaryLine?.amountStr ?? ""}
-                editable={!busy && !sendBlocked}
+                editable={!busy && !sendBlocked && !(arkadeLnDest && lnProbe?.amountSats != null && lnProbe.amountSats > 0)}
                 onChangeText={(v) => {
                   setPickerTarget("primary");
                   if (primaryLine) {
@@ -1674,6 +1872,19 @@ export function SendScreen() {
                 placeholderTextColor={colors.hint}
                 style={styles.input}
               />
+              {arkadeLnDest && lnQuotePreview ? (
+                <Text style={styles.previewMemo}>
+                  {t("send.corridorFee", {
+                    fee: lnQuotePreview.feeSats.toLocaleString("en-US"),
+                    total: lnQuotePreview.fundSats.toLocaleString("en-US"),
+                  })}
+                </Text>
+              ) : arkadeLnDest ? (
+                <Text style={styles.previewMemo}>{t("send.corridorFeeHint")}</Text>
+              ) : null}
+              {arkadeLnDest && lnProbeError ? (
+                <Text style={[styles.warn, { marginTop: 8 }]}>{lnProbeError}</Text>
+              ) : null}
 
               <Text style={styles.fieldLabel}>{t("send.to")}</Text>
               {primaryHasDest ? (
@@ -1781,7 +1992,12 @@ export function SendScreen() {
 
           <Pressable
             style={[styles.primary, (busy || sendBlocked || !!myWalletPeekId) && { opacity: 0.6 }]}
-            disabled={busy || sendBlocked || !!myWalletPeekId}
+            disabled={
+              busy ||
+              sendBlocked ||
+              !!myWalletPeekId ||
+              (arkadeLnDest && (lnProbeBusy || lnProbe?.kind === "bolt12"))
+            }
             onPress={() => void onSend()}
           >
             {busy ? (
@@ -1797,7 +2013,7 @@ export function SendScreen() {
         <ScanQrModal
           visible={scanOpen}
           onClose={() => setScanOpen(false)}
-          parse={extractArkAddressFromScan}
+          parse={extractArkOrLightningPayFromScan}
           onScan={applyScannedPay}
         />
       </ScreenChrome>
@@ -1957,7 +2173,7 @@ export function SendScreen() {
             onChangeText={setEnterDraft}
             autoCapitalize="none"
             autoCorrect={false}
-            placeholder={isLightning ? "lnbc… · user@domain · lnurl…" : "ark1…"}
+            placeholder={isLightning ? "lnbc… · user@domain · lnurl…" : "ark1… · lnbc… · user@domain"}
             placeholderTextColor={colors.hint}
             multiline
             style={[styles.input, styles.inputMulti, { marginBottom: 12 }]}
