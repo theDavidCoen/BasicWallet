@@ -113,8 +113,8 @@ export function ReceivePosPanel({
   /** Base BIP21 (boarding + ark) without amount — used when enabling Request. */
   bip21Uri: string | null;
   onClose: () => void;
-  /** Build BIP21 with amount (sats) → full URI for QR. */
-  onRequestUri: (amountSats: number) => string | null;
+  /** Build BIP21 with amount (sats) → full URI for QR. May mint a BOLT11. */
+  onRequestUri: (amountSats: number) => string | null | Promise<string | null>;
   /**
    * Fiat Mode: build stable-asset receive URI from display units.
    * When set, Request prefers this over padded sats BIP21.
@@ -153,6 +153,7 @@ export function ReceivePosPanel({
   const [phase, setPhase] = useState<Phase>("keypad");
   const [requestUri, setRequestUri] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [requestBusy, setRequestBusy] = useState(false);
   const [fiatCode, setFiatCode] = useState<PosFiatCode>(
     fiatMode ? stableCode : "EUR",
   );
@@ -164,6 +165,7 @@ export function ReceivePosPanel({
     setDigits("");
     setRequestUri(null);
     setCopied(false);
+    setRequestBusy(false);
     setFiatRequestKind("fiat");
   }, [active]);
 
@@ -296,8 +298,24 @@ export function ReceivePosPanel({
   const isChatSend = variant === "chat-send";
   const isChatAmount = isChatRequest || isChatSend;
 
+  const applyRequestUri = useCallback((uriOrPromise: string | null | Promise<string | null>) => {
+    const go = (uri: string | null) => {
+      if (!uri) return;
+      setRequestUri(uri);
+      setPhase("receive");
+    };
+    if (uriOrPromise && typeof (uriOrPromise as Promise<string | null>).then === "function") {
+      setRequestBusy(true);
+      void Promise.resolve(uriOrPromise)
+        .then(go)
+        .finally(() => setRequestBusy(false));
+      return;
+    }
+    go(uriOrPromise as string | null);
+  }, []);
+
   const onRequest = useCallback(() => {
-    if (chatRequestBusy) return;
+    if (chatRequestBusy || requestBusy) return;
     if (fiatMode) {
       // Keypad stays in fiat denomination; chip picks URI shape.
       const d =
@@ -329,10 +347,7 @@ export function ReceivePosPanel({
           ? amountSats
           : satsFromFiatMinor(Math.round(d * 100), fiatCode, rate) ?? 0;
       if (!(sats > 0) || sats > MAX_POS_SATS) return;
-      const uri = onRequestUri(sats);
-      if (!uri) return;
-      setRequestUri(uri);
-      setPhase("receive");
+      applyRequestUri(onRequestUri(sats));
       return;
     }
     if (amountSats <= 0 || amountSats > MAX_POS_SATS) return;
@@ -340,12 +355,10 @@ export function ReceivePosPanel({
       void onChatRequestConfirm?.(amountSats);
       return;
     }
-    const uri = onRequestUri(amountSats);
-    if (!uri) return;
-    setRequestUri(uri);
-    setPhase("receive");
+    applyRequestUri(onRequestUri(amountSats));
   }, [
     amountSats,
+    applyRequestUri,
     chatRequestBusy,
     fiatCode,
     fiatMode,
@@ -356,6 +369,7 @@ export function ReceivePosPanel({
     onRequestUri,
     raw,
     rate,
+    requestBusy,
     unit,
   ]);
 
@@ -379,10 +393,11 @@ export function ReceivePosPanel({
     ? amountSats > 0 && amountSats <= MAX_POS_SATS && !chatRequestBusy
     : fiatMode
       ? ((fiatDisplay ?? 0) > 0 || (unit === "fiat" && raw > 0)) &&
+        !requestBusy &&
         (fiatRequestKind === "fiat"
           ? Boolean(onRequestBrlUri)
           : Boolean(bip21Uri) && (amountSats > 0 || rate != null))
-      : amountSats > 0 && amountSats <= MAX_POS_SATS && Boolean(bip21Uri);
+      : amountSats > 0 && amountSats <= MAX_POS_SATS && Boolean(bip21Uri) && !requestBusy;
 
   if (!isChatAmount && phase === "receive" && requestUri) {
     return (
@@ -524,11 +539,11 @@ export function ReceivePosPanel({
       </View>
 
       <Pressable
-        style={[styles.cta, (!canRequest || chatRequestBusy) && styles.ctaDisabled]}
-        disabled={!canRequest || chatRequestBusy}
+        style={[styles.cta, (!canRequest || chatRequestBusy || requestBusy) && styles.ctaDisabled]}
+        disabled={!canRequest || chatRequestBusy || requestBusy}
         onPress={onRequest}
       >
-        {chatRequestBusy ? (
+        {chatRequestBusy || requestBusy ? (
           <ActivityIndicator color="#000" />
         ) : isChatRequest ? (
           <Text style={styles.ctaText}>Send request</Text>

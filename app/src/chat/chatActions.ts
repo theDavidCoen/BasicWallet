@@ -128,6 +128,7 @@ export async function sendPayRequest(opts: {
   memo?: string;
   asset: ChatAsset;
   preferredReceive?: { kind: "ark" | "bolt11" | "lnurl"; value?: string };
+  lightningInvoice?: string;
   /** Frozen Fiat caption for requester history (local). */
   fiatCaption?: string | null;
 }): Promise<{ messageId: string; requestId: string; status: "sent" | "pending_out" }> {
@@ -153,6 +154,7 @@ export async function sendPayRequest(opts: {
     asset: opts.asset,
     expiresAt: Date.now() + PAY_REQUEST_TTL_MS,
     preferredReceive: opts.preferredReceive,
+    lightningInvoice: opts.lightningInvoice?.trim() || undefined,
     sentAt: Date.now(),
     threadContactHint: opts.contactId,
   };

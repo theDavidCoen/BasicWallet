@@ -2,7 +2,7 @@
  * Home LTR side sheet — POS keypad → simplified receive (same as Receive overlay).
  */
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { getNetworkConfig } from "../config/network";
 import { useFiatMode } from "../fiat/FiatModeProvider";
@@ -12,6 +12,11 @@ import { encodeReceiveBip21Asset } from "../wallet/bip21Asset";
 import { encodeReceiveBip21 } from "../wallet/bip21Receive";
 import { colors } from "../theme/colors";
 import { ReceivePosPanel } from "./ReceivePosPanel";
+import {
+  encodePosBip21WithOptionalLn,
+  watchArkadeLnReceive,
+} from "../lightning/arkadeLnSwap";
+import { useSheets } from "../navigation/SheetHost";
 
 export function HomePosSheetContent({
   onClose,
@@ -28,9 +33,13 @@ export function HomePosSheetContent({
     selectedWallet,
     walletInteractive,
     balanceStatus,
+    wallet,
+    bumpActivity,
   } = useWallet();
   const { fiatMode } = useFiatMode();
+  const { openFundsReceived } = useSheets();
   const network = getNetworkConfig();
+  const arkLnStopRef = useRef<(() => void) | null>(null);
 
   const isLightning = selectedWallet?.kind === "lightning";
 
@@ -44,15 +53,62 @@ export function HomePosSheetContent({
     });
   }, [active, boardingAddress, ensureBoardingAddress, isLightning, selectedWallet]);
 
+  useEffect(() => {
+    if (active) return;
+    arkLnStopRef.current?.();
+    arkLnStopRef.current = null;
+  }, [active]);
+
+  useEffect(() => {
+    return () => {
+      arkLnStopRef.current?.();
+      arkLnStopRef.current = null;
+    };
+  }, []);
+
   const bip21Uri = useMemo(
     () => encodeReceiveBip21(boardingAddress, arkAddress, null),
     [boardingAddress, arkAddress],
   );
 
   const buildPosBip21 = useCallback(
-    (amountSats: number) =>
-      encodeReceiveBip21(boardingAddress, arkAddress, null, amountSats),
-    [boardingAddress, arkAddress],
+    async (amountSats: number) => {
+      arkLnStopRef.current?.();
+      arkLnStopRef.current = null;
+      const { uri, minted } = await encodePosBip21WithOptionalLn({
+        boarding: boardingAddress,
+        ark: arkAddress,
+        amountSats,
+        wallet,
+        networkId: network.id,
+        walletId: selectedWallet?.id,
+      });
+      if (minted && wallet && selectedWallet?.id) {
+        arkLnStopRef.current = watchArkadeLnReceive({
+          wallet,
+          networkId: network.id,
+          walletId: selectedWallet.id,
+          swapId: minted.swapId,
+          onPaid: () => {
+            bumpActivity();
+            openFundsReceived({ amount: minted.amountSats, kind: "lightning" });
+          },
+          onFailed: (outcome) => {
+            console.warn("[basic] arkade ln receive ended", outcome);
+          },
+        });
+      }
+      return uri;
+    },
+    [
+      boardingAddress,
+      arkAddress,
+      wallet,
+      network.id,
+      selectedWallet?.id,
+      bumpActivity,
+      openFundsReceived,
+    ],
   );
 
   const buildPosBrlUri = useCallback(

@@ -86,6 +86,10 @@ export function parseChatEnvelope(raw: string): ChatEnvelope | null {
           asset: r.asset,
           expiresAt: r.expiresAt,
           preferredReceive: r.preferredReceive,
+          lightningInvoice:
+            typeof r.lightningInvoice === "string" && r.lightningInvoice.trim()
+              ? r.lightningInvoice.trim()
+              : undefined,
           fulfillment,
           sentAt,
           threadContactHint: hint,

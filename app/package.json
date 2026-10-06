@@ -14,7 +14,8 @@
     "check:chat-pay-settle": "npx tsx scripts/check-chat-pay-settle.ts",
     "check:false-inbound-rollback": "npx tsx scripts/check-false-inbound-rollback.ts",
     "check:arkade-ln-invoice": "npx tsx scripts/check-arkade-ln-invoice.ts",
-    "check:wallet-guards": "npm run check:catch-up-credit && npm run check:post-send-balance && npm run check:activity-refresh && npm run check:chat-pay-settle && npm run check:false-inbound-rollback && npm run check:arkade-ln-invoice",
+    "check:bip21-receive": "npx tsx scripts/check-bip21-receive.ts",
+    "check:wallet-guards": "npm run check:catch-up-credit && npm run check:post-send-balance && npm run check:activity-refresh && npm run check:chat-pay-settle && npm run check:false-inbound-rollback && npm run check:arkade-ln-invoice && npm run check:bip21-receive",
     "prebuild:android": "expo prebuild --platform android --clean"
   },
   "dependencies": {

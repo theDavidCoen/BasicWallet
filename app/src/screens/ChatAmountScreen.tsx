@@ -37,6 +37,7 @@ import {
   padSatsForDepixSwap,
 } from "../fiat/depixAssets";
 import { useFiatMode } from "../fiat/FiatModeProvider";
+import { tryRequestArkadeLnReceive } from "../lightning/arkadeLnSwap";
 import { requireUserPresence } from "../security/userPresence";
 import { DEFAULT_MIN_VTXO_SATS } from "../wallet/arkMultiSend";
 import { useWallet } from "../wallet/WalletProvider";
@@ -140,12 +141,23 @@ export function ChatAmountScreen() {
             fiatCaption = freezeFiatCaptionFromSats(sats, s, network.id);
           }
         }
+        let lightningInvoice: string | undefined;
+        if (!fiatMode && wallet && selectedWallet?.id) {
+          const minted = await tryRequestArkadeLnReceive({
+            wallet,
+            networkId: network.id,
+            walletId: selectedWallet.id,
+            amountSats: wireSats,
+          });
+          if (minted?.bolt11) lightningInvoice = minted.bolt11;
+        }
         await sendPayRequest({
           contactId,
           amountSats: wireSats,
           asset,
           preferredReceive,
           fiatCaption,
+          lightningInvoice,
         });
         if (navigation.canGoBack()) {
           navigation.goBack();
@@ -172,6 +184,8 @@ export function ChatAmountScreen() {
       fiatMode,
       network.id,
       spot,
+      wallet,
+      selectedWallet?.id,
     ],
   );
 

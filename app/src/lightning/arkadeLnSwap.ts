@@ -7,6 +7,7 @@
  */
 
 import type { IWallet } from "@arkade-os/sdk";
+import { discover } from "@arkade-os/solver-discovery";
 import {
   btcOn,
   createSwapClient,
@@ -15,6 +16,7 @@ import {
   type SwapClient,
 } from "@arkade-os/swap";
 import type { ArkadeNetworkId } from "../config/network";
+import { encodeReceiveBip21 } from "../wallet/bip21Receive";
 import { getAssetSwapRepository } from "../wallet/persistentStorage";
 import {
   friendlyLnInvoiceError,
@@ -41,6 +43,10 @@ const FAILED_OUTCOMES = new Set([
 const FUND_WAIT_MS = 90_000;
 const MAINNET_EMULATOR_PUBKEY =
   "0239c196415da47b26456a101daaa12ba9e445bfe153197f1e2b750bf40e52092e";
+
+/** Bundled beta-solver card bounds (official wallet `beta-solver.card.json`). */
+export const BUNDLED_LN_MIN_SATS = 500;
+export const BUNDLED_LN_MAX_SATS = 50_000;
 
 type ClientCache = {
   walletId: string;
@@ -100,6 +106,38 @@ export function friendlyArkadeLnError(err: unknown): string {
 }
 
 /**
+ * Official wallet pins the Lightning solver as a local card because GitHub
+ * Pages registry `bitcoin.json` currently publishes `markets: []`.
+ *
+ * Swap v2 `resolve()` peeks cache/injected snapshot only and never merges
+ * `localCards`. Injecting the bundled card (same `discover({ registries: [] })`
+ * expansion official `discoverMarkets` uses) makes peek + load agree without
+ * a live registry fetch.
+ */
+async function bundledLnDiscovery(networkId: ArkadeNetworkId): Promise<{
+  localCards: { card: object; network: "bitcoin" }[];
+  snapshot?: Awaited<ReturnType<typeof discover>>["markets"];
+}> {
+  if (networkId !== "mainnet") return { localCards: [] };
+  const localCards = [
+    { card: betaSolverCard as object, network: "bitcoin" as const },
+  ];
+  try {
+    const found = await discover({
+      registries: [],
+      localCards,
+      network: "bitcoin",
+    });
+    if (found.markets.length > 0) {
+      return { localCards, snapshot: found.markets };
+    }
+  } catch (e) {
+    console.warn("[basic] bundled ln snapshot failed", e);
+  }
+  return { localCards };
+}
+
+/**
  * Swap client whose discovery includes the Lightning corridor (registry +
  * bundled mainnet solver card). Separate from Fiat Mode's DePix-only cards.
  */
@@ -116,21 +154,26 @@ export async function getOrCreateArkadeLnClient(
   }
 
   const repository = getAssetSwapRepository(networkId, walletId);
-  const net = bitcoinNetworkLabel(networkId);
-  const localCards =
-    networkId === "mainnet"
-      ? [{ card: betaSolverCard as object, network: "bitcoin" as const }]
-      : [];
+  const { localCards, snapshot } = await bundledLnDiscovery(networkId);
 
   const client = createSwapClient({
     wallet,
     repository,
-    discovery: { localCards },
+    discovery: {
+      localCards,
+      ...(snapshot ? { snapshot } : {}),
+    },
     ...(networkId === "mainnet" ? { emulatorPubkey: MAINNET_EMULATOR_PUBKEY } : {}),
   });
   await client.ready;
+  if (!snapshot) {
+    try {
+      await client.markets();
+    } catch (e) {
+      console.warn("[basic] arkade ln markets warmup failed", e);
+    }
+  }
   clientCache = { walletId, networkId, client };
-  void net;
   return client;
 }
 
@@ -263,24 +306,35 @@ export type ArkadeLnReceiveProbe = {
   reason?: string;
 };
 
-/** Live base-side market required before any receive invoice is minted. */
+export function bundledLnAmountInRange(amountSats: number): boolean {
+  const amount = Math.floor(amountSats);
+  return amount >= BUNDLED_LN_MIN_SATS && amount <= BUNDLED_LN_MAX_SATS;
+}
+
+/**
+ * Live Lightning-into-Arkade market. Must `load()` (markets), never `resolve()`:
+ * v2 resolve peeks cache only and maps an empty cache to
+ * DiscoverySnapshotUnavailable even when the bundled solver card is present.
+ */
 export async function probeArkadeLnReceive(opts: {
   wallet: IWallet;
   networkId: ArkadeNetworkId;
   walletId: string;
 }): Promise<ArkadeLnReceiveProbe> {
+  if (opts.networkId !== "mainnet") {
+    return {
+      available: false,
+      reason: "Lightning receive is mainnet-only (bundled beta solver).",
+    };
+  }
   try {
     const client = await getOrCreateArkadeLnClient(
       opts.wallet,
       opts.networkId,
       opts.walletId,
     );
-    const resolution = await client.resolve({
-      via: "lightning",
-      amount: 1000n,
-      amountOn: "take",
-    });
-    if (resolution.eligible > 0) {
+    const markets = await client.markets();
+    if (markets.length > 0) {
       return { available: true };
     }
     return {
@@ -307,10 +361,12 @@ export async function requestArkadeLnReceive(opts: {
 }): Promise<ArkadeLnReceiveResult> {
   const amount = Math.floor(opts.amountSats);
   if (!(amount > 0)) throw new Error("Enter a positive amount.");
-  const probe = await probeArkadeLnReceive(opts);
-  if (!probe.available) {
+  if (opts.networkId !== "mainnet") {
+    throw new Error("Lightning receive is mainnet-only (bundled beta solver).");
+  }
+  if (!bundledLnAmountInRange(amount)) {
     throw new Error(
-      probe.reason ?? "Lightning receive is unavailable on Arkade right now.",
+      `Amount outside solver bounds (${BUNDLED_LN_MIN_SATS.toLocaleString("en-US")}-${BUNDLED_LN_MAX_SATS.toLocaleString("en-US")} sats).`,
     );
   }
   if (opts.signal?.aborted) throw new Error("Cancelled.");
@@ -321,6 +377,7 @@ export async function requestArkadeLnReceive(opts: {
     opts.walletId,
   );
   const BTC = btcOn("arkade", bitcoinNetworkLabel(opts.networkId));
+  // amountOn "take" inside receive() = official amountSide: "to" (credit me this much).
   const rec = await client.receive({
     via: "lightning",
     amount: BigInt(amount),
@@ -331,6 +388,63 @@ export async function requestArkadeLnReceive(opts: {
     throw new Error("Solver did not return a Lightning invoice.");
   }
   return { swapId: rec.id, bolt11, amountSats: amount };
+}
+
+/** Mint when the solver is live; never throw. Used to optionally embed lightning= in BIP21. */
+export async function tryRequestArkadeLnReceive(opts: {
+  wallet: IWallet;
+  networkId: ArkadeNetworkId;
+  walletId: string;
+  amountSats: number;
+  signal?: AbortSignal;
+}): Promise<ArkadeLnReceiveResult | null> {
+  const amount = Math.floor(opts.amountSats);
+  if (!bundledLnAmountInRange(amount) || opts.networkId !== "mainnet") {
+    return null;
+  }
+  try {
+    return await requestArkadeLnReceive(opts);
+  } catch (e) {
+    console.warn("[basic] arkade ln receive mint skipped", e);
+    return null;
+  }
+}
+
+export async function encodePosBip21WithOptionalLn(opts: {
+  boarding: string | null;
+  ark: string | null;
+  amountSats: number;
+  wallet?: IWallet | null;
+  networkId: ArkadeNetworkId;
+  walletId?: string | null;
+  signal?: AbortSignal;
+}): Promise<{ uri: string | null; minted: ArkadeLnReceiveResult | null }> {
+  const fallback = encodeReceiveBip21(
+    opts.boarding,
+    opts.ark,
+    null,
+    opts.amountSats,
+  );
+  if (!opts.wallet || !opts.walletId) {
+    return { uri: fallback, minted: null };
+  }
+  const minted = await tryRequestArkadeLnReceive({
+    wallet: opts.wallet,
+    networkId: opts.networkId,
+    walletId: opts.walletId,
+    amountSats: opts.amountSats,
+    signal: opts.signal,
+  });
+  if (!minted) return { uri: fallback, minted: null };
+  return {
+    uri: encodeReceiveBip21(
+      opts.boarding,
+      opts.ark,
+      minted.bolt11,
+      opts.amountSats,
+    ),
+    minted,
+  };
 }
 
 export function watchArkadeLnReceive(opts: {

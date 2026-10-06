@@ -44,6 +44,8 @@ export type PayRequestEnvelope = ChatEnvelopeBase & {
   asset: ChatAsset;
   expiresAt: number;
   preferredReceive?: { kind: "ark" | "bolt11" | "lnurl"; value?: string };
+  /** Optional BOLT11 for the same amount (unified request). Ark preferredReceive stays the pay path. */
+  lightningInvoice?: string;
   /** When set, wallet can poll MCP (via Cursor) after Pay settles and post codes/links. */
   fulfillment?: PayRequestFulfillment;
 };
