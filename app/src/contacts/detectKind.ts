@@ -29,6 +29,26 @@ export function looksLikeNip05(raw: string): boolean {
 }
 
 /**
+ * BOLT11 / BOLT12 invoices are one-shot — never offer Save to contacts.
+ * Also matches truncated UI displays (`lnbc1…abc` from midEllipsis).
+ */
+export function isOneShotPayInvoice(raw: string): boolean {
+  const t = raw.trim().replace(/^lightning:/i, "");
+  if (!t) return false;
+  if (looksLikeBolt11(t) || looksLikeBolt12(t)) return true;
+  if (/^(lnbc|lntb|lnbcrt|lnsb|lntbs)[0-9a-z]*…/i.test(t)) return true;
+  if (/^lno1[0-9a-z]*…/i.test(t)) return true;
+  return false;
+}
+
+/** Reusable destinations only (ark, LNURL, lightning address, … — not bolt11/12). */
+export function canOfferSaveToContacts(destination: string): boolean {
+  const t = destination.trim();
+  if (!t) return false;
+  return !isOneShotPayInvoice(t);
+}
+
+/**
  * Best-effort kind for paste / save-to-contacts.
  * BIP353 vs LN Address vs NIP-05 share user@domain — caller may override.
  * Default user@domain → lightning_address (most common pay path).

@@ -123,10 +123,11 @@ export function HomePosSheetContent({
         if (status.paid) {
           setLnSettled(true);
           const paymentHash = lnInvoice.paymentHash.toLowerCase();
+          const amount = lnInvoice.amountSats;
           upsertLightningPayments(network.id, walletId, [
             {
               id: `ln-in-${paymentHash}`,
-              amountSats: lnInvoice.amountSats,
+              amountSats: amount,
               direction: "in",
               createdAt: Date.now(),
               settled: true,
@@ -136,18 +137,18 @@ export function HomePosSheetContent({
             },
           ]);
           bumpActivity();
-          await refresh();
-          try {
-            await syncLightningHistory(network.id, walletId);
-            bumpActivity();
-          } catch {
-            /* optional */
-          }
-          const amount = lnInvoice.amountSats;
-          onClose();
-          requestAnimationFrame(() => {
-            openFundsReceived({ amount, kind: "lightning" });
-          });
+          // Overlay first (closes POS itself). Never onClose() before this —
+          // that remounts the keypad mid-dismiss and flashes the amount step.
+          openFundsReceived({ amount, kind: "lightning" });
+          void (async () => {
+            try {
+              await refresh();
+              await syncLightningHistory(network.id, walletId);
+              bumpActivity();
+            } catch (e) {
+              console.warn("[basic] home pos ln post-settle refresh", e);
+            }
+          })();
         }
       } catch (e) {
         console.warn("[basic] home pos ln invoice poll", e);
@@ -172,7 +173,6 @@ export function HomePosSheetContent({
     network.id,
     bumpActivity,
     refresh,
-    onClose,
     openFundsReceived,
   ]);
 
