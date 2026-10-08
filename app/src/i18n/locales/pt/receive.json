@@ -5,7 +5,6 @@
   "createInvoice": "Criar invoice",
   "newInvoice": "Nova invoice",
   "editAmount": "Editar valor",
-  "lightningPosCaption": "Invoice Lightning · teclado",
   "waitingPayment": "Aguardando pagamento…",
   "paid": "Paga",
   "newReceiveAddress": "Novo endereço de recebimento",

@@ -173,7 +173,7 @@ export function ReceivePosPanel({
   const stable = fiatStableForNetwork(networkId);
   const stableCode = stable.displayCode;
 
-  const [unit, setUnit] = useState<Unit>(lightningMode ? "sats" : "fiat");
+  const [unit, setUnit] = useState<Unit>("fiat");
   const [fiatRequestKind, setFiatRequestKind] = useState<FiatRequestKind>("fiat");
   const [digits, setDigits] = useState(""); // fiat: minor units; sats: sats
   const [phase, setPhase] = useState<Phase>("keypad");
@@ -193,8 +193,8 @@ export function ReceivePosPanel({
     setCopied(false);
     setRequestBusy(false);
     setFiatRequestKind("fiat");
-    if (lightningMode) setUnit("sats");
-  }, [active, lightningMode]);
+    setUnit("fiat");
+  }, [active]);
 
   useEffect(() => {
     if (fiatMode) {
@@ -505,9 +505,6 @@ export function ReceivePosPanel({
       {isChatSend && contactLabel ? (
         <Text style={styles.chatSub}>To {contactLabel} · destination locked</Text>
       ) : null}
-      {lightningMode ? (
-        <Text style={styles.chatSub}>{t("receive.lightningPosCaption")}</Text>
-      ) : null}
       {fiatMode && !isChatAmount ? (
         <View style={styles.modeRow}>
           <Pressable
@@ -562,7 +559,7 @@ export function ReceivePosPanel({
         >
           {primaryValue || "0"}
         </Text>
-        {!fiatMode && !lightningMode ? (
+        {!fiatMode ? (
           <Pressable
             onPress={toggleUnit}
             style={styles.swapBtn}
