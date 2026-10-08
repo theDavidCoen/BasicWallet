@@ -30,6 +30,10 @@ import {
   publishEncryptedBackupToRelays,
   rememberPublishMeta,
 } from "../nostr/backupBroadcast";
+import {
+  clearBackupPackageDirty,
+  markBackupPackageDirty,
+} from "../nostr/backupSync";
 import { ensureNostrIdentity, loadNostrKeyPairForCrypto } from "../nostr/identityStore";
 import { uploadHomeBackupCipher } from "../nostr/homeServerWebdav";
 import { requireUserPresence } from "../security/userPresence";
@@ -179,8 +183,10 @@ export function BackupRecapScreen() {
         try {
           const pub = await publishEncryptedBackupToRelays(meta.relays);
           await rememberPublishMeta(meta, pub);
+          await clearBackupPackageDirty();
         } catch (e) {
           console.warn("[basic] nostr publish after enable failed", e);
+          await markBackupPackageDirty();
         }
       } else {
         if (!params.homeUrl?.trim()) throw new Error("Missing home server URL");
@@ -198,9 +204,15 @@ export function BackupRecapScreen() {
           homePassword: creds.password,
         });
         void meta;
-        const blob = await readCipherBlob();
-        if (!blob) throw new Error("Local backup package missing after enable");
-        await uploadHomeBackupCipher(params.homeUrl, blob, creds);
+        try {
+          const blob = await readCipherBlob();
+          if (!blob) throw new Error("Local backup package missing after enable");
+          await uploadHomeBackupCipher(params.homeUrl, blob, creds);
+          await clearBackupPackageDirty();
+        } catch (e) {
+          await markBackupPackageDirty();
+          throw e;
+        }
       }
 
       clearReveal();
