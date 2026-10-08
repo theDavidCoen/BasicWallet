@@ -2,7 +2,9 @@
 
 **Experimental wallet.** Do not store meaningful funds. Read the [README](../README.md) warnings first.
 
-This page covers everyday flows, gestures/shortcuts, and advanced options as of the current alpha on `main`.
+This page covers everyday flows, gestures/shortcuts, and advanced options as of the current alpha on `main` (aligned with the latest APK linked below).
+
+License: [MIT](../LICENSE) (same as the repo; Settings → About links to the GitHub blob).
 
 ## First launch
 
@@ -19,29 +21,33 @@ Settings → About shows version + git commit for the APK you installed.
 
 - **Balance** — tap the amount to hide/show; tap **⇅** (when not in Fiat Mode) to cycle sats / fiat display units.
 - **Receive / Send** — primary actions under the balance.
-- **Wallet avatar** (top left) — open the wallet switcher (Arkade Personal / extras, Lightning wallets).
+- **Chat & Pay** — entry under Receive/Send (bubble + title + hint; unread badge when needed). Opens the Pay in Chat hub (Ask Cursor + human threads).
+- **Wallet avatar** (top left) — open the wallet switcher (Arkade Personal / extras, Lightning node wallets).
 - **FIAT MODE badge** — shown when Fiat Mode is on for the selected Arkade wallet.
 
 ### Receive
 
 - Opens classic Receive (QR / address modes).
 - In **Fiat Mode**, default emphasis is the stable unit (BRL via DePix on mainnet, USD/USDT on Mutinynet); Universal BIP21 and Arkade chips remain available.
-- **POS** is a side sheet (see [Shortcuts](#shortcuts--gestures)).
+- **POS** is a side sheet from Home (see [Shortcuts](#shortcuts--gestures)). On an Arkade wallet it builds an amounted BIP21 (may embed `lightning=` when a solver mints). On a **Lightning node** wallet it is a POS-like keypad → BOLT11 + optional memo.
+- Linked-node classic Receive also supports amount + optional memo → invoice (same LN stack as Home POS).
 
 ### Send
 
-- Destination actions: **Enter**, **Paste**, **My wallets** (when you have other Arkade wallets), **Scan**.
-- **+ Add recipient** for multisend (several `ark…` lines with amounts).
-- In Fiat Mode, amounts are in the stable unit; pays with the stable asset when possible (or converts as needed for sats destinations).
+- Destination actions: **Enter**, **Paste**, **My wallets** (when you have other Arkade wallets; hidden on Lightning node wallets), **Scan**.
+- **+ Add recipient** for Arkade multisend (several `ark…` lines with amounts). Lightning Send hides Add (single invoice / LNURL / address).
+- In Fiat Mode (Arkade), amounts are in the stable unit; pays with the stable asset when possible (or converts as needed for sats destinations).
+- **Lightning** destinations (BOLT11 / LNURL / Lightning Address / BIP353 where supported) work from Personal Arkade via the intents corridor, or from a linked node wallet via LNDhub / LND REST — same Confirm + biometrics pattern as Arkade Send.
 
 ### Activity
 
 - Bottom sheet from Home (see shortcuts). Tap a row for detail, notes, and related actions.
+- Lightning rows show **memo** (when known), **payment hash**, and **preimage** (copy actions); Arkade rows show txid / explorer.
 
 ### Pay in Chat
 
 - **Chat & Pay** on Home, or Settings → Nostr → Chat & Pay (or open a contact) → 1:1 thread over Nostr gift wraps.
-- Composer for text; **Request** / **Send** for payment cards in the thread (Arkade; classic Send stays for paste / QR / multisend).
+- Composer for text; **Request** / **Send** for payment cards in the thread (Arkade and Lightning BOLT11 for human contacts when the selected wallet / contact identifiers allow it). Classic Send stays for paste / QR / multisend.
 - Unread activity can surface as a Home banner; history is local (encrypted) and recoverable from Nostr when identity/relays allow.
 
 ### Ask Cursor
@@ -51,7 +57,16 @@ Optional AI helper in Chat & Pay (experimental). Needs a Nostr identity first.
 1. Settings → Nostr → **Nostr Identity** — create or import if you do not have one.
 2. Settings → Provider Settings → **Cursor** — paste your Cursor API key (from the Cursor Dashboard). Basic validates it and activates an on-device bot; shopping MCPs such as Bitrefill stay on your Cursor Cloud / Dashboard (never entered in Basic).
 3. Open **Chat & Pay** (Home or Settings → Nostr → Chat & Pay) → **Ask Cursor**.
-4. Chat with suggestion chips or free text. When the bot posts a pay card, **Confirm** + biometrics pays from your selected Arkade wallet. The bot thread has no Request/Send composer actions.
+4. Chat with suggestion chips or free text. When the bot posts a pay card, **Confirm** + biometrics pays from your selected wallet (Arkade corridor or linked Lightning node, as applicable). The bot thread has no Request/Send composer actions.
+
+**Session controls** (bot thread only):
+
+| Control | What it does |
+|---------|--------------|
+| **New session** (header) or type `/new` | Clears the local bot thread and stamps a session cut so old relay gift-wraps do not revive the prior chat |
+| Type `/stop` | Cancels in-flight Cursor Cloud work for this turn |
+
+Slash commands are exact (`/new`, `/stop`); the composer suggests them as you type `/`.
 
 Disable anytime from Settings → Provider Settings → Cursor. Only your identity npub can message the bot.
 
@@ -79,8 +94,9 @@ Translators and contributors adding a new locale: [`i18n-translators.md`](./i18n
 | Backup | Passkey status, Nostr package, home server (Advanced) |
 | Restore | Seed / nsec package / home server |
 | Pair with Bluetooth | Move this account to a nearby phone on the welcome screen (Advanced) |
+| Connect node / Add wallet | LNDhub or BTCPay LND REST (see [Lightning](#lightning)) |
 | Network / ASP | Mainnet, Mutinynet, optional custom ASP (Arkade settings) |
-| About | Version, commit, ASP info |
+| About | Version, commit, license link, ASP info |
 
 Long-press empty chrome on Home, or tap the rate footer when shown, also opens Settings.
 
@@ -96,13 +112,14 @@ These are easy to miss; they are part of the real Home / Send UX.
 |-------------------|--------------|
 | **Pull / drag the bottom handle up** (or tap the handle) | Open **Activity** sheet |
 | **Swipe down** from just below the logo | Force **balance + activity** resync (circular spinner while it runs) |
-| **Swipe left → right** (LTR) on Home | Open **POS** (point of sale / request) side page |
+| **Swipe left → right** (LTR) on Home | Open **POS** side page (Arkade: amounted BIP21 / optional `lightning=`; **Lightning node wallet**: keypad + optional memo → BOLT11) |
 | **Swipe right → left** (RTL) on Home | Open **Scan QR** side page |
+| **Chat & Pay** under Receive/Send | Open Pay in Chat hub |
 | **R$** button (header, Arkade wallet) | Enter Fiat Mode sheet |
 | **₿** button (header, while Fiat Mode on) | Exit Fiat Mode sheet |
 | Tap **balance** | Hide / show amounts |
 | **⇅** next to balance | Cycle balance unit (disabled while Fiat Mode is on) |
-| Tap **avatar** | Wallet switcher |
+| Tap **avatar** | Wallet switcher (Arkade + Lightning rows) |
 | Long-press empty header chrome | Settings |
 | Tap rate footer (when visible) | Settings |
 | Mutinynet / exit badges (header) | Explorer or Unilateral Exit hub |
@@ -115,24 +132,25 @@ While Activity, POS, or Scan is open, competing Home swipes are locked so sheets
 |---------|--------------|
 | **Enter** | Type / confirm a destination |
 | **Paste** | Clipboard → destination (Arkade / Lightning-shaped payloads where supported) |
-| **My wallets** | Pick another of your Arkade wallets as destination |
+| **My wallets** | Pick another of your Arkade wallets as destination (Arkade only) |
 | **Scan** | Camera QR → destination |
-| **+ Add recipient** | Another line for multisend |
-| **Max** | Fill amount from spendable balance |
+| **+ Add recipient** | Another line for Arkade multisend (hidden on Lightning) |
+| **Max** | Fill amount from spendable balance (when applicable) |
 | **Clear** | Remove the current destination |
 
 ### Receive / POS
 
 | Control | What it does |
 |---------|--------------|
-| POS side page (from Home swipe) | Keypad request flow; Fiat Mode can offer Fiat \| Bitcoin URI chips |
-| Classic Receive modes | BIP21 / Arkade / stable (when in Fiat Mode) |
+| POS side page (Home LTR swipe) | Keypad request flow. Arkade: Fiat Mode can offer Fiat \| Bitcoin URI chips; may embed `lightning=` on BIP21. Lightning node: optional memo → bolt11 QR |
+| Classic Receive | Arkade: BIP21 / Arkade / stable (Fiat Mode). Lightning node: amount + optional memo → invoice |
+| Edit amount (from QR phase) | Back to keypad (clears a pending LN invoice when applicable) |
 
 ---
 
 ## Fiat Mode
 
-Per **selected Arkade wallet** only.
+Per **selected Arkade wallet** only (not on Lightning node rows).
 
 - **Enter** — converts spendable sats to the network stable (mainnet DePix/BRL, Mutinynet USDT/USD) via Arkade asset swap. Biometrics may be required.
 - **Exit** — converts the stable back to sats.
@@ -182,7 +200,7 @@ Both phones need Bluetooth (and nearby-devices) permission. Stay within range un
 ### Backup and restore
 
 - **Passkey** — Personal seed + Nostr identity from PRF; rematerialize on a new device with the same passkey.
-- **Advanced Backup (Path C)** — passphrase-wrapped AEAD package (wallets, notes, contacts, Fiat/Maxi prefs) on Nostr relays and/or home server (WebDAV). Lose the passphrase → lose the package.
+- **Advanced Backup (Path C)** — passphrase-wrapped AEAD package (wallets, notes, contacts, Fiat/Maxi prefs) on Nostr relays and/or home server (WebDAV). Lose the passphrase → lose the package. Dirty flag clears only after a successful upload; after biometric unlock Basic can flush a pending upload and unlock+retry Nextcloud **423 Locked** once.
 - **Restore** — seed words, or nsec + backup passphrase (package), or home server download.
 - **Bluetooth pair** — nearby-phone fast login (see [above](#bluetooth-pair--fast-login)); complements restore when Device 1 is still unlocked.
 
@@ -200,9 +218,32 @@ Both phones need Bluetooth (and nearby-devices) permission. Stay within range un
 
 ### Lightning
 
-- **Arkade Personal (intents):** on a seed Arkade wallet, classic **Send** accepts BOLT11, LNURL, and Lightning Address (green/red validation + fee quote before Confirm). Confirm + biometrics required; no auto-pay. Pay in Chat / Ask Cursor invoices use the same corridor. **Receive** stays BIP21 / Arkade / Boarding — when a solver mints for the requested sats amount, the BOLT11 is embedded as `lightning=` on the unified URI (no separate Lightning receive chip).
-- **Connect a node** (BTCPay LND REST / LNDHub) from Add Wallet / Settings for node balance / LN flows (separate product surface).
-- Not Boltz. Not a full Lightning wallet product.
+Two surfaces (not Boltz; not a full channel-management wallet):
+
+#### Arkade Lightning (intents corridor)
+
+On a **Personal Arkade seed** wallet:
+
+- Classic **Send** accepts BOLT11, LNURL, and Lightning Address (green/red validation + fee quote before Confirm). Confirm + biometrics; no auto-pay.
+- Pay in Chat / Ask Cursor invoices can use the same corridor.
+- **Receive** stays BIP21 / Arkade / Boarding — when a solver mints for the requested sats amount, the BOLT11 is embedded as `lightning=` on the unified URI (no separate Lightning receive chip). Home POS / amounted Receive use the same embed path when minting succeeds.
+- HD wallet mode is required for claim secrets. Details: [`prototype/docs/arkade-ln.md`](../prototype/docs/arkade-ln.md).
+
+#### Linked Lightning node (LNDhub / LND REST)
+
+Optional switcher rows, separate from Arkade Personal. Open **Add wallet → Connect node** (or Settings → Connect node):
+
+| Provider | How to connect | Notes |
+|----------|----------------|-------|
+| **LNDhub** (LNbits) | Scan or paste `lndhub://admin:…@https://…/lndhub/ext/` (or invoice role) | Prefer **admin** for send + receive; invoice-only can receive |
+| **BTCPay LND REST** | BTCPay → Services → LND (REST); paste or scan the config | Macaroon + REST URL stay on device |
+
+Once connected and selected:
+
+- Home shows **node balance**; **Send** is invoice / LNURL / Lightning Address oriented (same Enter / Paste / Scan pattern as Arkade Send).
+- **Receive** and Home **POS** use a POS-like keypad with optional **memo**, then a BOLT11 QR; settle polling updates Activity.
+- **Activity** detail shows memo, payment hash, and preimage when the hub/node provides them.
+- No in-app channel management. NWC / manual macaroon rows are still “soon”.
 
 ### Escape hatches
 
@@ -227,8 +268,10 @@ Switching network can reset wallet engine state — backup first.
 
 ## Get the APK
 
-Latest: **[v0.8.1](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.8.1)** (arm64-v8a).
+Latest: **[v0.9.5](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.9.5)** (arm64-v8a).
 
 All releases: [theDavidCoen/BasicWallet/releases](https://github.com/theDavidCoen/BasicWallet/releases). Prefer arm64-v8a builds + verify SHA256 (and PGP on the checksum when present).
 
 Reproducible recipe: [`reproducible-builds.md`](./reproducible-builds.md).
+
+When bumping the “latest APK” link in the [README](../README.md) Download section, update this page to the same release tag in the same commit.

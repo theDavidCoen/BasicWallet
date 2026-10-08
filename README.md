@@ -25,6 +25,8 @@ Latest release: **[v0.9.5](https://github.com/theDavidCoen/BasicWallet/releases/
 
 All builds: [Releases](https://github.com/theDavidCoen/BasicWallet/releases). Prefer verifying the checksum before install.
 
+When you bump this latest APK link, update [`docs/how-to-use.md`](./docs/how-to-use.md) (Get the APK + product sections) in the same commit.
+
 ## What is Basic?
 
 Basic (`app.basic.wallet`) is an experimental mobile wallet built with **Expo / React Native**, focused on:
@@ -74,7 +76,7 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 
 Expect bugs, incomplete screens, and breaking changes between `0.x` alphas.
 
-Gestures (Activity pull, Home pull-down resync, POS/Scan swipes, Send Enter/Paste/My wallets/Scan, Fiat Mode icon): [`docs/how-to-use.md`](./docs/how-to-use.md#shortcuts--gestures). Bluetooth pair / fast login: [`docs/how-to-use.md`](./docs/how-to-use.md#bluetooth-pair--fast-login).
+Gestures (Activity pull, Home pull-down resync, POS including Lightning POS / Scan swipes, Chat & Pay entry, Send Enter/Paste/My wallets/Scan, Fiat Mode icon): [`docs/how-to-use.md`](./docs/how-to-use.md#shortcuts--gestures). Bluetooth pair / fast login: [`docs/how-to-use.md`](./docs/how-to-use.md#bluetooth-pair--fast-login). Lightning node + Arkade LN corridor: [`docs/how-to-use.md`](./docs/how-to-use.md#lightning).
 
 ## Lightning node (LNDhub / LND REST)
 
@@ -132,6 +134,8 @@ Specs that drive this list: [`prototype/docs/ux-ui-spec.md`](./prototype/docs/ux
 Issues and thoughtful review are welcome. Prefer concrete findings (file + risk) over generic “looks fine.”
 
 To add or improve UI translations (folder layout, namespaces, System default, PR tips): [`docs/i18n-translators.md`](./docs/i18n-translators.md).
+
+Release hygiene: keep **README Download** and **`docs/how-to-use.md`** on the same latest APK tag (and refresh how-to sections when gestures / Lightning / Chat & Pay change).
 
 If you only want a production-ready Arkade experience, use the official [arkade.money](https://arkade.money) wallet instead of Basic.
 
