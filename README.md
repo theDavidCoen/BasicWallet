@@ -21,7 +21,7 @@ Use at your own risk. There is no warranty.
 
 ## Download
 
-Latest release: **[v0.9.3](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.9.3)** (arm64-v8a APK + SHA256).
+Latest release: **[v0.9.4](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.9.4)** (arm64-v8a APK + SHA256).
 
 All builds: [Releases](https://github.com/theDavidCoen/BasicWallet/releases). Prefer verifying the checksum before install.
 
@@ -64,7 +64,7 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 - Export recovery phrase only after presence checks (screen capture blocked where wired)
 - **Continue with passkey** (WebAuthn / Credential Manager PRF → Personal seed + Nostr identity)
 - **Pair with Bluetooth** — move wallets / nsec to a nearby phone on the welcome screen (lobby code + biometrics; passkeys stay on Device 1)
-- **Manage a Nostr identity** (kind 0 profile broadcast from Identity); Advanced Backup (Nostr relays and/or home server), including Fiat/Maxi prefs in the Path C package
+- **Manage a Nostr identity** (kind 0 profile broadcast from Identity); Advanced Backup (Nostr relays and/or home server), including Fiat/Maxi prefs in the Path C package; Path C / Nextcloud dirty flush resumes when app lock is off
 - Maintain **contacts** (npub, NIP-05, BIP-353, etc.) and share a contact over Nostr
 - **Pay in Chat** — Home **Chat & Pay** hub; 1:1 Nostr threads with text plus send/request (Arkade + Lightning BOLT11 for human contacts); classic Send stays separate
 - **Ask Cursor** — paste a Cursor API key in Settings → Provider Settings → Cursor; then use **Ask Cursor** in Chat & Pay (owner-only bot; shopping MCPs stay on your Cursor Dashboard). **New session** / `/new` clears the bot thread without relay revive; `/stop` cancels in-flight work
