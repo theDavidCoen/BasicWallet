@@ -1238,7 +1238,9 @@ export function SendScreen() {
           swapId: paid.swapId,
           invoiceSats: paid.invoiceSats,
           feeSats: paid.feeSats,
-          paymentHash: facts.paymentHash,
+          paymentHash: paid.paymentHash || facts.paymentHash,
+          memo: paid.memo || facts.description || lnProbe?.description,
+          preimage: paid.preimage,
         });
         bumpActivity();
         setLines([newSendLine()]);

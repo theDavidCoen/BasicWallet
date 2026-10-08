@@ -60,6 +60,8 @@ export type ArkTxRow = {
   arkTxid: string;
   /** Lightning payment preimage (hex), when known from payinvoice / history. */
   preimage?: string;
+  /** Invoice memo / BOLT11 description, when known. */
+  memo?: string;
   /** Lightning routing fee in sats, when known. */
   feeSats?: number;
   /**

@@ -171,6 +171,13 @@ function isLocalExitActivityId(activityId: string): boolean {
   return activityId.startsWith("exit:");
 }
 
+/** Arkade→LN corridor pays — not in SDK getTransactionHistory. */
+function isArkadeLnCorridorActivityId(activityId: string): boolean {
+  return (
+    activityId.startsWith("ark-ln-out-") || activityId.startsWith("ark-ln-in-")
+  );
+}
+
 function isLocalPendingSendId(activityId: string): boolean {
   return activityId.startsWith("pending:") || activityId.startsWith("local-send:");
 }
@@ -606,6 +613,56 @@ function readLocalPendingReceiveRows(
   }
 }
 
+function mapLocalActivityRows(
+  rows: {
+    activity_id: string;
+    amount_sats: number;
+    created_at: number;
+    settled: number;
+    title: string;
+    subtitle: string | null;
+    tags_json: string | null;
+    txs_json: string | null;
+    status: string | null;
+  }[],
+  defaultTitle: string,
+  ensureTag?: string,
+): ActivityRow[] {
+  return rows.map((r) => {
+    let tags: string[] = ensureTag ? [ensureTag] : [];
+    let txs: ActivityRow["txs"] = [];
+    try {
+      tags = r.tags_json
+        ? (JSON.parse(r.tags_json) as string[])
+        : ensureTag
+          ? [ensureTag]
+          : [];
+    } catch {
+      tags = ensureTag ? [ensureTag] : [];
+    }
+    if (ensureTag && !tags.includes(ensureTag)) tags = [...tags, ensureTag];
+    try {
+      txs = r.txs_json ? (JSON.parse(r.txs_json) as ActivityRow["txs"]) : [];
+    } catch {
+      txs = [];
+    }
+    const base = {
+      id: r.activity_id,
+      title: r.title || defaultTitle,
+      subtitle: r.subtitle ?? "",
+      amount: r.amount_sats,
+      settled: r.settled === 1,
+      createdAt: r.created_at,
+      tags,
+      txs,
+    };
+    return {
+      ...base,
+      status: (r.status as ActivityStatus) || deriveActivityStatus(base),
+    };
+  });
+}
+
 /** Snapshot local unilateral-exit rows so SDK rematerialize does not wipe them. */
 function readLocalExitRows(
   networkId: ArkadeNetworkId,
@@ -628,34 +685,39 @@ function readLocalExitRows(
        FROM activity_idx WHERE wallet_id = ? AND activity_id LIKE 'exit:%'`,
       [walletId],
     );
-    return rows.map((r) => {
-      let tags: string[] = ["exit"];
-      let txs: ActivityRow["txs"] = [];
-      try {
-        tags = r.tags_json ? (JSON.parse(r.tags_json) as string[]) : ["exit"];
-      } catch {
-        tags = ["exit"];
-      }
-      try {
-        txs = r.txs_json ? (JSON.parse(r.txs_json) as ActivityRow["txs"]) : [];
-      } catch {
-        txs = [];
-      }
-      const base = {
-        id: r.activity_id,
-        title: r.title || "Unilateral exit",
-        subtitle: r.subtitle ?? "",
-        amount: r.amount_sats,
-        settled: r.settled === 1,
-        createdAt: r.created_at,
-        tags: tags.includes("exit") ? tags : [...tags, "exit"],
-        txs,
-      };
-      return {
-        ...base,
-        status: (r.status as ActivityStatus) || deriveActivityStatus(base),
-      };
-    });
+    return mapLocalActivityRows(rows, "Unilateral exit", "exit");
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Snapshot Arkade LN corridor rows so SDK rematerialize does not wipe them.
+ * Corridor pays never appear in getTransactionHistory.
+ */
+function readLocalArkadeLnCorridorRows(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+): ActivityRow[] {
+  const db = getAccountDb(networkId);
+  try {
+    const rows = db.getAllSync<{
+      activity_id: string;
+      amount_sats: number;
+      created_at: number;
+      settled: number;
+      title: string;
+      subtitle: string | null;
+      tags_json: string | null;
+      txs_json: string | null;
+      status: string | null;
+    }>(
+      `SELECT activity_id, amount_sats, created_at, settled, title, subtitle, tags_json, txs_json, status
+       FROM activity_idx WHERE wallet_id = ?
+         AND (activity_id LIKE 'ark-ln-out-%' OR activity_id LIKE 'ark-ln-in-%')`,
+      [walletId],
+    );
+    return mapLocalActivityRows(rows, "Lightning sent", "lightning");
   } catch {
     return [];
   }
@@ -722,6 +784,7 @@ export function replaceActivityRows(
 
   const preserved = new Map<string, number>();
   const localExits = readLocalExitRows(networkId, walletId);
+  const localArkadeLn = readLocalArkadeLnCorridorRows(networkId, walletId);
   const localPending = readLocalPendingSendRows(networkId, walletId);
   try {
     const prev = db.getAllSync<{ activity_id: string; created_at: number }>(
@@ -738,9 +801,23 @@ export function replaceActivityRows(
   const withoutDupLocals = withDestinations(
     networkId,
     walletId,
-    rows.filter((r) => !isLocalExitActivityId(r.id) && !isLocalOptimisticId(r.id)),
+    rows.filter(
+      (r) =>
+        !isLocalExitActivityId(r.id) &&
+        !isLocalOptimisticId(r.id) &&
+        !isArkadeLnCorridorActivityId(r.id),
+    ),
     harvestDestinationIndex(networkId, walletId),
   );
+
+  const reupsertLocals = () => {
+    if (localExits.length > 0) {
+      upsertActivityRows(networkId, walletId, localExits, preserved);
+    }
+    if (localArkadeLn.length > 0) {
+      upsertActivityRows(networkId, walletId, localArkadeLn, preserved);
+    }
+  };
 
   // Partial SDK history must not wipe older local rows (seen: 1 receive → empty list).
   if (existingCount > 0 && withoutDupLocals.length > 0 && withoutDupLocals.length < existingCount) {
@@ -749,9 +826,7 @@ export function replaceActivityRows(
       existing: existingCount,
     });
     upsertActivityRows(networkId, walletId, withoutDupLocals, preserved);
-    if (localExits.length > 0) {
-      upsertActivityRows(networkId, walletId, localExits, preserved);
-    }
+    reupsertLocals();
     const receiveMerge = {
       historySucceeded: withoutDupLocals.length > 0,
       historyFetchStartedAt: opts?.historyFetchStartedAt,
@@ -782,9 +857,7 @@ export function replaceActivityRows(
     /* FTS optional */
   }
   upsertActivityRows(networkId, walletId, withoutDupLocals, preserved);
-  if (localExits.length > 0) {
-    upsertActivityRows(networkId, walletId, localExits, preserved);
-  }
+  reupsertLocals();
   // Drop pending:* once SDK history includes the same ark txid or matching amount.
   const pendingToKeep = localPending.filter((p) => {
     const abs = Math.abs(p.amount);

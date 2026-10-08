@@ -13,6 +13,7 @@ import {
   parseBolt11AmountSats,
   type LightningPaymentInput,
 } from "./lndhub";
+import { bolt11DescriptionMemo } from "./arkadeLnInvoice";
 
 /** Matches SendPaymentV2 `timeout_seconds` in the request body. */
 export const LND_SEND_TIMEOUT_SECONDS = 60;
@@ -544,13 +545,17 @@ function mapOutgoingPayment(p: RawPayment): LightningPaymentInput | null {
     Math.floor(amountSats(p.fee_msat) / 1000) ||
     undefined;
   const preimage = hashToHex(p.payment_preimage) || undefined;
+  const memo =
+    typeof p.payment_request === "string"
+      ? bolt11DescriptionMemo(p.payment_request)
+      : undefined;
   return {
     id: `ln-out-${paymentHash}`,
     amountSats: amount,
     direction: "out",
     createdAt: unixMs(p.creation_date ?? p.creation_time_ns),
     settled: true,
-    memo: typeof p.payment_request === "string" ? undefined : undefined,
+    ...(memo ? { memo } : {}),
     paymentHash,
     preimage: preimage && !/^0+$/.test(preimage) ? preimage : undefined,
     feeSats: feeSats && feeSats > 0 ? feeSats : undefined,

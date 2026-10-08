@@ -13,6 +13,7 @@ import {
   createSwapClient,
   DiscoverySnapshotUnavailable,
   isSwapError,
+  quoteIdOfSwapId,
   type SwapClient,
 } from "@arkade-os/swap";
 import type { ArkadeNetworkId } from "../config/network";
@@ -28,13 +29,11 @@ import {
   withArkadeLnClaimWallet,
 } from "./arkadeLnClaimWallet";
 
-const FUNDED_OUTCOMES = new Set([
-  "funded",
-  "paying",
-  "paid",
-  "filled",
-  "claimed",
-]);
+/** Lockup accepted — spend is in flight; LN may still be paying. */
+const LOCKUP_OUTCOMES = new Set(["funded", "paying"]);
+/** LN corridor fully settled (preimage usually stamped here). */
+const SETTLED_OUTCOMES = new Set(["paid", "filled", "claimed"]);
+const FUNDED_OUTCOMES = new Set([...LOCKUP_OUTCOMES, ...SETTLED_OUTCOMES]);
 const FAILED_OUTCOMES = new Set([
   "cancelled",
   "refunded",
@@ -45,6 +44,8 @@ const FAILED_OUTCOMES = new Set([
 ]);
 
 const FUND_WAIT_MS = 90_000;
+/** Extra wait after lockup for solver LN settle + settlementPreimageHex. */
+const PREIMAGE_GRACE_MS = 45_000;
 const MAINNET_EMULATOR_PUBKEY =
   "0239c196415da47b26456a101daaa12ba9e445bfe153197f1e2b750bf40e52092e";
 
@@ -226,7 +227,50 @@ export type ArkadeLnPayResult = {
   fundSats: number;
   feeSats: number;
   outcome: string;
+  paymentHash: string;
+  /** BOLT11 description / memo when the invoice carried one. */
+  memo?: string;
+  /** LN payment preimage (hex) when the solver revealed it. */
+  preimage?: string;
 };
+
+function asPreimageHex(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const hex = raw.trim().toLowerCase();
+  return /^[0-9a-f]{64}$/.test(hex) ? hex : undefined;
+}
+
+async function readSettlementPreimageHex(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+  swapId: string,
+): Promise<string | undefined> {
+  try {
+    const repo = getAssetSwapRepository(networkId, walletId);
+    let quoteId = swapId;
+    try {
+      quoteId = quoteIdOfSwapId(swapId);
+    } catch {
+      /* keep swapId */
+    }
+    // Client looks up swap records by quote id (without `rfq:` prefix).
+    for (const id of [quoteId, swapId]) {
+      const rec = await repo.getSwapRecord(id);
+      const fromRec = asPreimageHex(
+        rec && "settlementPreimageHex" in rec
+          ? (rec as { settlementPreimageHex?: string }).settlementPreimageHex
+          : undefined,
+      );
+      if (fromRec) return fromRec;
+      const rfq = await repo.getRfqSwap(id);
+      const fromRfq = asPreimageHex(rfq?.settlementPreimageHex);
+      if (fromRfq) return fromRfq;
+    }
+  } catch (e) {
+    console.warn("[basic] arkade ln settlement preimage lookup failed", e);
+  }
+  return undefined;
+}
 
 export async function payArkadeLightning(opts: {
   wallet: IWallet;
@@ -259,23 +303,23 @@ export async function payArkadeLightning(opts: {
   const invoiceSats = take > 0 ? take : facts.amountSats;
   const feeSats = fee > 0 ? fee : Math.max(0, fundSats - invoiceSats);
 
-  let settled = false;
+  let lockupDone = false;
   let finalOutcome = "open";
   const unsub = client.onUpdate(({ swap: s, outcome }) => {
     if (s.id !== swapId) return;
     const o = String(outcome);
     if (FUNDED_OUTCOMES.has(o)) {
-      settled = true;
+      lockupDone = true;
       finalOutcome = o;
     } else if (FAILED_OUTCOMES.has(o)) {
-      settled = true;
+      lockupDone = true;
       finalOutcome = o;
     }
   });
 
   try {
     const started = Date.now();
-    while (!settled) {
+    while (!lockupDone) {
       if (opts.signal?.aborted) {
         try {
           await client.cancel(swapId);
@@ -289,21 +333,53 @@ export async function payArkadeLightning(opts: {
       }
       await sleep(400, opts.signal);
     }
+
+    if (!FUNDED_OUTCOMES.has(finalOutcome)) {
+      throw new Error(`Lightning payment failed (${finalOutcome}).`);
+    }
+
+    // Prefer waiting through LN settle so settlementPreimageHex is stamped.
+    const graceDeadline = Date.now() + PREIMAGE_GRACE_MS;
+    let preimage = await readSettlementPreimageHex(
+      opts.networkId,
+      opts.walletId,
+      swapId,
+    );
+    while (
+      !SETTLED_OUTCOMES.has(finalOutcome) &&
+      !preimage &&
+      Date.now() < graceDeadline
+    ) {
+      if (opts.signal?.aborted) break;
+      if (FAILED_OUTCOMES.has(finalOutcome)) break;
+      await sleep(400, opts.signal);
+      preimage = await readSettlementPreimageHex(
+        opts.networkId,
+        opts.walletId,
+        swapId,
+      );
+    }
+    if (!preimage) {
+      preimage = await readSettlementPreimageHex(
+        opts.networkId,
+        opts.walletId,
+        swapId,
+      );
+    }
+
+    return {
+      swapId,
+      invoiceSats,
+      fundSats,
+      feeSats,
+      outcome: finalOutcome,
+      paymentHash: facts.paymentHash,
+      ...(facts.description ? { memo: facts.description } : {}),
+      ...(preimage ? { preimage } : {}),
+    };
   } finally {
     unsub();
   }
-
-  if (!FUNDED_OUTCOMES.has(finalOutcome)) {
-    throw new Error(`Lightning payment failed (${finalOutcome}).`);
-  }
-
-  return {
-    swapId,
-    invoiceSats,
-    fundSats,
-    feeSats,
-    outcome: finalOutcome,
-  };
 }
 
 export type ArkadeLnReceiveProbe = {

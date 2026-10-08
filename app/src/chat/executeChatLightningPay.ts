@@ -149,6 +149,9 @@ export async function executeChatLightningPay(opts: {
         swapId: paid.swapId,
         invoiceSats: paid.invoiceSats || amount,
         feeSats: paid.feeSats,
+        paymentHash: paid.paymentHash,
+        memo: opts.memo?.trim() || paid.memo,
+        preimage: paid.preimage,
       });
     }
 

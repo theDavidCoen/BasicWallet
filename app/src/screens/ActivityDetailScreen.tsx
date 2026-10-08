@@ -477,6 +477,7 @@ export function ActivityDetailView({
         ark: "",
         any: "",
         preimage: "",
+        memo: "",
         feeSats: null as number | null,
         deliveredSats: null as number | null,
         explorerKind: "boarding" as "boarding" | "commitment" | "ark",
@@ -496,6 +497,15 @@ export function ActivityDetailView({
             ? "ark"
             : "boarding";
     const preimage = row.txs.map((t) => t.preimage).find(Boolean) || "";
+    const memoFromTx = row.txs.map((t) => t.memo?.trim()).find(Boolean) || "";
+    const titleMaybeMemo =
+      row.title &&
+      row.title !== "Lightning sent" &&
+      row.title !== "Lightning received" &&
+      row.title !== "Lightning payment"
+        ? row.title.trim()
+        : "";
+    const memo = memoFromTx || titleMaybeMemo || "";
     const feeHit = row.txs.find((t) => typeof t.feeSats === "number");
     const feeSats =
       feeHit && typeof feeHit.feeSats === "number" ? feeHit.feeSats : null;
@@ -510,6 +520,7 @@ export function ActivityDetailView({
       ark,
       any,
       preimage,
+      memo,
       feeSats,
       deliveredSats,
       explorerKind,
@@ -802,6 +813,14 @@ export function ActivityDetailView({
 
           {isLn ? (
             <>
+              {primaryIds.memo ? (
+                <DetailRow
+                  label="Memo"
+                  value={primaryIds.memo}
+                  copyValue={primaryIds.memo}
+                  onCopy={(l, t) => void copyText(l, t)}
+                />
+              ) : null}
               <DetailRow
                 label="Payment hash"
                 value={midEllipsis(primaryIds.any, 10, 8)}
