@@ -12,6 +12,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -23,6 +24,7 @@ import {
   fiatStableForNetwork,
   formatBrlDisplay,
 } from "../fiat/depixAssets";
+import { useI18n } from "../i18n";
 import {
   fetchSpotRates,
   readDisplayCurrencies,
@@ -111,6 +113,11 @@ export function ReceivePosPanel({
   chatRequestBusy = false,
   maxSpendableSats = null,
   maxFiatDisplay = null,
+  lightningMode = false,
+  memo = "",
+  onMemoChange,
+  onEditAmount: onEditAmountExternal,
+  receiveHint,
 }: {
   /** Base BIP21 (boarding + ark) without amount — used when enabling Request. */
   bip21Uri: string | null;
@@ -147,13 +154,26 @@ export function ReceivePosPanel({
   maxSpendableSats?: number | null;
   /** Chat Send: max stable display units when Fiat Mode is on. */
   maxFiatDisplay?: number | null;
+  /**
+   * Pure Lightning wallet receive: POS keypad → bolt11 invoice (no BIP21).
+   * Optional memo field; Request does not require bip21Uri.
+   */
+  lightningMode?: boolean;
+  /** Lightning-only optional invoice memo (controlled). */
+  memo?: string;
+  onMemoChange?: (memo: string) => void;
+  /** Fired when returning from QR phase to keypad (e.g. clear LN invoice). */
+  onEditAmount?: () => void;
+  /** Extra caption under QR (e.g. Lightning waiting / paid). */
+  receiveHint?: string | null;
 }) {
+  const { t } = useI18n();
   const insets = useSafeAreaInsets();
   const networkId = getNetworkConfig().id;
   const stable = fiatStableForNetwork(networkId);
   const stableCode = stable.displayCode;
 
-  const [unit, setUnit] = useState<Unit>("fiat");
+  const [unit, setUnit] = useState<Unit>(lightningMode ? "sats" : "fiat");
   const [fiatRequestKind, setFiatRequestKind] = useState<FiatRequestKind>("fiat");
   const [digits, setDigits] = useState(""); // fiat: minor units; sats: sats
   const [phase, setPhase] = useState<Phase>("keypad");
@@ -173,7 +193,8 @@ export function ReceivePosPanel({
     setCopied(false);
     setRequestBusy(false);
     setFiatRequestKind("fiat");
-  }, [active]);
+    if (lightningMode) setUnit("sats");
+  }, [active, lightningMode]);
 
   useEffect(() => {
     if (fiatMode) {
@@ -404,7 +425,8 @@ export function ReceivePosPanel({
     setPhase("keypad");
     setRequestUri(null);
     setCopied(false);
-  }, []);
+    onEditAmountExternal?.();
+  }, [onEditAmountExternal]);
 
   const onCopyUri = useCallback(async () => {
     if (!requestUri) return;
@@ -418,13 +440,15 @@ export function ReceivePosPanel({
 
   const canRequest = isChatAmount
     ? amountSats > 0 && amountSats <= MAX_POS_SATS && !chatRequestBusy
-    : fiatMode
-      ? ((fiatDisplay ?? 0) > 0 || (unit === "fiat" && raw > 0)) &&
-        !requestBusy &&
-        (fiatRequestKind === "fiat"
-          ? Boolean(onRequestBrlUri)
-          : Boolean(bip21Uri) && (amountSats > 0 || rate != null))
-      : amountSats > 0 && amountSats <= MAX_POS_SATS && Boolean(bip21Uri) && !requestBusy;
+    : lightningMode
+      ? amountSats > 0 && amountSats <= MAX_POS_SATS && !requestBusy
+      : fiatMode
+        ? ((fiatDisplay ?? 0) > 0 || (unit === "fiat" && raw > 0)) &&
+          !requestBusy &&
+          (fiatRequestKind === "fiat"
+            ? Boolean(onRequestBrlUri)
+            : Boolean(bip21Uri) && (amountSats > 0 || rate != null))
+        : amountSats > 0 && amountSats <= MAX_POS_SATS && Boolean(bip21Uri) && !requestBusy;
 
   if (!isChatAmount && phase === "receive" && requestUri) {
     return (
@@ -439,19 +463,25 @@ export function ReceivePosPanel({
           contentContainerStyle={styles.receiveScroll}
           showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.title}>RECEIVE</Text>
+          <Text style={styles.title}>{t("receive.title")}</Text>
           <Text style={styles.requestAmt}>{requestAmountLabel}</Text>
+          {memo.trim() && lightningMode ? (
+            <Text style={styles.memoShown} numberOfLines={2}>
+              {memo.trim()}
+            </Text>
+          ) : null}
           <View style={styles.qrWrap}>
             <ExpandableQrCode value={requestUri} size={220} />
           </View>
+          {receiveHint ? <Text style={styles.receiveHint}>{receiveHint}</Text> : null}
           <Pressable onPress={() => void onCopyUri()} style={styles.uriBox}>
             <Text style={styles.uriText} selectable>
               {requestUri}
             </Text>
-            <Text style={styles.copyHint}>{copied ? "Copied" : "Tap to copy"}</Text>
+            <Text style={styles.copyHint}>{copied ? t("common.copied") : t("common.tapToCopy")}</Text>
           </Pressable>
           <Pressable style={styles.secondary} onPress={onEditAmount}>
-            <Text style={styles.secondaryText}>Edit amount</Text>
+            <Text style={styles.secondaryText}>{t("receive.editAmount")}</Text>
           </Pressable>
         </ScrollView>
       </View>
@@ -467,13 +497,16 @@ export function ReceivePosPanel({
       </View>
 
       <Text style={styles.title}>
-        {isChatRequest ? "REQUEST" : isChatSend ? "SEND" : "RECEIVE"}
+        {isChatRequest ? "REQUEST" : isChatSend ? "SEND" : t("receive.title")}
       </Text>
       {isChatRequest && contactLabel ? (
         <Text style={styles.chatSub}>Ask {contactLabel} via encrypted Nostr</Text>
       ) : null}
       {isChatSend && contactLabel ? (
         <Text style={styles.chatSub}>To {contactLabel} · destination locked</Text>
+      ) : null}
+      {lightningMode ? (
+        <Text style={styles.chatSub}>{t("receive.lightningPosCaption")}</Text>
       ) : null}
       {fiatMode && !isChatAmount ? (
         <View style={styles.modeRow}>
@@ -529,7 +562,7 @@ export function ReceivePosPanel({
         >
           {primaryValue || "0"}
         </Text>
-        {!fiatMode ? (
+        {!fiatMode && !lightningMode ? (
           <Pressable
             onPress={toggleUnit}
             style={styles.swapBtn}
@@ -582,6 +615,22 @@ export function ReceivePosPanel({
         ))}
       </View>
 
+      {lightningMode && onMemoChange ? (
+        <View style={styles.memoBlock}>
+          <Text style={styles.memoLabel}>{t("receive.memoOptional")}</Text>
+          <TextInput
+            value={memo}
+            onChangeText={onMemoChange}
+            placeholder="Basic"
+            placeholderTextColor={colors.hint}
+            style={styles.memoInput}
+            autoCapitalize="sentences"
+            autoCorrect
+            maxLength={120}
+          />
+        </View>
+      ) : null}
+
       <Pressable
         style={[styles.cta, (!canRequest || chatRequestBusy || requestBusy) && styles.ctaDisabled]}
         disabled={!canRequest || chatRequestBusy || requestBusy}
@@ -593,6 +642,8 @@ export function ReceivePosPanel({
           <Text style={styles.ctaText}>Send request</Text>
         ) : isChatSend ? (
           <Text style={styles.ctaText}>Confirm</Text>
+        ) : lightningMode ? (
+          <Text style={styles.ctaText}>{t("receive.createInvoice")}</Text>
         ) : !fiatMode && !bip21Uri ? (
           <View style={styles.ctaBusy}>
             <ActivityIndicator color="#000" />
@@ -826,5 +877,42 @@ const styles = StyleSheet.create({
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 15,
     color: colors.fg,
+  },
+  memoBlock: {
+    marginTop: 14,
+    marginBottom: -4,
+  },
+  memoLabel: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.caption,
+    marginBottom: 6,
+  },
+  memoInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 14,
+    color: colors.fg,
+    backgroundColor: "#141414",
+  },
+  memoShown: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 13,
+    color: colors.caption,
+    textAlign: "center",
+    marginTop: -8,
+    marginBottom: 16,
+    paddingHorizontal: 8,
+  },
+  receiveHint: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 13,
+    color: colors.caption,
+    textAlign: "center",
+    marginBottom: 12,
   },
 });
