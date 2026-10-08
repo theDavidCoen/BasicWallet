@@ -22,6 +22,9 @@ import { lndListHistory } from "../lightning/lndRest";
 
 export type { LightningPaymentInput };
 
+/** How long a local LN upsert can outlive a lagging history sync. */
+const LOCAL_LN_KEEP_MS = 2 * 60 * 60 * 1000;
+
 function uniqueLightningLabel(networkId: ArkadeNetworkId, base: string): string {
   const wanted = base.trim() || "Lightning";
   const taken = new Set(
@@ -59,9 +62,11 @@ export function ensureLightningWalletRow(
 
 function paymentToRow(p: LightningPaymentInput): ActivityRow {
   const amount = p.direction === "in" ? Math.abs(p.amountSats) : -Math.abs(p.amountSats);
+  const memo = p.memo?.trim() || undefined;
   const base = {
     id: p.id,
-    title: p.memo?.trim() || (p.direction === "in" ? "Lightning received" : "Lightning sent"),
+    // Keep a stable type title; memo lives on the tx for Activity detail.
+    title: p.direction === "in" ? "Lightning received" : "Lightning sent",
     subtitle: p.paymentHash ? p.paymentHash.slice(0, 16) : "lightning",
     amount,
     settled: p.settled,
@@ -79,10 +84,26 @@ function paymentToRow(p: LightningPaymentInput): ActivityRow {
         arkTxid: p.paymentHash || p.id,
         preimage: p.preimage || undefined,
         feeSats: p.feeSats,
+        ...(memo ? { memo } : {}),
       },
     ],
   };
   return { ...base, status: deriveActivityStatus(base) };
+}
+
+function memoFromRow(row: ActivityRow): string | undefined {
+  const fromTx = row.txs.map((t) => t.memo?.trim()).find(Boolean);
+  if (fromTx) return fromTx;
+  const title = row.title?.trim();
+  if (
+    title &&
+    title !== "Lightning sent" &&
+    title !== "Lightning received" &&
+    title !== "Lightning payment"
+  ) {
+    return title;
+  }
+  return undefined;
 }
 
 /** Upsert settled (or just-paid) Lightning rows — do not write unpaid invoices. */
@@ -124,18 +145,39 @@ export async function syncLightningHistory(
     if (!prev || p.createdAt >= prev.createdAt) byHash.set(key, p);
   }
 
-  // Keep preimage / fee from a local pay if hub history omits them.
+  // Keep preimage / fee / memo from a local pay if hub history omits them.
+  // Also re-attach recent local-only rows when history lags (inbound settle race).
   const local = readActivityFromDb(networkId, { walletId, limit: 200 });
+  const now = Date.now();
   for (const row of local) {
+    if (!row.tags.includes("lightning") && !row.tags.includes("ln")) continue;
+    if (!row.id.startsWith("ln-in-") && !row.id.startsWith("ln-out-")) continue;
     const tx = row.txs[0];
-    if (!tx?.preimage && tx?.feeSats == null) continue;
-    const key = (tx.arkTxid || row.id.replace(/^ln-(in|out)-/, "")).toLowerCase();
+    const key = (tx?.arkTxid || row.id.replace(/^ln-(in|out)-/, "")).toLowerCase();
     const hit = byHash.get(key) ?? byHash.get(row.id.toLowerCase());
-    if (!hit) continue;
+    const localMemo = memoFromRow(row);
+    if (hit) {
+      byHash.set(key, {
+        ...hit,
+        preimage: hit.preimage || tx?.preimage,
+        feeSats: hit.feeSats ?? tx?.feeSats,
+        memo: hit.memo?.trim() || localMemo || hit.memo,
+      });
+      continue;
+    }
+    // History omitted this payment (stale window / reversed lag). Keep recent locals.
+    if (now - row.createdAt > LOCAL_LN_KEEP_MS) continue;
+    const direction = row.amount >= 0 ? "in" : "out";
     byHash.set(key, {
-      ...hit,
-      preimage: hit.preimage || tx.preimage,
-      feeSats: hit.feeSats ?? tx.feeSats,
+      id: row.id,
+      amountSats: Math.abs(row.amount),
+      direction,
+      createdAt: row.createdAt,
+      settled: row.settled,
+      memo: localMemo,
+      paymentHash: key,
+      preimage: tx?.preimage,
+      feeSats: tx?.feeSats,
     });
   }
 

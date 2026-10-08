@@ -32,6 +32,8 @@ export type ArkadeLnInvoiceFacts = {
   expiresAt: number;
   /** BOLT11 coin network: bc | tbs | tb | bcrt */
   coinNetwork: string;
+  /** BOLT11 description tag (invoice memo), when present. */
+  description?: string;
 };
 
 /** Signet and mutinynet share Lightning HRP `tbs` (official wallet bolt11.ts). */
@@ -114,6 +116,7 @@ export function toArkadeLnInvoiceFacts(
   const tagged = words.slice(TS_WORDS, words.length - SIG_WORDS);
   let expiry = DEFAULT_EXPIRY_SEC;
   let paymentHash = "";
+  let description = "";
   let i = 0;
   while (i + 3 <= tagged.length) {
     const type = tagged[i]!;
@@ -130,6 +133,14 @@ export function toArkadeLnInvoiceFacts(
       }
     } else if (type === 6 && data.length > 0) {
       expiry = wordsToUint(data);
+    } else if (type === 13 && data.length > 0 && !description) {
+      // BOLT11 `d` (description) — 5-bit words → UTF-8 bytes.
+      try {
+        const bytes = bech32.fromWords(data);
+        description = new TextDecoder().decode(bytes).trim().slice(0, 280);
+      } catch {
+        description = "";
+      }
     }
   }
 
@@ -149,7 +160,51 @@ export function toArkadeLnInvoiceFacts(
     throw new LnInvoiceRejected("no_payment_hash", "invoice carries no payment hash");
   }
 
-  return { raw, amountSats, paymentHash, timestamp, expiresAt, coinNetwork };
+  return {
+    raw,
+    amountSats,
+    paymentHash,
+    timestamp,
+    expiresAt,
+    coinNetwork,
+    ...(description ? { description } : {}),
+  };
+}
+
+/**
+ * Best-effort BOLT11 description (memo) without network / expiry / amount gates.
+ * Used when mapping LND history payment_request → Activity memo.
+ */
+export function bolt11DescriptionMemo(invoice: string): string | undefined {
+  const raw = normalizeBolt11(invoice);
+  if (!looksLikeBolt11(raw)) return undefined;
+  try {
+    const decoded = bech32.decode(raw.toLowerCase() as `${string}1${string}`, 2500);
+    const words = decoded.words as number[];
+    if (words.length < TS_WORDS + SIG_WORDS) return undefined;
+    const tagged = words.slice(TS_WORDS, words.length - SIG_WORDS);
+    let i = 0;
+    while (i + 3 <= tagged.length) {
+      const type = tagged[i]!;
+      const dataLen = (tagged[i + 1]! << 5) | tagged[i + 2]!;
+      i += 3;
+      if (i + dataLen > tagged.length) break;
+      const data = tagged.slice(i, i + dataLen);
+      i += dataLen;
+      if (type === 13 && data.length > 0) {
+        try {
+          const bytes = bech32.fromWords(data);
+          const text = new TextDecoder().decode(bytes).trim().slice(0, 280);
+          return text || undefined;
+        } catch {
+          return undefined;
+        }
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
 }
 
 export function friendlyLnInvoiceError(err: unknown): string {
