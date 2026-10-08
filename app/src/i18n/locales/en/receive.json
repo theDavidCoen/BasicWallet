@@ -5,7 +5,6 @@
   "createInvoice": "Create invoice",
   "newInvoice": "New invoice",
   "editAmount": "Edit amount",
-  "lightningPosCaption": "Lightning invoice · keypad",
   "waitingPayment": "Waiting for payment…",
   "paid": "Paid",
   "newReceiveAddress": "New receive address",
