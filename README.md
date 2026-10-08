@@ -21,7 +21,7 @@ Use at your own risk. There is no warranty.
 
 ## Download
 
-Latest release: **[v0.9.1](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.9.1)** (arm64-v8a APK + SHA256).
+Latest release: **[v0.9.2](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.9.2)** (arm64-v8a APK + SHA256).
 
 All builds: [Releases](https://github.com/theDavidCoen/BasicWallet/releases). Prefer verifying the checksum before install.
 
@@ -64,9 +64,9 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 - Export recovery phrase only after presence checks (screen capture blocked where wired)
 - **Continue with passkey** (WebAuthn / Credential Manager PRF → Personal seed + Nostr identity)
 - **Pair with Bluetooth** — move wallets / nsec to a nearby phone on the welcome screen (lobby code + biometrics; passkeys stay on Device 1)
-- **Manage a Nostr identity**; Advanced Backup (Nostr relays and/or home server), including Fiat/Maxi prefs in the Path C package
+- **Manage a Nostr identity** (kind 0 profile broadcast from Identity); Advanced Backup (Nostr relays and/or home server), including Fiat/Maxi prefs in the Path C package
 - Maintain **contacts** (npub, NIP-05, BIP-353, etc.) and share a contact over Nostr
-- **Pay in Chat** — 1:1 Nostr threads with text plus send/request payment cards (Home **Chat & Pay** hub or Settings → Nostr → Chat & Pay; classic Send stays separate)
+- **Pay in Chat** — Home **Chat & Pay** hub; 1:1 Nostr threads with text plus send/request (Arkade + Lightning BOLT11 for human contacts); classic Send stays separate
 - **Ask Cursor** — paste a Cursor API key in Settings → Provider Settings → Cursor; then use **Ask Cursor** in Chat & Pay (owner-only bot; shopping MCPs stay on your Cursor Dashboard). **New session** / `/new` clears the bot thread without relay revive; `/stop` cancels in-flight work
 - **Language** — Settings → Language: follow the phone (unsupported OS languages fall back to English) or pin **English**, **Italiano**, or **Português**
 - **Closed-app alerts** (Android, opt-in) — opaque tray wake (“New Pay message”) for Pay in Chat / contact share while the app is closed; never amounts or memos; classic receives still catch up on open
