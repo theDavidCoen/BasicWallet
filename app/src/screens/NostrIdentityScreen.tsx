@@ -19,11 +19,12 @@ import {
   type BackupPackageMeta,
 } from "../nostr/backupPackage";
 import {
+  EMPTY_PROFILE,
   readPublicIdentity,
-  writeNostrProfile,
   type NostrProfile,
   type NostrPublicIdentity,
 } from "../nostr/identityStore";
+import { saveAndPublishNostrProfile } from "../nostr/profileMetadata";
 import { midEllipsis } from "../nostr/keys";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
@@ -34,12 +35,7 @@ export function NostrIdentityScreen() {
   const [loading, setLoading] = useState(true);
   const [identity, setIdentity] = useState<NostrPublicIdentity | null>(null);
   const [backup, setBackup] = useState<BackupPackageMeta | null>(null);
-  const [profile, setProfile] = useState<NostrProfile>({
-    displayName: "",
-    nip05: "",
-    lightningAddress: "",
-    about: "",
-  });
+  const [profile, setProfile] = useState<NostrProfile>({ ...EMPTY_PROFILE });
   const [saving, setSaving] = useState(false);
   const [npubCopied, setNpubCopied] = useState(false);
   const npubCopiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -49,7 +45,7 @@ export function NostrIdentityScreen() {
     try {
       const id = await readPublicIdentity();
       setIdentity(id);
-      if (id) setProfile(id.profile);
+      if (id) setProfile({ ...EMPTY_PROFILE, ...id.profile });
       setBackup(await readBackupMeta());
     } finally {
       setLoading(false);
@@ -68,8 +64,14 @@ export function NostrIdentityScreen() {
   async function onSaveProfile() {
     setSaving(true);
     try {
-      await writeNostrProfile(profile);
-      Alert.alert("Saved", "Profile fields updated on this device.");
+      const result = await saveAndPublishNostrProfile(profile);
+      const failN = result.failedRelays.length;
+      Alert.alert(
+        "Saved",
+        failN > 0
+          ? `Profile published to ${result.okRelays.length} relay(s); ${failN} failed. Contacts with your npub can refresh your public fields.`
+          : `Profile published to ${result.okRelays.length} relay(s). Contacts with your npub can refresh your public fields.`,
+      );
       await reload();
     } catch (e) {
       Alert.alert("Could not save", e instanceof Error ? e.message : "Unknown error");
@@ -174,6 +176,18 @@ export function NostrIdentityScreen() {
           onChange={(about) => setProfile((p) => ({ ...p, about }))}
           placeholder="Payments over Nostr"
         />
+        <Editable
+          label="Picture URL"
+          value={profile.picture}
+          onChange={(picture) => setProfile((p) => ({ ...p, picture }))}
+          placeholder="https://…"
+        />
+        <Editable
+          label="Website"
+          value={profile.website}
+          onChange={(website) => setProfile((p) => ({ ...p, website }))}
+          placeholder="https://…"
+        />
 
         <Pressable
           style={[ui.secondaryBtn, saving && { opacity: 0.6 }]}
@@ -182,6 +196,10 @@ export function NostrIdentityScreen() {
         >
           <Text style={ui.secondaryBtnText}>{saving ? "Saving…" : "Save profile"}</Text>
         </Pressable>
+        <Text style={[ui.hint, { marginTop: 8 }]}>
+          Save publishes your full public profile (kind 0) to Nostr relays. Private
+          contact notes on other people’s devices are never part of this.
+        </Text>
 
         <NavRow label="Export nsec" onPress={() => navigation.navigate("ExportNsecWarning")} />
         <NavRow label="Import nsec" onPress={() => navigation.navigate("ImportNsecWarning")} />

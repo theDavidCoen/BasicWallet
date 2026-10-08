@@ -19,6 +19,10 @@ export type NostrProfile = {
   nip05: string;
   lightningAddress: string;
   about: string;
+  /** NIP-01 `picture` URL (optional). */
+  picture: string;
+  /** NIP-01 `website` URL (optional). */
+  website: string;
 };
 
 export const EMPTY_PROFILE: NostrProfile = {
@@ -26,6 +30,8 @@ export const EMPTY_PROFILE: NostrProfile = {
   nip05: "",
   lightningAddress: "",
   about: "",
+  picture: "",
+  website: "",
 };
 
 export type NostrPublicIdentity = {
@@ -60,6 +66,8 @@ export async function readNostrProfile(): Promise<NostrProfile> {
       lightningAddress:
         typeof parsed.lightningAddress === "string" ? parsed.lightningAddress : "",
       about: typeof parsed.about === "string" ? parsed.about : "",
+      picture: typeof parsed.picture === "string" ? parsed.picture : "",
+      website: typeof parsed.website === "string" ? parsed.website : "",
     };
   } catch {
     return { ...EMPTY_PROFILE };
