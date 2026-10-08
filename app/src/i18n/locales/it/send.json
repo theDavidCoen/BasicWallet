@@ -24,5 +24,13 @@
   "corridorFeeQuoting": "Quotazione fee corridoio…",
   "corridorFeeNeedAmount": "Inserisci un importo per quotare la fee del corridoio.",
   "lnDestChecking": "Verifica destinazione Lightning…",
-  "lnDestValid": "Destinazione Lightning valida"
+  "lnDestValid": "Destinazione Lightning valida",
+  "networkCaptionLightning": "Lightning · invoice / LNURL / indirizzo · %{label}",
+  "amountSats": "Importo (sats)",
+  "maxSend": "Invia max",
+  "invoiceOnlyWarn": "Chiave solo-invoice: la ricezione funziona, per inviare serve una URL LNDHub admin.",
+  "syncingWarn": "Wallet ancora in sync — invio non disponibile finché non e pronto.",
+  "bolt12Unsupported": "Le offerte BOLT12 non sono pagabili da questo nodo LNDHub.",
+  "enterAmountRange": "Inserisci %{min}–%{max} sats",
+  "enterAmountHint": "Inserisci quanti sats inviare"
 }

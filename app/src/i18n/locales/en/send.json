@@ -24,5 +24,13 @@
   "corridorFeeQuoting": "Quoting corridor fee…",
   "corridorFeeNeedAmount": "Enter an amount to quote the corridor fee.",
   "lnDestChecking": "Checking Lightning destination…",
-  "lnDestValid": "Lightning destination is valid"
+  "lnDestValid": "Lightning destination is valid",
+  "networkCaptionLightning": "Lightning · invoice / LNURL / address · %{label}",
+  "amountSats": "Amount (sats)",
+  "maxSend": "Max send",
+  "invoiceOnlyWarn": "Invoice-only key: receive works, send needs an admin LNDHub connection URL.",
+  "syncingWarn": "Wallet still syncing — sending unavailable until ready.",
+  "bolt12Unsupported": "BOLT12 offers are not payable via this LNDHub node.",
+  "enterAmountRange": "Enter %{min}–%{max} sats",
+  "enterAmountHint": "Enter how many sats to send"
 }

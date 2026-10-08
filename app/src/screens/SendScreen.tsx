@@ -494,13 +494,12 @@ export function SendScreen() {
         );
         if (cancelled) return;
         setLnProbe(probe);
-        if (
-          !isLightning &&
-          probe.amountSats != null &&
-          probe.amountSats > 0 &&
-          lines[0]?.id
-        ) {
-          patchLine(lines[0].id, { amountStr: String(probe.amountSats) });
+        if (probe.amountSats != null && probe.amountSats > 0) {
+          if (isLightning) {
+            setAmountStr(String(probe.amountSats));
+          } else if (lines[0]?.id) {
+            patchLine(lines[0].id, { amountStr: String(probe.amountSats) });
+          }
         }
       } catch (e) {
         if (!cancelled) {
@@ -898,6 +897,12 @@ export function SendScreen() {
   }
 
   function clearPrimaryDestination() {
+    if (isLightning) {
+      setAddress("");
+      setLnProbe(null);
+      setLnProbeError(null);
+      return;
+    }
     const id = lines[0]?.id;
     if (!id) return;
     patchLine(id, { address: "", walletLabel: null });
@@ -1720,170 +1725,292 @@ export function SendScreen() {
 
   if (isLightning) {
     const previewAmt = lnProbe?.amountSats;
+    const amountLocked = previewAmt != null && previewAmt > 0;
+    const displayAmount = amountLocked ? String(previewAmt) : amountStr;
     const canSend =
       !sendBlocked &&
       lnRole !== "invoice" &&
       !!lnProbe &&
       lnProbe.kind !== "bolt12" &&
-      !lnProbeBusy;
-    const kindLabel =
-      lnProbe?.kind === "lightning-address"
-        ? "Lightning Address"
-        : lnProbe?.kind === "bip353"
-          ? "BIP353"
-          : lnProbe?.kind === "lnurl"
-            ? "LNURL"
-            : lnProbe?.kind === "bolt12"
-              ? "BOLT12"
-              : "BOLT11";
+      !lnProbeBusy &&
+      !!address.trim() &&
+      (amountLocked ||
+        (Number.parseInt(amountStr.replace(/[,\s]/g, ""), 10) > 0 &&
+          Number.isFinite(Number.parseInt(amountStr.replace(/[,\s]/g, ""), 10))));
+    const lnHasDest = !!address.trim();
 
     return (
-      <ScreenChrome logoScale={0.77}>
-        <Text style={styles.title}>{t("send.title")}</Text>
-        <Pressable onPress={toggleBalanceHidden}>
-          <Text style={styles.balance}>{bal}</Text>
-        </Pressable>
-        <Text style={styles.caption}>
-          Lightning · invoice / LNURL / address · {selectedWallet?.label ?? "node"}
-        </Text>
-
-        {sendBlocked ? (
-          <Text style={styles.warn}>
-            Wallet still syncing — sending unavailable until ready.
-          </Text>
-        ) : null}
-
-        {lnRole === "invoice" ? (
-          <Text style={styles.warn}>
-            Invoice-only key: receive works, send needs an admin LNDHub connection URL.
-          </Text>
-        ) : null}
-
-        <View style={styles.toRow}>
-          <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>
-            To (invoice / LNURL / address)
-          </Text>
-          {address.trim() ? (
-            <Pressable onPress={() => setScanOpen(true)} hitSlop={8}>
-              <Text style={styles.scanLink}>{t("send.scanQr")}</Text>
+      <View style={styles.screenRoot}>
+        <ScreenChrome logoScale={0.77}>
+          <ScrollView
+            style={styles.arkScroll}
+            contentContainerStyle={styles.arkScrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <Text style={styles.title}>{t("send.title")}</Text>
+            <Pressable onPress={toggleBalanceHidden}>
+              <Text style={styles.balance}>{bal}</Text>
             </Pressable>
-          ) : null}
-        </View>
-        <TextInput
-          value={address}
-          onChangeText={applyDestinationInput}
-          autoCapitalize="none"
-          autoCorrect={false}
-          placeholder="lnbc… · user@domain · lnurl…"
-          placeholderTextColor={colors.hint}
-          multiline
-          style={[styles.input, styles.inputMulti]}
-        />
+            <Text style={styles.caption}>
+              {t("send.networkCaptionLightning", {
+                label: selectedWallet?.label ?? "node",
+              })}
+            </Text>
 
-        {lnProbeBusy ? (
-          <Text style={styles.destStatusChecking}>{t("send.lnDestChecking")}</Text>
-        ) : lnProbeError ? (
-          <Text style={[styles.destStatusBad, { marginBottom: 12 }]}>{lnProbeError}</Text>
-        ) : lnProbe && lnProbe.kind === "bolt12" ? (
-          <Text style={[styles.destStatusBad, { marginBottom: 12 }]}>
-            BOLT12 offers are not payable via this LNDHub node.
-          </Text>
-        ) : lnProbe ? (
-          <Text style={styles.destStatusGood}>{t("send.lnDestValid")}</Text>
-        ) : null}
+            {sendBlocked ? (
+              <Text style={styles.warn}>{t("send.syncingWarn")}</Text>
+            ) : null}
 
-        {lnProbeBusy ? (
-          <ActivityIndicator color={colors.fg} style={{ marginBottom: 12 }} />
-        ) : lnProbe && lnProbe.kind !== "bolt12" ? (
-          <View style={styles.preview}>
-            <Text style={styles.previewMemo}>{kindLabel}</Text>
-            {previewAmt != null ? (
-              <Text style={[styles.previewLine, { marginTop: 6 }]}>
-                {previewAmt.toLocaleString("en-US")} sats
+            {lnRole === "invoice" ? (
+              <Text style={styles.warn}>{t("send.invoiceOnlyWarn")}</Text>
+            ) : null}
+
+            <View style={styles.toRow}>
+              <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>
+                {t("send.amountSats")}
               </Text>
-            ) : (
-              <>
-                <Text style={[styles.previewMemo, { marginTop: 8 }]}>
-                  {lnProbe.minSats != null && lnProbe.maxSats != null
-                    ? `Enter ${lnProbe.minSats.toLocaleString("en-US")}–${lnProbe.maxSats.toLocaleString("en-US")} sats`
-                    : "Enter how many sats to send"}
+              <Pressable
+                onPress={() => fillMaxSend()}
+                disabled={amountLocked || spendable == null || spendable <= 0}
+                hitSlop={8}
+                accessibilityLabel="Max send"
+              >
+                <Text
+                  style={[
+                    styles.maxLink,
+                    (amountLocked || spendable == null || spendable <= 0) &&
+                      styles.maxLinkDisabled,
+                  ]}
+                >
+                  {t("send.maxSend")}
                 </Text>
-                <View style={[styles.toRow, { marginTop: 12 }]}>
-                      <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>
-                        Amount (sats)
-                      </Text>
-                      <Pressable
-                        onPress={() => fillMaxSend()}
-                        disabled={spendable == null || spendable <= 0}
-                        hitSlop={8}
-                        accessibilityLabel="Max send"
-                      >
-                        <Text
-                          style={[
-                            styles.maxLink,
-                            (spendable == null || spendable <= 0) && styles.maxLinkDisabled,
-                          ]}
-                        >
-                          Max send
-                        </Text>
-                      </Pressable>
-                    </View>
-                    <TextInput
-                      value={amountStr}
-                      onChangeText={setAmountStr}
-                      keyboardType="number-pad"
-                      placeholder="0"
-                      placeholderTextColor={colors.hint}
-                      style={[styles.input, { marginBottom: 0 }]}
-                    />
-              </>
-            )}
-            {lnProbe.description ? (
-              <Text style={[styles.previewMemo, { marginTop: 10 }]} numberOfLines={2}>
+              </Pressable>
+            </View>
+            <TextInput
+              value={displayAmount}
+              editable={!busy && !sendBlocked && !amountLocked}
+              onChangeText={setAmountStr}
+              keyboardType="number-pad"
+              placeholder="0"
+              placeholderTextColor={colors.hint}
+              style={styles.input}
+            />
+            {lnProbe?.needsAmount &&
+            lnProbe.minSats != null &&
+            lnProbe.maxSats != null &&
+            !amountLocked ? (
+              <Text style={[styles.previewMemo, { marginTop: -8, marginBottom: 12 }]}>
+                {t("send.enterAmountRange", {
+                  min: lnProbe.minSats.toLocaleString("en-US"),
+                  max: lnProbe.maxSats.toLocaleString("en-US"),
+                })}
+              </Text>
+            ) : lnProbe?.needsAmount && !amountLocked ? (
+              <Text style={[styles.previewMemo, { marginTop: -8, marginBottom: 12 }]}>
+                {t("send.enterAmountHint")}
+              </Text>
+            ) : null}
+
+            <Text style={styles.fieldLabel}>{t("send.to")}</Text>
+            {lnHasDest ? (
+              <View style={styles.destPreview}>
+                <View style={styles.destPreviewTextWrap}>
+                  <Text style={styles.destPreviewAddr} numberOfLines={2}>
+                    {truncateDest(address.trim(), 14, 10)}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={clearPrimaryDestination}
+                  hitSlop={8}
+                  accessibilityLabel="Clear destination"
+                >
+                  <Text style={styles.scanLink}>{t("common.clear")}</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {lnProbeBusy ? (
+              <Text style={styles.destStatusChecking}>{t("send.lnDestChecking")}</Text>
+            ) : lnProbeError ? (
+              <Text style={styles.destStatusBad}>{lnProbeError}</Text>
+            ) : lnProbe && lnProbe.kind === "bolt12" ? (
+              <Text style={styles.destStatusBad}>{t("send.bolt12Unsupported")}</Text>
+            ) : lnProbe ? (
+              <Text style={styles.destStatusGood}>{t("send.lnDestValid")}</Text>
+            ) : null}
+
+            {lnProbe?.description ? (
+              <Text style={[styles.previewMemo, { marginBottom: 8 }]} numberOfLines={2}>
                 {lnProbe.description}
               </Text>
             ) : null}
-          </View>
-        ) : null}
 
-        <Pressable
-          style={[styles.primary, (busy || !canSend) && { opacity: 0.6 }]}
-          disabled={busy || !canSend}
-          onPress={() => void onSend()}
-        >
-          {busy ? (
-            <ActivityIndicator color="#000" />
-          ) : (
-            <Text style={styles.primaryText}>{t("send.confirmSend")}</Text>
-          )}
-        </Pressable>
+            <View style={styles.toActions}>
+              <Pressable
+                style={styles.toAction}
+                onPress={() => openEnterSheet("primary")}
+                accessibilityRole="button"
+                accessibilityLabel="Enter destination"
+              >
+                <View style={styles.toActionIcon}>
+                  <IconEnter />
+                </View>
+                <Text style={styles.toActionLabel}>{t("send.enter")}</Text>
+              </Pressable>
+              <Pressable
+                style={styles.toAction}
+                onPress={() => void pasteDestination("primary")}
+                accessibilityRole="button"
+                accessibilityLabel="Paste destination"
+              >
+                <View style={styles.toActionIcon}>
+                  <IconPaste />
+                </View>
+                <Text style={styles.toActionLabel}>{t("send.paste")}</Text>
+              </Pressable>
+              <Pressable
+                style={styles.toAction}
+                onPress={() => {
+                  setPickerTarget("primary");
+                  setScanOpen(true);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Scan QR"
+              >
+                <View style={styles.toActionIcon}>
+                  <IconQr size={28} />
+                </View>
+                <Text style={styles.toActionLabel}>{t("send.scan")}</Text>
+              </Pressable>
+            </View>
 
-        {!address.trim() ? (
-          <View style={styles.scanWrap}>
             <Pressable
-              style={styles.scanFab}
-              onPress={() => setScanOpen(true)}
-              accessibilityRole="button"
-              accessibilityLabel="Scan QR"
+              style={[styles.primary, (busy || !canSend) && { opacity: 0.6 }]}
+              disabled={busy || !canSend}
+              onPress={() => void onSend()}
             >
-              <View style={styles.scanRing}>
-                <IconQr size={30} />
-              </View>
-              <Text style={styles.scanLabel}>{t("send.scanQrLower")}</Text>
+              {busy ? (
+                <ActivityIndicator color="#000" />
+              ) : (
+                <Text style={styles.primaryText}>{t("send.confirmSend")}</Text>
+              )}
             </Pressable>
-          </View>
-        ) : null}
+          </ScrollView>
 
-        <ScanQrModal
-          visible={scanOpen}
-          onClose={() => setScanOpen(false)}
-          title="SCAN"
-          idleHint="Point at the QR code to pay"
-          rejectHint="Not a Lightning invoice / LNURL / address"
-          parse={extractLightningPayFromScan}
-          onScan={applyScannedPay}
-        />
-      </ScreenChrome>
+          <ScanQrModal
+            visible={scanOpen}
+            onClose={() => setScanOpen(false)}
+            title="SCAN"
+            idleHint="Point at the QR code to pay"
+            rejectHint="Not a Lightning invoice / LNURL / address"
+            parse={extractLightningPayFromScan}
+            onScan={applyScannedPay}
+          />
+        </ScreenChrome>
+
+        <InteractiveBottomSheet
+          open={enterSheetOpen}
+          onDismiss={closeEnterSheet}
+          visibleFraction={0.72}
+          avoidKeyboard
+        >
+          <View style={styles.sheetBody}>
+            <Text style={styles.sheetTitle}>{t("send.enterTitle")}</Text>
+            <Text style={styles.sheetCaption}>
+              Paste a destination or pick a contact
+            </Text>
+            <TextInput
+              ref={enterInputRef}
+              value={enterDraft}
+              onChangeText={setEnterDraft}
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder="lnbc… · user@domain · lnurl…"
+              placeholderTextColor={colors.hint}
+              multiline
+              style={[styles.input, styles.inputMulti, { marginBottom: 12 }]}
+            />
+            <Pressable
+              style={[styles.primary, { marginTop: 0 }, !enterDraft.trim() && { opacity: 0.5 }]}
+              disabled={!enterDraft.trim() || contactResolveBusy}
+              onPress={confirmEnterDestination}
+            >
+              <Text style={styles.primaryText}>{t("send.useDestination")}</Text>
+            </Pressable>
+
+            <TextInput
+              value={contactQuery}
+              onChangeText={setContactQuery}
+              placeholder="Search contacts…"
+              placeholderTextColor={colors.hint}
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={[styles.input, { marginTop: 14, marginBottom: 8 }]}
+            />
+            {contactResolveBusy ? (
+              <ActivityIndicator color={colors.fg} style={{ marginVertical: 8 }} />
+            ) : null}
+            <ScrollView
+              style={styles.sheetScroll}
+              contentContainerStyle={styles.sheetScrollContent}
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+            >
+              <ContactPickList
+                contacts={filteredContacts}
+                onPick={onPickContact}
+                emptyLabel={
+                  contactList.length === 0
+                    ? "No contacts yet — add some in Settings"
+                    : "No matches"
+                }
+              />
+            </ScrollView>
+          </View>
+        </InteractiveBottomSheet>
+
+        <InteractiveBottomSheet
+          open={!!idPickerContact}
+          onDismiss={() => setIdPickerContact(null)}
+          visibleFraction={0.5}
+        >
+          <View style={styles.sheetBody}>
+            <Text style={styles.sheetTitle}>{t("send.pickIdentifier")}</Text>
+            <Text style={styles.sheetCaption}>{idPickerContact?.name}</Text>
+            <ScrollView keyboardShouldPersistTaps="handled">
+              {(idPickerContact?.identifiers ?? []).map((ident) => {
+                const ok = identifierEligible(ident);
+                return (
+                  <Pressable
+                    key={ident.id}
+                    style={[styles.myWalletRow, !ok && { opacity: 0.45 }]}
+                    onPress={() => {
+                      if (!idPickerContact) return;
+                      void applyContactIdentifier(idPickerContact, ident);
+                    }}
+                  >
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.myWalletLabel} numberOfLines={1}>
+                        {kindPillLabel(ident)}
+                        {ident.label ? ` · ${ident.label}` : ""}
+                      </Text>
+                      <Text
+                        style={[styles.sheetCaption, { marginBottom: 0, textAlign: "left" }]}
+                        numberOfLines={1}
+                      >
+                        {contactMidEllipsis(ident.value, 14, 8)}
+                      </Text>
+                    </View>
+                    <Text style={styles.myWalletAction}>{ok ? "Use" : "…"}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </InteractiveBottomSheet>
+      </View>
     );
   }
 

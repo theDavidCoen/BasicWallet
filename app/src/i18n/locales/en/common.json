@@ -9,6 +9,8 @@
   "use": "Use",
   "share": "Share",
   "done": "Done",
+  "copied": "Copied",
+  "tapToCopy": "Tap to copy",
   "unknownError": "Unknown error",
   "personal": "Personal",
   "update": "Update"

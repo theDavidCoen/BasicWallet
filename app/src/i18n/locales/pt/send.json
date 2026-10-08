@@ -24,5 +24,13 @@
   "corridorFeeQuoting": "Cotando taxa do corredor…",
   "corridorFeeNeedAmount": "Informe um valor para cotar a taxa do corredor.",
   "lnDestChecking": "Verificando destino Lightning…",
-  "lnDestValid": "Destino Lightning valido"
+  "lnDestValid": "Destino Lightning valido",
+  "networkCaptionLightning": "Lightning · invoice / LNURL / endereco · %{label}",
+  "amountSats": "Valor (sats)",
+  "maxSend": "Enviar max",
+  "invoiceOnlyWarn": "Chave so-invoice: receber funciona; para enviar precisa de uma URL LNDHub admin.",
+  "syncingWarn": "Carteira ainda sincronizando — envio indisponivel ate ficar pronta.",
+  "bolt12Unsupported": "Ofertas BOLT12 nao sao pagaveis neste no LNDHub.",
+  "enterAmountRange": "Informe %{min}–%{max} sats",
+  "enterAmountHint": "Informe quantos sats enviar"
 }

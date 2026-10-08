@@ -10,7 +10,6 @@ import {
   Share,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { Gesture, GestureDetector, ScrollView } from "react-native-gesture-handler";
@@ -168,11 +167,9 @@ export function ReceiveScreen() {
   // the default page — no auto-open overlay.
 
   // —— Lightning receive ——
-  const [lnAmount, setLnAmount] = useState("");
   const [lnMemo, setLnMemo] = useState("");
   const [lnInvoice, setLnInvoice] = useState<LndHubInvoice | LndRestInvoice | null>(null);
   const [lnSettled, setLnSettled] = useState(false);
-  const [lnBusy, setLnBusy] = useState(false);
   const settleStopRef = useRef(false);
   const arkLnStopRef = useRef<(() => void) | null>(null);
 
@@ -581,144 +578,82 @@ export function ReceiveScreen() {
     }
   }
 
-  async function onCreateLnInvoice() {
-    const amount = Number.parseInt(lnAmount.replace(/[,\s]/g, ""), 10);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      Alert.alert("Invalid amount", "Enter a positive amount in sats.");
-      return;
-    }
-    const walletId = selectedWallet?.id;
-    if (!walletId) {
-      Alert.alert("No Lightning wallet", "Connect a node first.");
-      return;
-    }
-    setLnBusy(true);
-    try {
-      const hub = await loadLndHubCredentials(walletId);
-      const rest = hub ? null : await loadLndRestCredentials(walletId);
-      if (!hub && !rest) {
-        throw new Error("Lightning node not connected for this wallet");
+  const createLnInvoiceUri = useCallback(
+    async (amountSats: number): Promise<string | null> => {
+      if (!(amountSats > 0)) {
+        Alert.alert("Invalid amount", "Enter a positive amount in sats.");
+        return null;
       }
-      const inv = hub
-        ? await lndhubCreateInvoice(hub, {
-            amountSats: amount,
-            memo: lnMemo.trim() || undefined,
-          })
-        : await lndCreateInvoice(
-            {
-              restUrl: rest!.restUrl,
-              macaroonHex: rest!.macaroonHex,
-              certThumbprint: rest!.certThumbprint,
-              allowInsecure: rest!.allowInsecure,
-              source: rest!.source,
-            },
-            {
-              amountSats: amount,
+      const walletId = selectedWallet?.id;
+      if (!walletId) {
+        Alert.alert("No Lightning wallet", "Connect a node first.");
+        return null;
+      }
+      try {
+        const hub = await loadLndHubCredentials(walletId);
+        const rest = hub ? null : await loadLndRestCredentials(walletId);
+        if (!hub && !rest) {
+          throw new Error("Lightning node not connected for this wallet");
+        }
+        const inv = hub
+          ? await lndhubCreateInvoice(hub, {
+              amountSats,
               memo: lnMemo.trim() || undefined,
-            },
-          );
-      setLnInvoice(inv);
-      setLnSettled(false);
-    } catch (e) {
-      Alert.alert(
-        "Could not create invoice",
-        e instanceof Error ? e.message : "Unknown error",
-      );
-    } finally {
-      setLnBusy(false);
-    }
-  }
+            })
+          : await lndCreateInvoice(
+              {
+                restUrl: rest!.restUrl,
+                macaroonHex: rest!.macaroonHex,
+                certThumbprint: rest!.certThumbprint,
+                allowInsecure: rest!.allowInsecure,
+                source: rest!.source,
+              },
+              {
+                amountSats,
+                memo: lnMemo.trim() || undefined,
+              },
+            );
+        setLnInvoice(inv);
+        setLnSettled(false);
+        return inv.paymentRequest;
+      } catch (e) {
+        Alert.alert(
+          "Could not create invoice",
+          e instanceof Error ? e.message : "Unknown error",
+        );
+        return null;
+      }
+    },
+    [lnMemo, selectedWallet?.id],
+  );
 
-  function onNewLnInvoice() {
+  const onClearLnInvoice = useCallback(() => {
     settleStopRef.current = true;
     setLnInvoice(null);
     setLnSettled(false);
     setCopied(false);
-  }
+  }, []);
 
   if (isLightning) {
+    const lnHint = lnInvoice
+      ? lnSettled
+        ? t("receive.paid")
+        : t("receive.waitingPayment")
+      : null;
     return (
-      <ScreenChrome logoScale={0.77}>
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          <Text style={styles.title}>{t("receive.title")}</Text>
-          <Pressable onPress={toggleBalanceHidden}>
-            <Text style={styles.balance}>{bal}</Text>
-          </Pressable>
-          <Text style={styles.caption}>
-            Lightning · {selectedWallet?.label ?? "node"}
-          </Text>
-
-          {!lnInvoice ? (
-            <>
-              <Text style={styles.fieldLabel}>{t("receive.amountSats")}</Text>
-              <TextInput
-                value={lnAmount}
-                onChangeText={setLnAmount}
-                keyboardType="number-pad"
-                placeholder="0"
-                placeholderTextColor={colors.hint}
-                style={styles.input}
-              />
-              <Text style={styles.fieldLabel}>{t("receive.memoOptional")}</Text>
-              <TextInput
-                value={lnMemo}
-                onChangeText={setLnMemo}
-                placeholder="Basic"
-                placeholderTextColor={colors.hint}
-                style={styles.input}
-              />
-              <Pressable
-                style={[styles.primary, lnBusy && { opacity: 0.6 }]}
-                disabled={lnBusy}
-                onPress={() => void onCreateLnInvoice()}
-              >
-                {lnBusy ? (
-                  <ActivityIndicator color="#000" />
-                ) : (
-                  <Text style={styles.primaryText}>{t("receive.createInvoice")}</Text>
-                )}
-              </Pressable>
-            </>
-          ) : (
-            <>
-              <View style={styles.qrWrap}>
-                <ExpandableQrCode value={lnInvoice.paymentRequest} size={220} />
-              </View>
-              <Text style={styles.lnStatus}>
-                {lnSettled
-                  ? "Paid"
-                  : `${lnInvoice.amountSats.toLocaleString("en-US")} sats · waiting…`}
-              </Text>
-              {lnInvoice.memo ? (
-                <Text style={styles.boardingHint}>{lnInvoice.memo}</Text>
-              ) : null}
-              <View style={styles.pillRow}>
-                <View style={styles.pill}>
-                  <Text style={styles.pillText} numberOfLines={2}>
-                    {midEllipsis(lnInvoice.paymentRequest, 18, 12)}
-                  </Text>
-                </View>
-                <Pressable style={styles.icoBtn} onPress={() => void onCopy()}>
-                  <Text style={styles.icoLabel}>{copied ? "✓" : "Copy"}</Text>
-                </Pressable>
-                <Pressable style={styles.icoBtn} onPress={() => void onShare()}>
-                  <Text style={styles.icoLabel}>{t("common.share")}</Text>
-                </Pressable>
-              </View>
-              <Pressable style={styles.secondary} onPress={onNewLnInvoice}>
-                <Text style={styles.secondaryText}>{t("receive.newInvoice")}</Text>
-              </Pressable>
-            </>
-          )}
-
-          <View style={{ height: 24 }} />
-        </ScrollView>
-      </ScreenChrome>
+      <View style={styles.lnPosRoot}>
+        <ReceivePosPanel
+          bip21Uri={null}
+          lightningMode
+          memo={lnMemo}
+          onMemoChange={setLnMemo}
+          onClose={() => navigation.goBack()}
+          onRequestUri={createLnInvoiceUri}
+          onEditAmount={onClearLnInvoice}
+          receiveHint={lnHint}
+          active
+        />
+      </View>
     );
   }
 
@@ -1160,5 +1095,9 @@ const styles = StyleSheet.create({
     marginTop: 20,
     paddingHorizontal: 12,
     lineHeight: 18,
+  },
+  lnPosRoot: {
+    flex: 1,
+    backgroundColor: colors.bg,
   },
 });
