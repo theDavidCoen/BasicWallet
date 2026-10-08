@@ -304,7 +304,8 @@ export async function syncEncryptedBackupNow(reason: string): Promise<BackupPack
       } catch (e) {
         console.warn("[basic] backup sync publish failed", reason, e);
         await markBackupPackageDirty();
-        return next;
+        // Must throw: callers (manual Update) treat a returned meta as success.
+        throw e instanceof Error ? e : new Error(String(e));
       }
     } else if (next.channel === "home" && next.homeUrl) {
       try {
@@ -312,7 +313,8 @@ export async function syncEncryptedBackupNow(reason: string): Promise<BackupPack
         const { uploadHomeBackupCipher } = await import("./homeServerWebdav");
         const blob = await readCipherBlob();
         if (!blob) throw new Error("No local cipher blob to upload");
-        await uploadHomeBackupCipher(next.homeUrl, blob);
+        const uploaded = await uploadHomeBackupCipher(next.homeUrl, blob);
+        console.warn("[basic] home backup uploaded", reason, uploaded.fileUrl);
         next = {
           ...next,
           lastPublishedAt: Date.now(),
@@ -322,7 +324,9 @@ export async function syncEncryptedBackupNow(reason: string): Promise<BackupPack
       } catch (e) {
         console.warn("[basic] home backup upload failed", reason, e);
         await markBackupPackageDirty();
-        return next;
+        // Do not return local re-pack meta as success — UI would show
+        // "Backup updated" while Nextcloud never received the PUT (423 Locked).
+        throw e instanceof Error ? e : new Error(String(e));
       }
     }
     await clearBackupPackageDirty();
