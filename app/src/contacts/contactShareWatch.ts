@@ -66,6 +66,8 @@ async function handleWrap(ev: Event, sk: Uint8Array): Promise<void> {
         envelope: chat,
         peerPubkey: peer,
         wrapEventId: ev.id,
+        wrapCreatedAtSec:
+          typeof ev.created_at === "number" ? ev.created_at : undefined,
       });
     }
     return;

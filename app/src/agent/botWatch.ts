@@ -18,6 +18,7 @@ import {
 } from "./botRunner";
 import { resumePendingBotFulfills } from "./botFulfill";
 import {
+  hydrateBotChatIgnoreBefore,
   isBotEnabled,
   loadBotKeyPair,
   readBotMeta,
@@ -86,6 +87,7 @@ export function startBotWatch(): void {
     try {
       if (!(await isBotEnabled())) return;
       await hydrateBotProcessedWraps();
+      await hydrateBotChatIgnoreBefore();
       const meta = await readBotMeta();
       const pair = await loadBotKeyPair();
       if (!meta?.enabled || !pair) return;
@@ -141,6 +143,7 @@ export async function catchUpBotWatch(opts?: { force?: boolean }): Promise<void>
     try {
       if (!(await isBotEnabled())) return;
       await hydrateBotProcessedWraps();
+      await hydrateBotChatIgnoreBefore();
       const meta = await readBotMeta();
       const pair = await loadBotKeyPair();
       if (!meta?.enabled || !pair) return;
