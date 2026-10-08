@@ -199,7 +199,14 @@ function normalizeForSave(input: Contact, existing: Contact | null, now: number)
 
 function queueBackupDirty(): void {
   void import("../nostr/backupSync")
-    .then((m) => m.markBackupPackageDirty())
+    .then(async (m) => {
+      await m.markBackupPackageDirty();
+      // Same as tx-meta: dirty alone only flushes on unlock. Schedule while the
+      // passphrase session is warm so contacts update Nextcloud without a lock cycle.
+      if (m.hasSessionBackupPassphrase()) {
+        m.scheduleEncryptedBackupSync("contacts", 8_000);
+      }
+    })
     .catch(() => {});
 }
 
