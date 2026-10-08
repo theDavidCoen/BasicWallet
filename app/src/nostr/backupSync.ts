@@ -240,6 +240,38 @@ export async function disableEncryptedBackupFully(): Promise<void> {
 }
 
 /**
+ * After biometrics / PIN / no-lock resume: load SecureStore passphrase and
+ * schedule a deferred pack+upload when Path C is armed.
+ *
+ * Always schedule when armed (not only when dirty). A prior bug cleared dirty
+ * inside enableEncryptedBackup before WebDAV/Nostr publish; after a kill in
+ * that window dirty stayed false forever and post-unlock skipped the PUT.
+ */
+export async function flushEncryptedBackupAfterUnlock(reason: string): Promise<void> {
+  const loaded = await unlockBackupPassphraseSession();
+  if (!loaded) {
+    console.warn("[basic] backup unlock flush skip (no passphrase session)", reason);
+    return;
+  }
+  const meta = await readBackupMeta();
+  if (!meta?.enabled) {
+    console.warn("[basic] backup unlock flush skip (backup off)", reason);
+    return;
+  }
+  const dirty = await isBackupPackageDirty();
+  const unpublished =
+    typeof meta.updatedAt === "number" &&
+    meta.updatedAt > (meta.lastPublishedAt ?? 0);
+  console.warn("[basic] backup unlock flush", {
+    reason,
+    dirty,
+    unpublished,
+    channel: meta.channel,
+  });
+  scheduleEncryptedBackupSync(reason, 8_000);
+}
+
+/**
  * Re-pack AEAD + publish. Needs session passphrase (post-unlock).
  * If missing → mark dirty.
  */

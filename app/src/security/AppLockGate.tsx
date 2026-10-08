@@ -24,10 +24,8 @@ import {
   subscribeAppUnlockFromPresence,
 } from "./presencePrompt";
 import {
-  isBackupPackageDirty,
+  flushEncryptedBackupAfterUnlock,
   lockBackupPassphraseSession,
-  scheduleEncryptedBackupSync,
-  unlockBackupPassphraseSession,
 } from "../nostr/backupSync";
 import { useWallet } from "../wallet/WalletProvider";
 import { colors } from "../theme/colors";
@@ -77,11 +75,8 @@ export function AppLockGate({ children }: { children: ReactNode }) {
     setError(null);
     setMode("bio");
     autoPromptedRef.current = false;
-    const loaded = await unlockBackupPassphraseSession();
-    if (loaded && (await isBackupPackageDirty())) {
-      // Far off the unlock paint path — PBKDF2 must not run during Home mount.
-      scheduleEncryptedBackupSync("post-unlock-dirty", 8_000);
-    }
+    // Far off the unlock paint path — PBKDF2 must not run during Home mount.
+    await flushEncryptedBackupAfterUnlock("post-unlock");
   }, []);
 
   // Successful requireUserPresence (backup enable, export, …) counts as unlock.
@@ -164,10 +159,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
         unlockedRef.current = true;
         setUnlocked(true);
         if (presentAtBoot) {
-          const loaded = await unlockBackupPassphraseSession();
-          if (loaded && (await isBackupPackageDirty())) {
-            scheduleEncryptedBackupSync("no-lock-dirty", 8_000);
-          }
+          await flushEncryptedBackupAfterUnlock("no-lock");
         }
         return;
       }
@@ -215,12 +207,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
         // (unlike afterUnlock). Without this, dirty home/Nostr uploads stay stuck
         // forever after the first background — Settings still shows backup ON.
         if (hasWallet && !lockEnabled) {
-          void (async () => {
-            const loaded = await unlockBackupPassphraseSession();
-            if (loaded && (await isBackupPackageDirty())) {
-              scheduleEncryptedBackupSync("resume-no-lock-dirty", 8_000);
-            }
-          })();
+          void flushEncryptedBackupAfterUnlock("resume-no-lock");
         }
       }
     };

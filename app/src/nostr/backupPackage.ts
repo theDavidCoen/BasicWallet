@@ -508,9 +508,12 @@ export async function enableEncryptedBackup(input: EnableBackupInput): Promise<B
     });
   }
 
-  const { persistBackupPassphrase, clearBackupPackageDirty } = await import("./backupSync");
+  // Persist passphrase for later unlock flushes. Do NOT clear the dirty flag
+  // here: refreshEncryptedBackup → enableEncryptedBackup runs before WebDAV/Nostr
+  // publish. Clearing early left dirty=false after a kill between pack and PUT,
+  // so post-unlock flush skipped forever while Nextcloud stayed stale.
+  const { persistBackupPassphrase } = await import("./backupSync");
   await persistBackupPassphrase(check.passphrase);
-  await clearBackupPackageDirty();
   const { clearBackupReminder } = await import("../wallet/backupReminder");
   await clearBackupReminder();
   return meta;
