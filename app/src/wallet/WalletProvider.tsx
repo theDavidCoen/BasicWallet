@@ -3933,7 +3933,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const balanceSats = balance?.total ?? null;
   const avatarLabel = selectedWallet ? avatarLetter(selectedWallet.label) : "P";
-  const walletInteractive = wallet != null;
+  // Lightning has no Arkade `wallet` engine — ready once balance probe finishes.
+  const walletInteractive =
+    selectedWallet?.kind === "lightning"
+      ? balanceStatus === "ready"
+      : wallet != null;
   const sessionPhase: SessionPhase = !ready
     ? "booting"
     : hasWallet && !sessionLive

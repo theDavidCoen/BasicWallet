@@ -1,11 +1,12 @@
 /**
  * Resolve the selected spend wallet for chat Pay / Send.
  * Arkade: reopen engine when Home only has a cached balance.
- * Lightning (LNDhub): verify admin credentials (no HD engine).
+ * Lightning: verify LNDHub admin or LND REST credentials (no HD engine).
  */
 
 import type { WalletRecord } from "../account/walletRegistry";
 import { loadLndHubCredentials } from "../lightning/lndhubCredentials";
+import { loadLndRestCredentials } from "../lightning/lndCredentials";
 import {
   getOpenWallet,
   getOpenWalletId,
@@ -44,17 +45,26 @@ export async function ensureChatPayWallet(opts: {
 
   if (selected.kind === "lightning") {
     const hub = await loadLndHubCredentials(selected.id);
-    if (!hub) {
+    if (hub) {
+      if (hub.role === "invoice") {
+        return {
+          ok: false,
+          message:
+            "This Lightning connection is invoice-only. Reconnect with an admin LNDHub URL to send.",
+        };
+      }
+      return {
+        ok: true,
+        kind: "lightning",
+        walletId: selected.id,
+        selected,
+      };
+    }
+    const rest = await loadLndRestCredentials(selected.id);
+    if (!rest) {
       return {
         ok: false,
         message: "Connect a Lightning node for this wallet first.",
-      };
-    }
-    if (hub.role === "invoice") {
-      return {
-        ok: false,
-        message:
-          "This Lightning connection is invoice-only. Reconnect with an admin LNDHub URL to send.",
       };
     }
     return {

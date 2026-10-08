@@ -1,6 +1,6 @@
 /**
  * Lightning node activity adapter — writes into the same activity_idx shape.
- * LNDHub history sync; BTCPay REST history later. Payment upserts from Send/Receive.
+ * LNDHub or BTCPay LND REST history sync. Payment upserts from Send/Receive.
  */
 
 import type { ArkadeNetworkId } from "../config/network";
@@ -13,10 +13,12 @@ import {
   type WalletRecord,
 } from "./walletRegistry";
 import { loadLndHubCredentials } from "../lightning/lndhubCredentials";
+import { loadLndRestCredentials } from "../lightning/lndCredentials";
 import {
   lndhubListHistory,
   type LightningPaymentInput,
 } from "../lightning/lndhub";
+import { lndListHistory } from "../lightning/lndRest";
 
 export type { LightningPaymentInput };
 
@@ -94,14 +96,26 @@ export function upsertLightningPayments(
   upsertActivityRows(networkId, walletId, settled.map(paymentToRow));
 }
 
-/** Pull LNDHub history; replace wallet activity so unpaid/ghost LN rows disappear. */
+/** Pull LNDHub or LND REST history; replace wallet activity so unpaid/ghost LN rows disappear. */
 export async function syncLightningHistory(
   networkId: ArkadeNetworkId,
   walletId: string,
 ): Promise<number> {
   const hub = await loadLndHubCredentials(walletId);
-  if (!hub) return 0;
-  const payments = await lndhubListHistory(hub, { limit: 50 });
+  const rest = hub ? null : await loadLndRestCredentials(walletId);
+  if (!hub && !rest) return 0;
+  const payments = hub
+    ? await lndhubListHistory(hub, { limit: 50 })
+    : await lndListHistory(
+        {
+          restUrl: rest!.restUrl,
+          macaroonHex: rest!.macaroonHex,
+          certThumbprint: rest!.certThumbprint,
+          allowInsecure: rest!.allowInsecure,
+          source: rest!.source,
+        },
+        { limit: 50 },
+      );
   const settled = payments.filter((p) => p.settled);
   const byHash = new Map<string, LightningPaymentInput>();
   for (const p of settled) {

@@ -18,6 +18,8 @@ import {
   parseBolt11AmountSats,
 } from "../lightning/lndhub";
 import { loadLndHubCredentials } from "../lightning/lndhubCredentials";
+import { loadLndRestCredentials } from "../lightning/lndCredentials";
+import { lndPayInvoice } from "../lightning/lndRest";
 import type { BasicWallet } from "../wallet/hdWallet";
 import {
   findMessageByRequestId,
@@ -78,17 +80,31 @@ export async function executeChatLightningPay(opts: {
         throw new Error("Payment cancelled.");
       }
       const hub = await loadLndHubCredentials(walletId);
-      if (!hub) throw new Error("LNDHub not connected for this wallet");
-      if (hub.role === "invoice") {
+      const rest = hub ? null : await loadLndRestCredentials(walletId);
+      if (!hub && !rest) {
+        throw new Error("Lightning node not connected for this wallet");
+      }
+      if (hub?.role === "invoice") {
         throw new Error(
           "This Lightning connection is invoice-only. Reconnect with an admin LNDHub URL to send.",
         );
       }
       notePendingSendFromThisDevice(networkId, walletId, amount, invoice);
       const invoiceAmt = parseBolt11AmountSats(invoice);
-      const result = await lndhubPayInvoice(hub, invoice, {
-        amountSats: invoiceAmt == null ? amount : undefined,
-      });
+      const amtOpt = invoiceAmt == null ? amount : undefined;
+      const result = hub
+        ? await lndhubPayInvoice(hub, invoice, { amountSats: amtOpt })
+        : await lndPayInvoice(
+            {
+              restUrl: rest!.restUrl,
+              macaroonHex: rest!.macaroonHex,
+              certThumbprint: rest!.certThumbprint,
+              allowInsecure: rest!.allowInsecure,
+              source: rest!.source,
+            },
+            invoice,
+            { amountSats: amtOpt },
+          );
       if (opts.signal?.aborted) {
         throw new Error("Payment cancelled.");
       }
