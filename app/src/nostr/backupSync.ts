@@ -308,8 +308,12 @@ export async function syncEncryptedBackupNow(reason: string): Promise<BackupPack
 /**
  * Debounced sync after UI is idle. Prefer this over syncEncryptedBackupNow
  * on unlock / navigation transitions.
+ *
+ * Always mark dirty first so a background kill / frozen timer before the
+ * debounce fires still flushes on the next unlock / no-lock resume.
  */
 export function scheduleEncryptedBackupSync(reason: string, delayMs = 8_000): void {
+  void markBackupPackageDirty().catch(() => {});
   if (debounceTimer) clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
     debounceTimer = undefined;

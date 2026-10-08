@@ -195,6 +195,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
       if (isPresencePromptActive()) return;
 
       if (next === "background") {
+        // Drop RAM passphrase whenever we leave the foreground (SecureStore keeps it).
         lockBackupPassphraseSession();
         if (lockEnabled && hasWallet) {
           autoPromptedRef.current = false;
@@ -204,9 +205,23 @@ export function AppLockGate({ children }: { children: ReactNode }) {
         }
         return;
       }
-      if (next === "active" && lockEnabled && hasWallet && !unlockedRef.current) {
+      if (next === "active") {
         if (isPresencePromptActive()) return;
-        void enterLocked();
+        if (lockEnabled && hasWallet && !unlockedRef.current) {
+          void enterLocked();
+          return;
+        }
+        // Biometrics lock OFF: background cleared the session but never reloads it
+        // (unlike afterUnlock). Without this, dirty home/Nostr uploads stay stuck
+        // forever after the first background — Settings still shows backup ON.
+        if (hasWallet && !lockEnabled) {
+          void (async () => {
+            const loaded = await unlockBackupPassphraseSession();
+            if (loaded && (await isBackupPackageDirty())) {
+              scheduleEncryptedBackupSync("resume-no-lock-dirty", 8_000);
+            }
+          })();
+        }
       }
     };
     const sub = AppState.addEventListener("change", onState);
