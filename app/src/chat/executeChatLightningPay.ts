@@ -1,16 +1,23 @@
 /**
- * Pay a BOLT11 invoice from the selected Arkade wallet (intents corridor).
- * Used for bot Bitrefill (and any chat pay_request with preferredReceive bolt11).
- * Confirm + biometrics stay in ChatThreadScreen. Always cancel-capable via AbortSignal.
+ * Pay a BOLT11 invoice from the selected wallet (Arkade LN corridor or LNDhub).
+ * Used for bot Bitrefill, human contact LN*, and any chat pay_request with bolt11.
+ * Confirm + biometrics stay in the screen. Always cancel-capable via AbortSignal.
  */
 
 import type { ArkadeNetworkId } from "../config/network";
+import { upsertLightningPayments } from "../account/lightningActivity";
+import { notePendingSendFromThisDevice, recordSentFromThisDevice } from "../account/txMeta";
 import { recordArkadeLnCorridorPay } from "../lightning/arkadeLnActivity";
 import {
   friendlyArkadeLnError,
   payArkadeLightning,
 } from "../lightning/arkadeLnSwap";
-import { normalizeBolt11 } from "../lightning/lndhub";
+import {
+  lndhubPayInvoice,
+  normalizeBolt11,
+  parseBolt11AmountSats,
+} from "../lightning/lndhub";
+import { loadLndHubCredentials } from "../lightning/lndhubCredentials";
 import type { BasicWallet } from "../wallet/hdWallet";
 import {
   findMessageByRequestId,
@@ -22,7 +29,8 @@ import { publishPaymentReceipt } from "./chatActions";
 import { newChatId } from "./types";
 
 export type ChatLightningPayHooks = {
-  wallet: BasicWallet;
+  /** Required for Arkade corridor; omit for LNDhub. */
+  wallet?: BasicWallet;
   walletId: string;
   networkId: ArkadeNetworkId;
   beginOutboundSend: () => void;
@@ -30,6 +38,8 @@ export type ChatLightningPayHooks = {
   applyLocalSpend: (sats: number) => void;
   bumpActivity?: () => void;
   refreshActivity?: () => Promise<void>;
+  /** Default: arkade when `wallet` is set, else lightning. */
+  rail?: "arkade" | "lightning";
 };
 
 export async function executeChatLightningPay(opts: {
@@ -49,7 +59,9 @@ export async function executeChatLightningPay(opts: {
   const invoice = normalizeBolt11(opts.bolt11);
   if (!invoice) throw new Error("Invalid Lightning invoice.");
 
-  const { wallet, walletId, networkId } = opts.hooks;
+  const { walletId, networkId } = opts.hooks;
+  const rail =
+    opts.hooks.rail ?? (opts.hooks.wallet ? "arkade" : "lightning");
   const paymentId = opts.paymentId?.trim() || newChatId("pay");
 
   opts.hooks.beginOutboundSend();
@@ -58,29 +70,73 @@ export async function executeChatLightningPay(opts: {
       updateChatMessage(opts.localMessageId, { status: "sending" });
     }
 
-    let paid: Awaited<ReturnType<typeof payArkadeLightning>>;
-    try {
-      paid = await payArkadeLightning({
-        wallet,
+    let settleId: string;
+    let spendSats = amount;
+
+    if (rail === "lightning") {
+      if (opts.signal?.aborted) {
+        throw new Error("Payment cancelled.");
+      }
+      const hub = await loadLndHubCredentials(walletId);
+      if (!hub) throw new Error("LNDHub not connected for this wallet");
+      if (hub.role === "invoice") {
+        throw new Error(
+          "This Lightning connection is invoice-only. Reconnect with an admin LNDHub URL to send.",
+        );
+      }
+      notePendingSendFromThisDevice(networkId, walletId, amount, invoice);
+      const invoiceAmt = parseBolt11AmountSats(invoice);
+      const result = await lndhubPayInvoice(hub, invoice, {
+        amountSats: invoiceAmt == null ? amount : undefined,
+      });
+      if (opts.signal?.aborted) {
+        throw new Error("Payment cancelled.");
+      }
+      const paymentHash = result.paymentHash.toLowerCase();
+      settleId = paymentHash;
+      spendSats = amount + (result.feeSats ?? 0);
+      const activityId = `ln-out-${paymentHash}`;
+      upsertLightningPayments(networkId, walletId, [
+        {
+          id: activityId,
+          amountSats: amount,
+          direction: "out",
+          createdAt: Date.now(),
+          settled: true,
+          memo: opts.memo,
+          paymentHash,
+          preimage: result.preimage,
+          feeSats: result.feeSats,
+        },
+      ]);
+      recordSentFromThisDevice(networkId, walletId, activityId);
+    } else {
+      const wallet = opts.hooks.wallet;
+      if (!wallet) throw new Error("Arkade wallet not open.");
+      let paid: Awaited<ReturnType<typeof payArkadeLightning>>;
+      try {
+        paid = await payArkadeLightning({
+          wallet,
+          networkId,
+          walletId,
+          bolt11: invoice,
+          signal: opts.signal,
+        });
+      } catch (e) {
+        throw new Error(friendlyArkadeLnError(e));
+      }
+      settleId = paid.swapId;
+      spendSats = paid.fundSats > 0 ? paid.fundSats : amount;
+      recordArkadeLnCorridorPay({
         networkId,
         walletId,
-        bolt11: invoice,
-        signal: opts.signal,
+        swapId: paid.swapId,
+        invoiceSats: paid.invoiceSats || amount,
+        feeSats: paid.feeSats,
       });
-    } catch (e) {
-      throw new Error(friendlyArkadeLnError(e));
     }
 
-    const spend = paid.fundSats > 0 ? paid.fundSats : amount;
-    opts.hooks.applyLocalSpend(spend);
-
-    recordArkadeLnCorridorPay({
-      networkId,
-      walletId,
-      swapId: paid.swapId,
-      invoiceSats: paid.invoiceSats || amount,
-      feeSats: paid.feeSats,
-    });
+    opts.hooks.applyLocalSpend(spendSats);
 
     let localId = opts.localMessageId ?? null;
     if (localId) {
@@ -110,7 +166,7 @@ export async function executeChatLightningPay(opts: {
       paymentId,
       amountSats: amount,
       memo: opts.memo,
-      txid: paid.swapId,
+      txid: settleId,
       rail: "lightning",
       relatedRequestId: opts.requestId ?? undefined,
     });
@@ -127,7 +183,7 @@ export async function executeChatLightningPay(opts: {
       }
     }
 
-    return { swapId: paid.swapId, paymentId };
+    return { swapId: settleId, paymentId };
   } finally {
     opts.hooks.endOutboundSend();
   }

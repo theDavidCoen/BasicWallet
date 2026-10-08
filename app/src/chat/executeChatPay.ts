@@ -28,7 +28,11 @@ import {
   recordOptimisticArkadeSend,
   upgradeLatestPendingSendTxid,
 } from "../account/activityStore";
-import { contactArkAddress, silentlyUpsertContactArkFromChat } from "./contactPeer";
+import {
+  contactArkAddress,
+  contactLnPayInput,
+  silentlyUpsertContactArkFromChat,
+} from "./contactPeer";
 import {
   insertChatMessage,
   findMessageByRequestId,
@@ -39,6 +43,9 @@ import { publishPaymentReceipt, replyPayRequestWithAddress } from "./chatActions
 import { newChatId } from "./types";
 import { findAlreadySettledOutbound } from "./reconcileOutboundChat";
 import { shouldRecordChatPayOptimisticActivity } from "./chatPaySettle";
+
+/** Selected Home wallet kind for chat destination matrix. */
+export type ChatPaySenderKind = "arkade" | "lightning";
 
 export type ChatPayWalletHooks = {
   wallet: BasicWallet;
@@ -83,18 +90,28 @@ function parsePayToBolt11(json: string | null | undefined): string | null {
 
 export type ChatPayTarget =
   | { kind: "ark"; address: string; source: "contact" | "request" }
-  | { kind: "bolt11"; invoice: string; source: "request" };
+  | { kind: "bolt11"; invoice: string; source: "request" }
+  | { kind: "ln-resolve"; input: string; source: "contact" };
 
 /**
  * Resolve pay destination for chat Send / Pay.
- * Request-attached bolt11 (bot Bitrefill invoices) wins over contact ark.
+ *
+ * Matrix (David):
+ * - Request bolt11 always wins (bot Bitrefill + peer invoices).
+ * - Arkade sender + contact/request ark → Ark (never LN when ark exists).
+ * - Arkade sender + no ark but LNURL / LN address / BIP353 → LN resolve.
+ * - LNDhub sender + LN* → LN (even if contact also has ark).
+ * - LNDhub + ark-only request/contact → honest refuse (cannot pay ark from LNDhub).
  */
 export function resolveChatPayTarget(opts: {
   contactId: string;
   requestId?: string | null;
+  senderKind?: ChatPaySenderKind;
 }): ChatPayTarget {
   const contact = getContact(opts.contactId);
   if (!contact) throw new Error("Contact not found.");
+  const senderKind: ChatPaySenderKind = opts.senderKind ?? "arkade";
+  const lnInput = contactLnPayInput(contact);
 
   if (opts.requestId) {
     const msg = findMessageByRequestId(opts.contactId, opts.requestId);
@@ -104,24 +121,47 @@ export function resolveChatPayTarget(opts: {
     }
     const fromReq = parsePayToArk(msg?.payToJson);
     if (fromReq) {
+      if (senderKind === "lightning") {
+        throw new Error(
+          "This request asks for Ark. Switch to an Arkade wallet to pay, or ask them for a Lightning invoice.",
+        );
+      }
       silentlyUpsertContactArkFromChat(opts.contactId, fromReq);
       return { kind: "ark", address: fromReq, source: "request" };
     }
   }
 
   const stored = contactArkAddress(contact);
-  if (stored && isValidArkAddress(stored)) {
-    return { kind: "ark", address: stored, source: "contact" };
+  if (senderKind === "arkade") {
+    if (stored && isValidArkAddress(stored)) {
+      return { kind: "ark", address: stored, source: "contact" };
+    }
+    if (lnInput) {
+      return { kind: "ln-resolve", input: lnInput, source: "contact" };
+    }
+    throw new Error(
+      "No ark address or Lightning destination for this contact. Add an ark… address, Lightning Address, LNURL, or BIP353, or wait for a request with a pay destination.",
+    );
   }
 
+  // LNDhub: prefer contact LN*; cannot settle ark from this wallet.
+  if (lnInput) {
+    return { kind: "ln-resolve", input: lnInput, source: "contact" };
+  }
+  if (stored && isValidArkAddress(stored)) {
+    throw new Error(
+      "This contact only has an ark address. Switch to an Arkade wallet, or add a Lightning Address / LNURL / BIP353 on the contact.",
+    );
+  }
   throw new Error(
-    "No ark address or Lightning invoice for this request. They need to share an ark… address (or include one on the request).",
+    "No Lightning destination for this contact. Add a Lightning Address, LNURL, or BIP353.",
   );
 }
 
 export function resolveChatPayDestination(opts: {
   contactId: string;
   requestId?: string | null;
+  senderKind?: ChatPaySenderKind;
 }): { address: string; source: "contact" | "request" } {
   const target = resolveChatPayTarget(opts);
   if (target.kind !== "ark") {

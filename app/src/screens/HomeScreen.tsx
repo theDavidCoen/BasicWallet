@@ -11,6 +11,7 @@ import {
   View,
   type LayoutChangeEvent,
 } from "react-native";
+import Svg, { Path } from "react-native-svg";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import {
   cancelAnimation,
@@ -862,7 +863,7 @@ export function HomeScreen() {
             </GestureDetector>
 
             <Pressable
-              style={styles.chatPayCard}
+              style={styles.chatPayEntry}
               onPress={() => navigation.navigate("PayHub")}
               accessibilityRole="button"
               accessibilityLabel={
@@ -871,16 +872,32 @@ export function HomeScreen() {
                   : t("home.chatAndPayA11y")
               }
             >
-              {chatUnreadTotal > 0 ? (
-                <View style={styles.chatPayBadge} pointerEvents="none">
-                  <Text style={styles.chatPayBadgeText}>
-                    {chatUnreadTotal > 99 ? "99+" : String(chatUnreadTotal)}
-                  </Text>
-                </View>
-              ) : null}
-              <Text style={styles.chatPayTitle}>
-                {t("home.chatAndPay")}
-              </Text>
+              <View style={styles.chatPayTitleRow}>
+                <Svg
+                  width={26}
+                  height={24}
+                  viewBox="0 0 26 24"
+                  accessibilityElementsHidden
+                  importantForAccessibility="no"
+                >
+                  {/* Rounder speech bubble (mock: thin white stroke, bottom-left tail). */}
+                  <Path
+                    d="M13 2c6.075 0 11 3.806 11 8.5S19.075 19 13 19c-1.35 0-2.63-.19-3.78-.53L4.5 21.5l1.35-3.55C3.5 16.5 2 14.65 2 10.5 2 5.806 6.925 2 13 2Z"
+                    fill="none"
+                    stroke={colors.fg}
+                    strokeWidth={1.45}
+                    strokeLinejoin="round"
+                  />
+                </Svg>
+                <Text style={styles.ghostLabel}>{t("home.chatAndPay")}</Text>
+                {chatUnreadTotal > 0 ? (
+                  <View style={styles.chatPayBadge} pointerEvents="none">
+                    <Text style={styles.chatPayBadgeText}>
+                      {chatUnreadTotal > 99 ? "99+" : String(chatUnreadTotal)}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
               <Text style={styles.chatPayHint} numberOfLines={2}>
                 {t("home.chatAndPayHint")}
               </Text>
@@ -1099,24 +1116,22 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: colors.fg,
   },
-  /** Same horizontal span as Receive+Send (maxWidth 160 each + gap 16). */
-  chatPayCard: {
+  /** Under Receive/Send: icon + title (ghostLabel size) + caption; no card. */
+  chatPayEntry: {
     alignSelf: "center",
-    width: "100%",
-    maxWidth: 336,
-    backgroundColor: colors.card,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
+    alignItems: "center",
     paddingVertical: 14,
     paddingHorizontal: 16,
     marginBottom: 4,
-    position: "relative",
+    minWidth: 160,
+  },
+  chatPayTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
   },
   chatPayBadge: {
-    position: "absolute",
-    top: 8,
-    right: 10,
     minWidth: 22,
     height: 22,
     borderRadius: 11,
@@ -1124,19 +1139,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.fg,
     alignItems: "center",
     justifyContent: "center",
-    zIndex: 1,
   },
   chatPayBadgeText: {
     fontFamily: "JetBrainsMono_700Bold",
     fontSize: 11,
     color: colors.bg,
     lineHeight: 14,
-  },
-  chatPayTitle: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 15,
-    color: colors.fg,
-    textAlign: "center",
   },
   chatPayHint: {
     fontFamily: "JetBrainsMono_400Regular",
