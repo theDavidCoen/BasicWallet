@@ -72,8 +72,8 @@ async function lndFetch<T>(
     }
     throw new Error(
       detail
-        ? `LND REST ${res.status}: ${detail}`
-        : `LND REST request failed (${res.status})`,
+        ? `LND REST ${res.status} ${path}: ${detail}`
+        : `LND REST request failed (${res.status} ${path})`,
     );
   }
 
@@ -223,8 +223,12 @@ export async function lndInvoiceStatus(
 }
 
 /**
- * Pay a BOLT11 via LND REST (`POST /v1/channels/transactions`).
- * Amount-less invoices need `amountSats`.
+ * Pay a BOLT11 via LND REST router (`POST /v2/router/send`).
+ *
+ * BTCPay's public LND REST proxy (`/lnd-rest/btc`) does **not** expose the
+ * deprecated `POST /v1/channels/transactions` (SendPaymentSync) — it 404s with
+ * gRPC code 5. Balance/getinfo still use `/v1/...`. Amount-less invoices need
+ * `amountSats`.
  */
 export async function lndPayInvoice(
   cfg: LndRestConfig,
@@ -248,41 +252,84 @@ export async function lndPayInvoice(
     );
   }
 
-  const body: Record<string, string> = { payment_request: invoice };
+  const body: Record<string, unknown> = {
+    payment_request: invoice,
+    timeout_seconds: 60,
+    // Single final Payment update (not an NDJSON stream of in-flight hops).
+    no_inflight_updates: true,
+  };
   if (invoiceAmt == null && override != null && override > 0) {
     body.amt = String(override);
   }
 
-  const raw = await lndFetch<{
-    payment_error?: string;
-    payment_hash?: unknown;
-    payment_preimage?: unknown;
-    payment_route?: { total_fees?: string | number; total_fees_msat?: string | number };
-  }>(cfg, "/v1/channels/transactions", {
+  const path = "/v2/router/send";
+  const url = joinUrl(cfg.restUrl, path);
+  const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "Grpc-Metadata-macaroon": cfg.macaroonHex,
+    },
     body: JSON.stringify(body),
   });
 
-  if (raw.payment_error) {
-    throw new Error(String(raw.payment_error));
+  const text = await res.text();
+  if (!res.ok) {
+    const detail = text.slice(0, 200);
+    throw new Error(
+      detail
+        ? `LND REST ${res.status} ${path}: ${detail}`
+        : `LND REST request failed (${res.status} ${path})`,
+    );
+  }
+
+  // Router may still return NDJSON (one object per line) even with
+  // no_inflight_updates; take the last non-empty JSON object.
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  let raw: Record<string, unknown> | null = null;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      raw = JSON.parse(lines[i]!) as Record<string, unknown>;
+      break;
+    } catch {
+      /* try previous line */
+    }
+  }
+  if (!raw && text.trim()) {
+    try {
+      raw = JSON.parse(text.trim()) as Record<string, unknown>;
+    } catch {
+      /* */
+    }
+  }
+  if (!raw) throw new Error("LND REST returned no payment result");
+
+  const status = String(raw.status ?? "").toUpperCase();
+  if (status && status !== "SUCCEEDED") {
+    const reason =
+      typeof raw.failure_reason === "string" && raw.failure_reason
+        ? raw.failure_reason
+        : typeof raw.payment_error === "string" && raw.payment_error
+          ? raw.payment_error
+          : status || "Payment failed";
+    throw new Error(reason.replace(/^FAILURE_REASON_/, "").replace(/_/g, " "));
   }
 
   const paymentHash = hashToHex(raw.payment_hash);
   if (!paymentHash) throw new Error("LND REST returned no payment hash");
   const preimage = hashToHex(raw.payment_preimage) || undefined;
-  let feeSats: number | undefined;
-  const route = raw.payment_route;
-  if (route) {
-    if (route.total_fees != null) feeSats = amountSats(route.total_fees);
-    else if (route.total_fees_msat != null) {
-      feeSats = Math.floor(amountSats(route.total_fees_msat) / 1000);
-    }
-  }
+  const feeSats =
+    amountSats(raw.fee_sat) ||
+    Math.floor(amountSats(raw.fee_msat) / 1000) ||
+    undefined;
   return {
     paymentHash,
     preimage: preimage && !/^0+$/.test(preimage) ? preimage : undefined,
-    feeSats,
+    feeSats: feeSats && feeSats > 0 ? feeSats : undefined,
   };
 }
 
