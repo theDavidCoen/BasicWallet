@@ -36,6 +36,11 @@ import {
   contactInitials,
   kindPillLabel,
 } from "../contacts/types";
+import {
+  applyPublicProfileToContact,
+  contactNpubPubkeyHex,
+  fetchNostrMetadata,
+} from "../nostr/profileMetadata";
 import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
@@ -52,11 +57,67 @@ export function ContactEditScreen() {
   const [verifyBusy, setVerifyBusy] = useState<string | null>(null);
   const [verifyMsg, setVerifyMsg] = useState<Record<string, string>>({});
   const [shareOpen, setShareOpen] = useState(false);
+  const [profileSyncHint, setProfileSyncHint] = useState<string | null>(null);
 
   useEffect(() => {
     if (!contactId) return;
     const existing = getContact(contactId);
     if (existing) setDraft(existing);
+  }, [contactId]);
+
+  // Pull public kind 0 for contacts with an npub. Never overwrites note / custom fields.
+  useEffect(() => {
+    if (!contactId) return;
+    let cancelled = false;
+    void (async () => {
+      const existing = getContact(contactId);
+      if (!existing) return;
+      const pk = contactNpubPubkeyHex(existing);
+      if (!pk) return;
+      setProfileSyncHint("Refreshing public Nostr profile…");
+      try {
+        const meta = await fetchNostrMetadata(pk);
+        if (cancelled) return;
+        if (!meta) {
+          setProfileSyncHint(null);
+          return;
+        }
+        const publicMerged = applyPublicProfileToContact(existing, meta);
+        setDraft((d) => {
+          const next: Contact = {
+            ...publicMerged,
+            // Keep private contact-card data from the open form / local store.
+            note: d.note,
+            fields: d.fields,
+            surname: d.surname,
+          };
+          if (
+            next.name === d.name &&
+            next.identifiers === d.identifiers &&
+            next.note === d.note &&
+            next.fields === d.fields &&
+            next.surname === d.surname
+          ) {
+            return d;
+          }
+          try {
+            upsertContact(next);
+          } catch (e) {
+            console.warn("[basic] contact kind0 upsert failed", e);
+          }
+          return next;
+        });
+        setProfileSyncHint("Public profile updated from Nostr.");
+      } catch (e) {
+        if (!cancelled) {
+          console.warn("[basic] contact kind0 refresh failed", e);
+          setProfileSyncHint(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [contactId]);
 
   const title = isNew ? t("contacts.addTitle") : t("contacts.editTitle");
@@ -193,6 +254,9 @@ export function ContactEditScreen() {
       <View style={styles.avatar}>
         <Text style={styles.avatarText}>{initials}</Text>
       </View>
+      {profileSyncHint ? (
+        <Text style={[ui.hint, { marginBottom: 8 }]}>{profileSyncHint}</Text>
+      ) : null}
 
       <ScrollView
         style={styles.scroll}
