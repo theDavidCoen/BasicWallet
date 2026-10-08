@@ -859,49 +859,50 @@ export function HomeScreen() {
                   </Text>
                 </Pressable>
               </View>
+
+              {/* Inside center cluster so it sits under Receive/Send (not below flex:1). */}
+              <Pressable
+                style={styles.chatPayEntry}
+                onPress={() => navigation.navigate("PayHub")}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  chatUnreadTotal > 0
+                    ? t("home.chatAndPayA11yUnread", { count: chatUnreadTotal })
+                    : t("home.chatAndPayA11y")
+                }
+              >
+                <View style={styles.chatPayTitleRow}>
+                  <Svg
+                    width={26}
+                    height={24}
+                    viewBox="0 0 26 24"
+                    accessibilityElementsHidden
+                    importantForAccessibility="no"
+                  >
+                    {/* Rounder speech bubble (mock: thin white stroke, bottom-left tail). */}
+                    <Path
+                      d="M13 2c6.075 0 11 3.806 11 8.5S19.075 19 13 19c-1.35 0-2.63-.19-3.78-.53L4.5 21.5l1.35-3.55C3.5 16.5 2 14.65 2 10.5 2 5.806 6.925 2 13 2Z"
+                      fill="none"
+                      stroke={colors.fg}
+                      strokeWidth={1.45}
+                      strokeLinejoin="round"
+                    />
+                  </Svg>
+                  <Text style={styles.ghostLabel}>{t("home.chatAndPay")}</Text>
+                  {chatUnreadTotal > 0 ? (
+                    <View style={styles.chatPayBadge} pointerEvents="none">
+                      <Text style={styles.chatPayBadgeText}>
+                        {chatUnreadTotal > 99 ? "99+" : String(chatUnreadTotal)}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+                <Text style={styles.chatPayHint} numberOfLines={2}>
+                  {t("home.chatAndPayHint")}
+                </Text>
+              </Pressable>
             </View>
             </GestureDetector>
-
-            <Pressable
-              style={styles.chatPayEntry}
-              onPress={() => navigation.navigate("PayHub")}
-              accessibilityRole="button"
-              accessibilityLabel={
-                chatUnreadTotal > 0
-                  ? t("home.chatAndPayA11yUnread", { count: chatUnreadTotal })
-                  : t("home.chatAndPayA11y")
-              }
-            >
-              <View style={styles.chatPayTitleRow}>
-                <Svg
-                  width={26}
-                  height={24}
-                  viewBox="0 0 26 24"
-                  accessibilityElementsHidden
-                  importantForAccessibility="no"
-                >
-                  {/* Rounder speech bubble (mock: thin white stroke, bottom-left tail). */}
-                  <Path
-                    d="M13 2c6.075 0 11 3.806 11 8.5S19.075 19 13 19c-1.35 0-2.63-.19-3.78-.53L4.5 21.5l1.35-3.55C3.5 16.5 2 14.65 2 10.5 2 5.806 6.925 2 13 2Z"
-                    fill="none"
-                    stroke={colors.fg}
-                    strokeWidth={1.45}
-                    strokeLinejoin="round"
-                  />
-                </Svg>
-                <Text style={styles.ghostLabel}>{t("home.chatAndPay")}</Text>
-                {chatUnreadTotal > 0 ? (
-                  <View style={styles.chatPayBadge} pointerEvents="none">
-                    <Text style={styles.chatPayBadgeText}>
-                      {chatUnreadTotal > 99 ? "99+" : String(chatUnreadTotal)}
-                    </Text>
-                  </View>
-                ) : null}
-              </View>
-              <Text style={styles.chatPayHint} numberOfLines={2}>
-                {t("home.chatAndPayHint")}
-              </Text>
-            </Pressable>
 
             <GestureDetector gesture={pan}>
               <View
@@ -1116,13 +1117,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: colors.fg,
   },
-  /** Under Receive/Send: icon + title (ghostLabel size) + caption; no card. */
+  /** Under Receive/Send (inside center cluster): icon + ghostLabel + caption; no card. */
   chatPayEntry: {
     alignSelf: "center",
     alignItems: "center",
-    paddingVertical: 14,
+    marginTop: 20,
+    paddingVertical: 10,
     paddingHorizontal: 16,
-    marginBottom: 4,
     minWidth: 160,
   },
   chatPayTitleRow: {
