@@ -21,7 +21,7 @@ Use at your own risk. There is no warranty.
 
 ## Download
 
-Latest release: **[v0.9.4](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.9.4)** (arm64-v8a APK + SHA256).
+Latest release: **[v0.9.5](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.9.5)** (arm64-v8a APK + SHA256).
 
 All builds: [Releases](https://github.com/theDavidCoen/BasicWallet/releases). Prefer verifying the checksum before install.
 
@@ -64,7 +64,7 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 - Export recovery phrase only after presence checks (screen capture blocked where wired)
 - **Continue with passkey** (WebAuthn / Credential Manager PRF → Personal seed + Nostr identity)
 - **Pair with Bluetooth** — move wallets / nsec to a nearby phone on the welcome screen (lobby code + biometrics; passkeys stay on Device 1)
-- **Manage a Nostr identity** (kind 0 profile broadcast from Identity); Advanced Backup (Nostr relays and/or home server), including Fiat/Maxi prefs in the Path C package; Path C / Nextcloud dirty flush resumes when app lock is off
+- **Manage a Nostr identity** (kind 0 profile broadcast from Identity); Advanced Backup (Nostr relays and/or home server), including Fiat/Maxi prefs in the Path C package; Path C dirty flag clears only after a successful upload, flushes after biometric unlock, and unlocks+retries Nextcloud 423 Locked once
 - Maintain **contacts** (npub, NIP-05, BIP-353, etc.) and share a contact over Nostr
 - **Pay in Chat** — Home **Chat & Pay** hub; 1:1 Nostr threads with text plus send/request (Arkade + Lightning BOLT11 for human contacts); classic Send stays separate
 - **Ask Cursor** — paste a Cursor API key in Settings → Provider Settings → Cursor; then use **Ask Cursor** in Chat & Pay (owner-only bot; shopping MCPs stay on your Cursor Dashboard). **New session** / `/new` clears the bot thread without relay revive; `/stop` cancels in-flight work
@@ -75,6 +75,17 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 Expect bugs, incomplete screens, and breaking changes between `0.x` alphas.
 
 Gestures (Activity pull, Home pull-down resync, POS/Scan swipes, Send Enter/Paste/My wallets/Scan, Fiat Mode icon): [`docs/how-to-use.md`](./docs/how-to-use.md#shortcuts--gestures). Bluetooth pair / fast login: [`docs/how-to-use.md`](./docs/how-to-use.md#bluetooth-pair--fast-login).
+
+## Lightning node (LNDhub / LND REST)
+
+Optional linked Lightning wallets (separate from Arkade Personal intents). Open **Add wallet → Connect node** (or Settings → Connect node):
+
+| Provider | How to connect | Notes |
+|----------|----------------|-------|
+| **LNDhub** (LNbits) | Scan or paste `lndhub://admin:…@https://…/lndhub/ext/` (or invoice role) | Prefer **admin** for send + receive; invoice-only can receive |
+| **BTCPay LND REST** | BTCPay → Services → LND (REST); paste or scan the config | Macaroon + REST URL stay on device |
+
+Once connected and selected, you get **balance**, classic **Send** / **Receive**, **POS**, and **Activity** (BOLT11; LNURL / Lightning Address resolve where supported). No in-app channel management. Not Boltz. NWC / manual macaroon rows are still “soon”.
 
 ## Repository layout
 
@@ -112,7 +123,7 @@ Ideas on the roadmap (design, Penpot, or partial code; not commitments):
 - **Richer Lightning** — more solvers / corridors; clearer node vs Personal UX (Personal Arkade LN pay + BIP21 embed shipped in 0.9.0)
 - **Contacts** — richer identifiers, better share/receive reliability across relays
 - **iOS** — first-class iOS build (Android is the current focus)
-- **License + public audit trail** — ship a `LICENSE` on GitHub and keep reproducible artifacts easy to verify
+- **Public audit trail** — keep reproducible artifacts easy to verify
 
 Specs that drive this list: [`prototype/docs/ux-ui-spec.md`](./prototype/docs/ux-ui-spec.md), [`prototype/docs/arkade-wallet-tech-spec.md`](./prototype/docs/arkade-wallet-tech-spec.md), [`prototype/docs/backup-passkey-nostr.md`](./prototype/docs/backup-passkey-nostr.md).
 
@@ -126,4 +137,4 @@ If you only want a production-ready Arkade experience, use the official [arkade.
 
 ## License
 
-License file may still be pending on this repo (`APP_LICENSE_URL` in-app may be `#`). Do not assume redistribution rights until a `LICENSE` is published.
+[MIT](./LICENSE) — Copyright (c) 2026 David Coen. In-app About links to the GitHub blob URL.
