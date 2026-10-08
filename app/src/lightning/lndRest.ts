@@ -223,12 +223,57 @@ export async function lndInvoiceStatus(
 }
 
 /**
+ * LND REST streaming envelopes put the RPC message under `result`
+ * (see lightningnetwork/lnd docs/rest/websockets.md).
+ */
+function unwrapLndRestMessage(raw: Record<string, unknown>): Record<string, unknown> {
+  const result = raw.result;
+  if (result && typeof result === "object" && !Array.isArray(result)) {
+    return result as Record<string, unknown>;
+  }
+  return raw;
+}
+
+function parseLndRestStreamBody(text: string): Record<string, unknown> {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  // SendPaymentV2 is server-streaming; with no_inflight_updates only the
+  // terminal Payment is sent — still may be one NDJSON line or a wrapper.
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      return unwrapLndRestMessage(JSON.parse(lines[i]!) as Record<string, unknown>);
+    } catch {
+      /* try previous line */
+    }
+  }
+  if (text.trim()) {
+    try {
+      return unwrapLndRestMessage(JSON.parse(text.trim()) as Record<string, unknown>);
+    } catch {
+      /* */
+    }
+  }
+  throw new Error(
+    text.trim()
+      ? `LND REST returned unreadable payment result: ${text.slice(0, 160)}`
+      : "LND REST returned empty payment stream",
+  );
+}
+
+/**
  * Pay a BOLT11 via LND REST router (`POST /v2/router/send`).
  *
- * BTCPay's public LND REST proxy (`/lnd-rest/btc`) does **not** expose the
- * deprecated `POST /v1/channels/transactions` (SendPaymentSync) — it 404s with
- * gRPC code 5. Balance/getinfo still use `/v1/...`. Amount-less invoices need
- * `amountSats`.
+ * Docs followed:
+ * - BTCPay: https://docs.btcpayserver.org/Docker/networking/#lnd-rest-and-grpc-apis
+ *   REST base `https://{BTCPAY_HOST}/lnd-rest/btc/`, macaroon header
+ *   `Grpc-Metadata-macaroon` (hex).
+ * - LND SendPaymentV2: https://lightning.engineering/api-docs/api/lnd/router/send-payment-v2/
+ *   POST `/v2/router/send`, body `payment_request` + `timeout_seconds` +
+ *   `fee_limit_sat` (default 0 → only zero-fee routes; set non-zero),
+ *   `no_inflight_updates` for a single terminal Payment. Streaming response;
+ *   unwrap `result` per lnd REST websocket docs.
  */
 export async function lndPayInvoice(
   cfg: LndRestConfig,
@@ -252,10 +297,14 @@ export async function lndPayInvoice(
     );
   }
 
+  const payAmt = invoiceAmt ?? override!;
+  // API: default fee_limit_sat=0 only considers zero-fee routes → NO_ROUTE.
+  const feeLimitSat = Math.max(10, Math.ceil(payAmt * 0.05));
+
   const body: Record<string, unknown> = {
     payment_request: invoice,
     timeout_seconds: 60,
-    // Single final Payment update (not an NDJSON stream of in-flight hops).
+    fee_limit_sat: String(feeLimitSat),
     no_inflight_updates: true,
   };
   if (invoiceAmt == null && override != null && override > 0) {
@@ -269,6 +318,7 @@ export async function lndPayInvoice(
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
+      // BTCPay + LND REST: hex macaroon in Grpc-Metadata-macaroon.
       "Grpc-Metadata-macaroon": cfg.macaroonHex,
     },
     body: JSON.stringify(body),
@@ -284,47 +334,44 @@ export async function lndPayInvoice(
     );
   }
 
-  // Router may still return NDJSON (one object per line) even with
-  // no_inflight_updates; take the last non-empty JSON object.
-  const lines = text
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-  let raw: Record<string, unknown> | null = null;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    try {
-      raw = JSON.parse(lines[i]!) as Record<string, unknown>;
-      break;
-    } catch {
-      /* try previous line */
-    }
-  }
-  if (!raw && text.trim()) {
-    try {
-      raw = JSON.parse(text.trim()) as Record<string, unknown>;
-    } catch {
-      /* */
-    }
-  }
-  if (!raw) throw new Error("LND REST returned no payment result");
+  const payment = parseLndRestStreamBody(text);
 
-  const status = String(raw.status ?? "").toUpperCase();
+  // Top-level error object (some proxies) before a Payment message.
+  if (payment.error && typeof payment.error === "object") {
+    const err = payment.error as { message?: string; code?: number };
+    throw new Error(err.message?.trim() || `LND REST error code ${err.code ?? "?"}`);
+  }
+  if (typeof payment.message === "string" && payment.code != null && !payment.status) {
+    throw new Error(payment.message);
+  }
+
+  const status = String(payment.status ?? "").toUpperCase();
   if (status && status !== "SUCCEEDED") {
     const reason =
-      typeof raw.failure_reason === "string" && raw.failure_reason
-        ? raw.failure_reason
-        : typeof raw.payment_error === "string" && raw.payment_error
-          ? raw.payment_error
+      typeof payment.failure_reason === "string" && payment.failure_reason
+        ? payment.failure_reason
+        : typeof payment.payment_error === "string" && payment.payment_error
+          ? payment.payment_error
           : status || "Payment failed";
     throw new Error(reason.replace(/^FAILURE_REASON_/, "").replace(/_/g, " "));
   }
+  if (!status) {
+    throw new Error(
+      `LND REST payment missing status: ${JSON.stringify(payment).slice(0, 160)}`,
+    );
+  }
 
-  const paymentHash = hashToHex(raw.payment_hash);
-  if (!paymentHash) throw new Error("LND REST returned no payment hash");
-  const preimage = hashToHex(raw.payment_preimage) || undefined;
+  // Payment.payment_hash is a string (hex) in the REST Payment schema.
+  const paymentHash = hashToHex(payment.payment_hash);
+  if (!paymentHash) {
+    throw new Error(
+      `LND REST returned no payment hash: ${JSON.stringify(payment).slice(0, 160)}`,
+    );
+  }
+  const preimage = hashToHex(payment.payment_preimage) || undefined;
   const feeSats =
-    amountSats(raw.fee_sat) ||
-    Math.floor(amountSats(raw.fee_msat) / 1000) ||
+    amountSats(payment.fee_sat) ||
+    Math.floor(amountSats(payment.fee_msat) / 1000) ||
     undefined;
   return {
     paymentHash,
