@@ -51,6 +51,8 @@ import {
   type LnPayProbe,
 } from "../lightning/lnPayResolve";
 import { loadLndHubCredentials } from "../lightning/lndhubCredentials";
+import { loadLndRestCredentials } from "../lightning/lndCredentials";
+import { lndPayInvoice } from "../lightning/lndRest";
 import { requireUserPresence } from "../security/userPresence";
 import { useSheets } from "../navigation/SheetHost";
 import { useI18n } from "../i18n";
@@ -449,9 +451,16 @@ export function SendScreen() {
       return;
     }
     const wid = selectedWallet.id;
-    void loadLndHubCredentials(wid).then((hub) => {
-      setLnRole(hub?.role ?? null);
-    });
+    void (async () => {
+      const hub = await loadLndHubCredentials(wid);
+      if (hub) {
+        setLnRole(hub.role);
+        return;
+      }
+      // BTCPay LND REST macaroon is send-capable (not invoice-only LNDHub).
+      const rest = await loadLndRestCredentials(wid);
+      setLnRole(rest ? "admin" : null);
+    })();
   }, [isLightning, selectedWallet?.id]);
 
   useEffect(() => {
@@ -1055,8 +1064,9 @@ export function SendScreen() {
       beginOutboundSend();
       try {
         const hub = await loadLndHubCredentials(walletId);
-        if (!hub) {
-          throw new Error("LNDHub not connected for this wallet");
+        const rest = hub ? null : await loadLndRestCredentials(walletId);
+        if (!hub && !rest) {
+          throw new Error("Lightning node not connected for this wallet");
         }
 
         const resolved = await withTimeout(
@@ -1071,12 +1081,24 @@ export function SendScreen() {
 
         notePendingSendFromThisDevice(network.id, walletId, resolved.amountSats, resolved.display);
         const invoiceAmt = parseBolt11AmountSats(resolved.bolt11);
+        const amtOpt =
+          invoiceAmt == null ? resolved.amountSats : undefined;
         const result = await withTimeout(
-          lndhubPayInvoice(hub, resolved.bolt11, {
-            amountSats: invoiceAmt == null ? resolved.amountSats : undefined,
-          }),
+          hub
+            ? lndhubPayInvoice(hub, resolved.bolt11, { amountSats: amtOpt })
+            : lndPayInvoice(
+                {
+                  restUrl: rest!.restUrl,
+                  macaroonHex: rest!.macaroonHex,
+                  certThumbprint: rest!.certThumbprint,
+                  allowInsecure: rest!.allowInsecure,
+                  source: rest!.source,
+                },
+                resolved.bolt11,
+                { amountSats: amtOpt },
+              ),
           LN_SEND_TIMEOUT_MS,
-          "lndhubPayInvoice",
+          hub ? "lndhubPayInvoice" : "lndPayInvoice",
         );
         const paymentHash = result.paymentHash.toLowerCase();
         const activityId = `ln-out-${paymentHash}`;

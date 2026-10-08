@@ -1,6 +1,6 @@
 /**
  * Settings → Connected node: status for the *selected* wallet.
- * Lightning → LNDHub probe. Arkade → operator + explorer from network config.
+ * Lightning → LNDHub or LND REST (BTCPay) probe. Arkade → operator + explorer.
  * Connecting a new Lightning node is only via Add Wallet → Connect Lightning Node.
  */
 
@@ -19,6 +19,8 @@ import { ScreenChrome } from "../components/ScreenChrome";
 import { getNetworkConfig } from "../config/network";
 import { probeLndHub } from "../lightning/lndhub";
 import { loadLndHubCredentials } from "../lightning/lndhubCredentials";
+import { loadLndRestCredentials } from "../lightning/lndCredentials";
+import { lndRestHostLabel, probeLndRest } from "../lightning/lndRest";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 import { useWallet } from "../wallet/WalletProvider";
@@ -28,6 +30,7 @@ type LnStatus = {
   alias?: string;
   host?: string;
   role?: string;
+  provider?: string;
   balanceSats?: number;
   error?: string;
   walletLabel?: string;
@@ -56,25 +59,50 @@ export function ConnectedNodeScreen() {
       void (async () => {
         try {
           const hub = await loadLndHubCredentials(walletId);
-          if (!hub) {
+          if (hub) {
+            const probed = await probeLndHub(hub);
+            if (!cancelled) {
+              setLn({
+                state: "ok",
+                alias: probed.alias || hub.alias || hub.hostLabel,
+                host: hub.hostLabel,
+                role: hub.role,
+                provider: "LNDHub",
+                balanceSats: probed.balance.availableSats,
+                walletLabel,
+                tag,
+              });
+            }
+            return;
+          }
+
+          const rest = await loadLndRestCredentials(walletId);
+          if (!rest) {
             if (!cancelled) {
               setLn({
                 state: "missing",
                 walletLabel,
                 tag,
-                error: "No LNDHub credentials for this wallet.",
+                error: "No Lightning credentials for this wallet.",
               });
             }
             return;
           }
-          const probed = await probeLndHub(hub);
+
+          const probed = await probeLndRest({
+            restUrl: rest.restUrl,
+            macaroonHex: rest.macaroonHex,
+            certThumbprint: rest.certThumbprint,
+            allowInsecure: rest.allowInsecure,
+            source: rest.source,
+          });
           if (!cancelled) {
             setLn({
               state: "ok",
-              alias: probed.alias || hub.alias || hub.hostLabel,
-              host: hub.hostLabel,
-              role: hub.role,
-              balanceSats: probed.balance.availableSats,
+              alias: probed.info.alias || rest.alias || walletLabel,
+              host: lndRestHostLabel(rest.restUrl),
+              provider: tag === "BTCPay" ? "BTCPay · LND REST" : "LND REST",
+              balanceSats: probed.balance.localSats,
               walletLabel,
               tag,
             });
@@ -165,6 +193,9 @@ function LightningPanel({
           <Text style={[styles.alias, { marginTop: 12 }]}>{ln.alias}</Text>
         ) : null}
         {ln.host ? <Text style={styles.meta}>Host · {ln.host}</Text> : null}
+        {ln.provider ? (
+          <Text style={styles.meta}>Provider · {ln.provider}</Text>
+        ) : null}
         {ln.role ? (
           <Text style={styles.meta}>
             Key · {ln.role === "admin" ? "admin (send + receive)" : "invoice-only (receive)"}

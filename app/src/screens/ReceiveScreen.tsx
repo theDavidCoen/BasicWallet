@@ -33,6 +33,12 @@ import {
   type LndHubInvoice,
 } from "../lightning/lndhub";
 import { loadLndHubCredentials } from "../lightning/lndhubCredentials";
+import { loadLndRestCredentials } from "../lightning/lndCredentials";
+import {
+  lndCreateInvoice,
+  lndInvoiceStatus,
+  type LndRestInvoice,
+} from "../lightning/lndRest";
 import {
   encodePosBip21WithOptionalLn,
   watchArkadeLnReceive,
@@ -164,7 +170,7 @@ export function ReceiveScreen() {
   // —— Lightning receive ——
   const [lnAmount, setLnAmount] = useState("");
   const [lnMemo, setLnMemo] = useState("");
-  const [lnInvoice, setLnInvoice] = useState<LndHubInvoice | null>(null);
+  const [lnInvoice, setLnInvoice] = useState<LndHubInvoice | LndRestInvoice | null>(null);
   const [lnSettled, setLnSettled] = useState(false);
   const [lnBusy, setLnBusy] = useState(false);
   const settleStopRef = useRef(false);
@@ -245,8 +251,20 @@ export function ReceiveScreen() {
       if (cancelled || settleStopRef.current) return;
       try {
         const hub = await loadLndHubCredentials(walletId);
-        if (!hub) return;
-        const status = await lndhubInvoiceStatus(hub, lnInvoice.paymentHash);
+        const rest = hub ? null : await loadLndRestCredentials(walletId);
+        if (!hub && !rest) return;
+        const status = hub
+          ? await lndhubInvoiceStatus(hub, lnInvoice.paymentHash)
+          : await lndInvoiceStatus(
+              {
+                restUrl: rest!.restUrl,
+                macaroonHex: rest!.macaroonHex,
+                certThumbprint: rest!.certThumbprint,
+                allowInsecure: rest!.allowInsecure,
+                source: rest!.source,
+              },
+              lnInvoice.paymentHash,
+            );
         if (cancelled || settleStopRef.current) return;
         if (status.paid) {
           setLnSettled(true);
@@ -577,13 +595,28 @@ export function ReceiveScreen() {
     setLnBusy(true);
     try {
       const hub = await loadLndHubCredentials(walletId);
-      if (!hub) {
-        throw new Error("LNDHub not connected for this wallet");
+      const rest = hub ? null : await loadLndRestCredentials(walletId);
+      if (!hub && !rest) {
+        throw new Error("Lightning node not connected for this wallet");
       }
-      const inv = await lndhubCreateInvoice(hub, {
-        amountSats: amount,
-        memo: lnMemo.trim() || undefined,
-      });
+      const inv = hub
+        ? await lndhubCreateInvoice(hub, {
+            amountSats: amount,
+            memo: lnMemo.trim() || undefined,
+          })
+        : await lndCreateInvoice(
+            {
+              restUrl: rest!.restUrl,
+              macaroonHex: rest!.macaroonHex,
+              certThumbprint: rest!.certThumbprint,
+              allowInsecure: rest!.allowInsecure,
+              source: rest!.source,
+            },
+            {
+              amountSats: amount,
+              memo: lnMemo.trim() || undefined,
+            },
+          );
       setLnInvoice(inv);
       setLnSettled(false);
     } catch (e) {
