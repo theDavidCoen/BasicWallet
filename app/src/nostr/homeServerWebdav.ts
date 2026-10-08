@@ -81,6 +81,40 @@ async function ensureCollection(
   }
 }
 
+async function tryBreakNextcloudUserLock(
+  fileUrl: string,
+  headers: Record<string, string>,
+): Promise<void> {
+  // Nextcloud files_lock: owner unlock via UNLOCK + X-User-Lock (no Sabre token).
+  try {
+    const res = await fetch(fileUrl, {
+      method: "UNLOCK",
+      headers: {
+        ...headers,
+        "X-User-Lock": "1",
+        Accept: "*/*",
+      },
+    });
+    console.warn("[basic] home WebDAV unlock", res.status, fileUrl);
+  } catch (e) {
+    console.warn("[basic] home WebDAV unlock failed", e);
+  }
+}
+
+function webdavErrorMessage(status: number, body: string): string {
+  if (
+    status === 423 ||
+    /Sabre\\DAV\\Exception\\Locked/i.test(body) ||
+    /<s:exception>[^<]*Locked/i.test(body)
+  ) {
+    return (
+      "Nextcloud file is locked (often by the Nextcloud mobile/desktop client). " +
+      "Close or pause that sync, unlock BasicWallet/basic-wallet-backup.v1.json, then retry."
+    );
+  }
+  return body.slice(0, 180) || `Home upload failed (HTTP ${status})`;
+}
+
 export async function uploadHomeBackupCipher(
   homeUrl: string,
   blob: CipherBlob,
@@ -100,6 +134,7 @@ export async function uploadHomeBackupCipher(
     ...authHeaders(creds),
     "Content-Type": "application/json",
     Accept: "application/json, */*",
+    Overwrite: "T",
   };
 
   const parent = parentCollectionUrl(fileUrl);
@@ -112,14 +147,26 @@ export async function uploadHomeBackupCipher(
     }
   }
 
-  const res = await fetch(fileUrl, {
+  console.warn("[basic] home backup PUT", fileUrl);
+  const body = JSON.stringify(blob);
+  let res = await fetch(fileUrl, {
     method: "PUT",
     headers,
-    body: JSON.stringify(blob),
+    body,
   });
+  if (!res.ok && res.status === 423) {
+    const lockedBody = await res.text().catch(() => "");
+    console.warn("[basic] home backup locked, unlocking", fileUrl, lockedBody.slice(0, 120));
+    await tryBreakNextcloudUserLock(fileUrl, headers);
+    res = await fetch(fileUrl, {
+      method: "PUT",
+      headers,
+      body,
+    });
+  }
   if (!res.ok) {
-    const t = (await res.text().catch(() => "")).slice(0, 180);
-    throw new Error(t || `Home upload failed (HTTP ${res.status})`);
+    const t = await res.text().catch(() => "");
+    throw new Error(webdavErrorMessage(res.status, t));
   }
   return { fileUrl };
 }
