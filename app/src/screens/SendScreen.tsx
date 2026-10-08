@@ -52,7 +52,10 @@ import {
 } from "../lightning/lnPayResolve";
 import { loadLndHubCredentials } from "../lightning/lndhubCredentials";
 import { loadLndRestCredentials } from "../lightning/lndCredentials";
-import { lndPayInvoice } from "../lightning/lndRest";
+import {
+  LND_SEND_CLIENT_TIMEOUT_MS,
+  lndPayInvoice,
+} from "../lightning/lndRest";
 import { requireUserPresence } from "../security/userPresence";
 import { useSheets } from "../navigation/SheetHost";
 import { useI18n } from "../i18n";
@@ -92,6 +95,8 @@ import type { WalletRecord } from "../account/walletRegistry";
 const SEND_TIMEOUT_MS = 45_000;
 /** LNDHub can hang after payment already settled. */
 const LN_SEND_TIMEOUT_MS = 30_000;
+/** LND REST SendPaymentV2: match request timeout_seconds + stream settle buffer. */
+const LN_REST_SEND_TIMEOUT_MS = LND_SEND_CLIENT_TIMEOUT_MS;
 /** Probe + LNURL invoice + RFQ quote must finish before Confirm. */
 const LN_QUOTE_TIMEOUT_MS = LNURL_FETCH_TIMEOUT_MS + 8_000;
 const LN_DEST_OK = "#3DDC84";
@@ -1097,7 +1102,7 @@ export function SendScreen() {
                 resolved.bolt11,
                 { amountSats: amtOpt },
               ),
-          LN_SEND_TIMEOUT_MS,
+          hub ? LN_SEND_TIMEOUT_MS : LN_REST_SEND_TIMEOUT_MS,
           hub ? "lndhubPayInvoice" : "lndPayInvoice",
         );
         const paymentHash = result.paymentHash.toLowerCase();

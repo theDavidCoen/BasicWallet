@@ -102,8 +102,8 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
     let cancelled = false;
     void (async () => {
       try {
-        const n = await syncLightningHistory(network.id, selectedWallet.id);
-        if (!cancelled && n > 0) bumpActivity();
+        await syncLightningHistory(network.id, selectedWallet.id);
+        if (!cancelled) bumpActivity();
       } catch (e) {
         console.warn("[basic] activity ln sync", e);
       }
