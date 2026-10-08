@@ -187,13 +187,18 @@ export function ReceivePosPanel({
 
   useEffect(() => {
     if (active) return;
-    setPhase("keypad");
-    setDigits("");
-    setRequestUri(null);
-    setCopied(false);
-    setRequestBusy(false);
-    setFiatRequestKind("fiat");
-    setUnit("fiat");
+    // Defer keypad reset until after side-sheet dismiss spring. Immediate reset
+    // flashes the amount step under Funds Received when settle closes POS.
+    const t = setTimeout(() => {
+      setPhase("keypad");
+      setDigits("");
+      setRequestUri(null);
+      setCopied(false);
+      setRequestBusy(false);
+      setFiatRequestKind("fiat");
+      setUnit("fiat");
+    }, 420);
+    return () => clearTimeout(t);
   }, [active]);
 
   useEffect(() => {

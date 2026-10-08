@@ -56,6 +56,7 @@ import { getNetworkConfig } from "../config/network";
 import { FundsSentView } from "../screens/FundsSentView";
 import { SaveToContactsSheet } from "../components/contacts/SaveToContactsSheet";
 import { findContactByIdentifierValue } from "../contacts/contactStore";
+import { canOfferSaveToContacts } from "../contacts/detectKind";
 import { HomePosSheetContent } from "../screens/HomePosSheetContent";
 import {
   ScanQrView,
@@ -481,7 +482,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
 
   const openSaveToContacts = useCallback((destination: string) => {
     const dest = destination.trim();
-    if (!dest) return;
+    // BOLT11/12 invoices are one-shot — never open Save to contacts for them.
+    if (!dest || !canOfferSaveToContacts(dest)) return;
     setSaveContactDest(dest);
     setSaveContactOpen(true);
   }, []);
@@ -1267,6 +1269,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
                 (fundsSentPayload.recipientCount == null ||
                   fundsSentPayload.recipientCount <= 1) &&
                 fundsSentPayload.address &&
+                canOfferSaveToContacts(fundsSentPayload.address) &&
                 !findContactByIdentifierValue(fundsSentPayload.address)
                   ? () => {
                       openSaveToContacts(fundsSentPayload.address!);

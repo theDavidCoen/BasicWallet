@@ -28,6 +28,7 @@ import {
 } from "../account/activityStore";
 import { looksLikePaymentAddress } from "../account/sendDestinations";
 import { findContactByIdentifierValue } from "../contacts/contactStore";
+import { canOfferSaveToContacts } from "../contacts/detectKind";
 import {
   getTxMeta,
   recordSentFromThisDevice,
@@ -607,11 +608,12 @@ export function ActivityDetailView({
     toRecipients.length > 1
       ? toRecipients.map((r) => r.address).join("\n")
       : singleToAddress;
-  /** Single outbound destination not already in contacts → › opens Save to contacts. */
+  /** Single outbound reusable destination not already in contacts → › Save to contacts. */
   const toSaveContactAddress =
     isSend &&
     toRecipients.length === 1 &&
     singleToAddress &&
+    canOfferSaveToContacts(singleToAddress) &&
     !findContactByIdentifierValue(singleToAddress)
       ? singleToAddress
       : null;

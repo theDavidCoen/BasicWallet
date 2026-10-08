@@ -20,7 +20,10 @@ import {
   listContacts,
   upsertContact,
 } from "../../contacts/contactStore";
-import { detectIdentifierKind } from "../../contacts/detectKind";
+import {
+  canOfferSaveToContacts,
+  detectIdentifierKind,
+} from "../../contacts/detectKind";
 import type { Contact, IdentifierKind } from "../../contacts/types";
 import { IDENTIFIER_KIND_LABELS, IDENTIFIER_KIND_ORDER } from "../../contacts/types";
 import { InteractiveBottomSheet } from "../sheet/InteractiveBottomSheet";
@@ -49,6 +52,7 @@ export function SaveToContactsSheet({
   const [mode, setMode] = useState<"new" | "existing">("new");
   const [pickExisting, setPickExisting] = useState(false);
   const contacts = useMemo(() => listContacts(), [open]);
+  const reusable = canOfferSaveToContacts(destination);
 
   function resetAndClose() {
     setMode("new");
@@ -59,6 +63,13 @@ export function SaveToContactsSheet({
   function saveNew() {
     const value = destination.trim();
     if (!value) return;
+    if (!canOfferSaveToContacts(value)) {
+      Alert.alert(
+        "Not reusable",
+        "Lightning invoices (BOLT11) are one-time. Save an LNURL or Lightning Address instead.",
+      );
+      return;
+    }
     if (!name.trim()) {
       Alert.alert("Name required", "Enter a name for this contact.");
       return;
@@ -83,6 +94,13 @@ export function SaveToContactsSheet({
   function addToExisting(contact: Contact) {
     const value = destination.trim();
     if (!value) return;
+    if (!canOfferSaveToContacts(value)) {
+      Alert.alert(
+        "Not reusable",
+        "Lightning invoices (BOLT11) are one-time. Save an LNURL or Lightning Address instead.",
+      );
+      return;
+    }
     if (contact.identifiers.some((i) => i.value.trim().toLowerCase() === value.toLowerCase())) {
       Alert.alert("Already on contact", `“${contact.name}” already has this identifier.`);
       return;
@@ -96,6 +114,28 @@ export function SaveToContactsSheet({
     });
     Alert.alert("Saved", `Added to “${contact.name}”.`);
     resetAndClose();
+  }
+
+  if (open && !reusable) {
+    return (
+      <InteractiveBottomSheet
+        open={open}
+        onDismiss={resetAndClose}
+        visibleFraction={0.4}
+        portal
+      >
+        <View style={styles.body}>
+          <Text style={sheetUi.title}>SAVE TO CONTACTS</Text>
+          <Text style={sheetUi.caption}>
+            Lightning invoices (BOLT11) are one-time and cannot be saved. Use an
+            LNURL or Lightning Address instead.
+          </Text>
+          <Pressable style={sheetUi.primaryBtn} onPress={resetAndClose}>
+            <Text style={sheetUi.primaryBtnText}>OK</Text>
+          </Pressable>
+        </View>
+      </InteractiveBottomSheet>
+    );
   }
 
   return (
