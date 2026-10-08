@@ -30,6 +30,25 @@ export function contactArkAddress(contact: Contact): string | null {
 }
 
 /**
+ * First usable Lightning pay input on a contact (LN address / LNURL / BIP353).
+ * Used by chat destination selection; resolve to bolt11 at pay time via lnPayResolve.
+ */
+export function contactLnPayInput(contact: Contact): string | null {
+  const order = ["lightning_address", "lnurl", "bip353"] as const;
+  for (const kind of order) {
+    const hit = contact.identifiers.find(
+      (i) => i.kind === kind && i.value.trim().length > 0,
+    );
+    if (hit) return hit.value.trim();
+  }
+  return null;
+}
+
+export function contactCanReceiveLn(contact: Contact): boolean {
+  return contactLnPayInput(contact) != null;
+}
+
+/**
  * Silently upsert an ark address onto a contact when learned from a chat
  * pay-request / reply. No toast, dialog, or UI feedback.
  */

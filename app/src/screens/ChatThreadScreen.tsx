@@ -57,13 +57,19 @@ import { reconcileOutboundChatPayments } from "../chat/reconcileOutboundChat";
 import { setChatThreadFocused } from "../chat/chatThreadFocus";
 import type { ChatMessage } from "../chat/types";
 import { newChatId } from "../chat/types";
-import { contactArkAddress, contactHasNostrId } from "../chat/contactPeer";
+import {
+  contactArkAddress,
+  contactCanReceiveLn,
+  contactHasNostrId,
+} from "../chat/contactPeer";
 import {
   executeChatPay,
   resolveChatPayTarget,
+  type ChatPaySenderKind,
 } from "../chat/executeChatPay";
 import { executeChatLightningPay } from "../chat/executeChatLightningPay";
 import { ensureChatPayWallet } from "../chat/ensureChatPayWallet";
+import { resolveLightningPay } from "../lightning/lnPayResolve";
 import { ensureSatsForPay } from "../chat/ensureSatsForPay";
 import { receivingFiatTitle } from "../chat/chatInboundFiat";
 import {
@@ -154,8 +160,11 @@ export function ChatThreadScreen() {
   const name = contact ? contactDisplayName(contact) : "Unknown";
   const initials = contact ? contactInitials(contact) : "?";
   const canNostr = contact ? contactHasNostrId(contact) : false;
+  const senderKind: ChatPaySenderKind =
+    selectedWallet?.kind === "lightning" ? "lightning" : "arkade";
   const canSendMoney = contact
     ? !!contactArkAddress(contact) ||
+      contactCanReceiveLn(contact) ||
       messages.some((m) => m.kind === "request" && !!m.payToJson)
     : false;
   const slashSuggestions = useMemo(
@@ -470,8 +479,8 @@ export function ChatThreadScreen() {
   }
 
   function openSend() {
-    if (!canSendMoney && !contactArkAddress(contact!)) {
-      Alert.alert(t("chat.alertNoArkTitle"), t("chat.alertNoArkBody"));
+    if (!canSendMoney) {
+      Alert.alert(t("chat.alertNoPayDestTitle"), t("chat.alertNoPayDestBody"));
       return;
     }
     navigation.navigate("ChatAmount", { contactId, mode: "send" });
@@ -494,8 +503,6 @@ export function ChatThreadScreen() {
   async function onPayRequest(msg: ChatMessage) {
     if (!msg.requestId || !msg.amountSats || actionBusy) return;
 
-    // Prefer currently selected Arkade wallet (Personal), even when React
-    // `wallet` is still null and Home is only showing a cached balance.
     const payWallet = await ensureChatPayWallet({ wallet, selectedWallet });
     if (!payWallet.ok) {
       Alert.alert(t("chat.alertWallet"), payWallet.message);
@@ -507,6 +514,7 @@ export function ChatThreadScreen() {
       target = resolveChatPayTarget({
         contactId,
         requestId: msg.requestId,
+        senderKind,
       });
     } catch (e) {
       Alert.alert(
@@ -528,12 +536,34 @@ export function ChatThreadScreen() {
 
     // Biometrics first (same Confirm+bio UX as chat Send), then balance /
     // convert checks — so Pay always reaches Confirm when a wallet is selected.
-    if (target.kind === "bolt11") {
-      await runPayRequestLightning(msg, target.invoice, payWallet, {
-        spendable,
-        need,
-        have,
-      });
+    if (target.kind === "bolt11" || target.kind === "ln-resolve") {
+      if (
+        target.kind === "ln-resolve" &&
+        fiatMode &&
+        payWallet.kind === "arkade"
+      ) {
+        Alert.alert(
+          t("chat.alertCannotPayTitle"),
+          t("chat.alertLnFiatModeBody"),
+        );
+        return;
+      }
+      await runPayRequestLightning(
+        msg,
+        {
+          bolt11: target.kind === "bolt11" ? target.invoice : null,
+          lnResolveInput: target.kind === "ln-resolve" ? target.input : null,
+        },
+        payWallet,
+        { spendable, need, have },
+      );
+      return;
+    }
+    if (payWallet.kind !== "arkade") {
+      Alert.alert(
+        t("chat.alertCannotPayTitle"),
+        "Switch to an Arkade wallet to pay this Ark request.",
+      );
       return;
     }
     await runPayRequest(msg, needConvert, payWallet, {
@@ -545,8 +575,11 @@ export function ChatThreadScreen() {
 
   async function runPayRequestLightning(
     msg: ChatMessage,
-    bolt11: string,
-    payWallet: { wallet: BasicWallet; walletId: string },
+    dest: { bolt11: string | null; lnResolveInput: string | null },
+    payWallet: Extract<
+      Awaited<ReturnType<typeof ensureChatPayWallet>>,
+      { ok: true }
+    >,
     bal: { spendable: number | null; need: number; have: number },
   ) {
     if (!msg.requestId || !msg.amountSats) return;
@@ -564,7 +597,21 @@ export function ChatThreadScreen() {
         return;
       }
 
-      if (bal.spendable != null && bal.need > bal.have) {
+      let bolt11 = dest.bolt11;
+      let payAmount = bal.need;
+      if (!bolt11 && dest.lnResolveInput) {
+        const resolved = await resolveLightningPay(
+          dest.lnResolveInput,
+          msg.amountSats,
+        );
+        bolt11 = resolved.bolt11;
+        payAmount = resolved.amountSats;
+      }
+      if (!bolt11) {
+        throw new Error("Could not resolve a Lightning invoice.");
+      }
+
+      if (bal.spendable != null && payAmount > bal.have) {
         Alert.alert(
           t("chat.alertInsufficientTitle"),
           t("chat.alertInsufficientSats"),
@@ -602,9 +649,10 @@ export function ChatThreadScreen() {
         localMessageId: local.id,
         paymentId,
         hooks: {
-          wallet: payWallet.wallet,
+          wallet: payWallet.kind === "arkade" ? payWallet.wallet : undefined,
           walletId: payWallet.walletId,
           networkId: network.id,
+          rail: payWallet.kind,
           beginOutboundSend,
           endOutboundSend,
           applyLocalSpend,

@@ -21,8 +21,10 @@ import {
 } from "../chat/chatStore";
 import {
   executeChatPay,
-  resolveChatPayDestination,
+  resolveChatPayTarget,
+  type ChatPaySenderKind,
 } from "../chat/executeChatPay";
+import { executeChatLightningPay } from "../chat/executeChatLightningPay";
 import { ensureChatPayWallet } from "../chat/ensureChatPayWallet";
 import { ensureSatsForPay } from "../chat/ensureSatsForPay";
 import { freezeFiatCaptionFromSats } from "../chat/formatChatAmount";
@@ -38,6 +40,7 @@ import {
 } from "../fiat/depixAssets";
 import { useFiatMode } from "../fiat/FiatModeProvider";
 import { tryRequestArkadeLnReceive } from "../lightning/arkadeLnSwap";
+import { resolveLightningPay } from "../lightning/lnPayResolve";
 import { requireUserPresence } from "../security/userPresence";
 import { DEFAULT_MIN_VTXO_SATS } from "../wallet/arkMultiSend";
 import { useWallet } from "../wallet/WalletProvider";
@@ -197,14 +200,18 @@ export function ChatAmountScreen() {
   const onChatSendConfirm = useCallback(
     async (sats: number, meta?: { fiatDisplay?: number }) => {
       if (!contact || busy) return;
+      const senderKind: ChatPaySenderKind =
+        selectedWallet?.kind === "lightning" ? "lightning" : "arkade";
+
+      let target: ReturnType<typeof resolveChatPayTarget>;
       try {
-        resolveChatPayDestination({ contactId });
+        target = resolveChatPayTarget({ contactId, senderKind });
       } catch (e) {
         Alert.alert(
-          "No ark address",
+          "Cannot send",
           e instanceof Error
             ? e.message
-            : "Add an ark address for this contact.",
+            : "Add an ark address or Lightning destination for this contact.",
         );
         return;
       }
@@ -215,11 +222,22 @@ export function ChatAmountScreen() {
         return;
       }
 
+      const isLn =
+        target.kind === "ln-resolve" || target.kind === "bolt11";
+      if (isLn && fiatMode && payWallet.kind === "arkade") {
+        Alert.alert(
+          "Cannot send Lightning",
+          "Turn off Fiat Mode to send Lightning in chat, or pay via classic Send.",
+        );
+        return;
+      }
+
       const haveUi = spendable ?? 0;
       // Fiat: Home is stable — UI sats floors are often optimistic (pay-convert).
       // Always take the convert path when DePix is shown; ensureSatsForPay reads
       // live ASP sats and skips convert only when they truly cover the pay.
-      const needConvert = fiatMode && (depixDisplay ?? 0) > 0;
+      const needConvert =
+        !isLn && fiatMode && (depixDisplay ?? 0) > 0;
       if (!fiatMode && sats > haveUi) {
         Alert.alert(
           "Insufficient balance",
@@ -279,24 +297,17 @@ export function ChatAmountScreen() {
           navigation.navigate("ChatThread", { contactId });
         }
 
-        // Capture hooks for post-unmount background work.
-        const hooks = {
-          wallet: payWallet.wallet,
-          walletId: payWallet.walletId,
-          networkId: network.id,
-          spendable: spendable ?? null,
-          beginOutboundSend,
-          endOutboundSend,
-          applyLocalSpend,
-          getFreshArkAddress: async () => rotateReceiveAddress(),
-          bumpActivity,
-          refreshActivity,
-        };
         const convert = convertDepixToSatsForPay;
         const fiatOn = fiatMode;
         const depix = depixDisplay;
         const netId = network.id;
         const spendNow = spendable ?? null;
+        const lnInput =
+          target.kind === "ln-resolve"
+            ? target.input
+            : target.kind === "bolt11"
+              ? target.invoice
+              : null;
 
         void (async () => {
           const payDeadline = Date.now() + 4 * 60_000;
@@ -304,6 +315,41 @@ export function ChatAmountScreen() {
           // Pause ASP polls before ensureSats/getBalance so Xiaomi send isn't starved (α73).
           beginOutboundSend();
           try {
+            if (isLn && lnInput) {
+              updateChatMessage(local.id, { status: "sending" });
+              const resolved = await resolveLightningPay(lnInput, sats);
+              if (payTimedOut()) {
+                throw new Error("Lightning resolve timed out. Try again.");
+              }
+              await executeChatLightningPay({
+                contactId,
+                amountSats: sats,
+                bolt11: resolved.bolt11,
+                fiatCaption,
+                localMessageId: local.id,
+                paymentId,
+                hooks: {
+                  wallet:
+                    payWallet.kind === "arkade" ? payWallet.wallet : undefined,
+                  walletId: payWallet.walletId,
+                  networkId: netId,
+                  rail: payWallet.kind,
+                  beginOutboundSend,
+                  endOutboundSend,
+                  applyLocalSpend,
+                  bumpActivity,
+                  refreshActivity,
+                },
+              });
+              return;
+            }
+
+            if (payWallet.kind !== "arkade") {
+              throw new Error(
+                "Switch to an Arkade wallet to pay this contact’s ark address.",
+              );
+            }
+
             // Hold auto-inbound for leftover / pre-existing sats during send.
             holdAutoInboundForPay(180_000);
             if (needConvert) {
@@ -348,8 +394,16 @@ export function ChatAmountScreen() {
               localMessageId: local.id,
               paymentId,
               hooks: {
-                ...hooks,
+                wallet: payWallet.wallet,
+                walletId: payWallet.walletId,
+                networkId: netId,
                 spendable: ensured.spendable ?? spendNow,
+                beginOutboundSend,
+                endOutboundSend,
+                applyLocalSpend,
+                getFreshArkAddress: async () => rotateReceiveAddress(),
+                bumpActivity,
+                refreshActivity,
               },
             });
           } catch (e) {
