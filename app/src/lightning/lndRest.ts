@@ -5,6 +5,7 @@
  * Used for BTCPay → Services → LND (REST). Not LNDHub.
  */
 
+import { bech32 } from "@scure/base";
 import type { LndRestConfig } from "./btcpayConfig";
 import {
   looksLikeBolt11,
@@ -12,6 +13,15 @@ import {
   parseBolt11AmountSats,
   type LightningPaymentInput,
 } from "./lndhub";
+
+/** Matches SendPaymentV2 `timeout_seconds` in the request body. */
+export const LND_SEND_TIMEOUT_SECONDS = 60;
+/**
+ * Client wait for the SendPaymentV2 stream: LND timeout + buffer for the
+ * terminal Payment chunk (SUCCEEDED / FAILED) to arrive after routing ends.
+ */
+export const LND_SEND_CLIENT_TIMEOUT_MS =
+  (LND_SEND_TIMEOUT_SECONDS + 20) * 1000;
 
 export type LndGetInfo = {
   alias?: string;
@@ -169,8 +179,55 @@ function hashToHex(v: unknown): string {
 function unixMs(raw: unknown): number {
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return Date.now();
-  return n > 1e12 ? Math.floor(n) : Math.floor(n * 1000);
+  // creation_time_ns (~1e18), ms (~1e12), or unix seconds (~1e9)
+  if (n > 1e15) return Math.floor(n / 1e6);
+  if (n > 1e12) return Math.floor(n);
+  return Math.floor(n * 1000);
 }
+
+/** BOLT11 payment_hash (tag type 1) → lowercase hex. No network checks. */
+export function bolt11PaymentHash(bolt11Raw: string): string | null {
+  const raw = normalizeBolt11(bolt11Raw);
+  if (!looksLikeBolt11(raw)) return null;
+  try {
+    const decoded = bech32.decode(raw.toLowerCase() as `${string}1${string}`, 2500);
+    const words = decoded.words as number[];
+    const SIG_WORDS = 104;
+    const TS_WORDS = 7;
+    if (words.length < TS_WORDS + SIG_WORDS) return null;
+    const tagged = words.slice(TS_WORDS, words.length - SIG_WORDS);
+    let i = 0;
+    while (i + 3 <= tagged.length) {
+      const type = tagged[i]!;
+      const dataLen = (tagged[i + 1]! << 5) | tagged[i + 2]!;
+      i += 3;
+      if (i + dataLen > tagged.length) break;
+      const data = tagged.slice(i, i + dataLen);
+      i += dataLen;
+      if (type === 1 && data.length > 0) {
+        const bytes = bech32.fromWords(data);
+        let hex = "";
+        for (let b = 0; b < bytes.length; b++) {
+          hex += bytes[b]!.toString(16).padStart(2, "0");
+        }
+        return hex.length >= 64 ? hex : null;
+      }
+    }
+  } catch {
+    /* */
+  }
+  return null;
+}
+
+function isAbortError(e: unknown): boolean {
+  if (!e || typeof e !== "object") return false;
+  const name = String((e as { name?: string }).name ?? "");
+  const msg = String((e as { message?: string }).message ?? "");
+  return name === "AbortError" || /aborted|AbortError/i.test(msg);
+}
+
+type RawPayment = Record<string, unknown>;
+type RawInvoice = Record<string, unknown>;
 
 /** Create a BOLT11 invoice (invoice macaroon or admin). */
 export async function lndCreateInvoice(
@@ -234,32 +291,121 @@ function unwrapLndRestMessage(raw: Record<string, unknown>): Record<string, unkn
   return raw;
 }
 
-function parseLndRestStreamBody(text: string): Record<string, unknown> {
+/**
+ * Parse SendPaymentV2 / TrackPaymentV2 stream body.
+ * Prefer the last Payment with terminal status (SUCCEEDED / FAILED).
+ * Docs: server-streaming RPC; with no_inflight_updates only the terminal
+ * update is sent, but NDJSON / result wrappers may still yield multiple lines.
+ */
+function parseTerminalPaymentFromStream(text: string): Record<string, unknown> {
+  const messages: Record<string, unknown>[] = [];
   const lines = text
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean);
-  // SendPaymentV2 is server-streaming; with no_inflight_updates only the
-  // terminal Payment is sent — still may be one NDJSON line or a wrapper.
-  for (let i = lines.length - 1; i >= 0; i--) {
+  for (const line of lines) {
     try {
-      return unwrapLndRestMessage(JSON.parse(lines[i]!) as Record<string, unknown>);
+      messages.push(unwrapLndRestMessage(JSON.parse(line) as Record<string, unknown>));
     } catch {
-      /* try previous line */
+      /* skip */
     }
   }
-  if (text.trim()) {
+  if (messages.length === 0 && text.trim()) {
     try {
-      return unwrapLndRestMessage(JSON.parse(text.trim()) as Record<string, unknown>);
+      messages.push(
+        unwrapLndRestMessage(JSON.parse(text.trim()) as Record<string, unknown>),
+      );
     } catch {
       /* */
     }
   }
-  throw new Error(
-    text.trim()
-      ? `LND REST returned unreadable payment result: ${text.slice(0, 160)}`
-      : "LND REST returned empty payment stream",
+  if (messages.length === 0) {
+    throw new Error(
+      text.trim()
+        ? `LND REST returned unreadable payment result: ${text.slice(0, 160)}`
+        : "LND REST returned empty payment stream",
+    );
+  }
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const status = String(messages[i]!.status ?? "").toUpperCase();
+    if (status === "SUCCEEDED" || status === "FAILED") return messages[i]!;
+  }
+  return messages[messages.length - 1]!;
+}
+
+function paymentResultFromRaw(
+  payment: Record<string, unknown>,
+): { paymentHash: string; preimage?: string; feeSats?: number } {
+  if (payment.error && typeof payment.error === "object") {
+    const err = payment.error as { message?: string; code?: number };
+    throw new Error(err.message?.trim() || `LND REST error code ${err.code ?? "?"}`);
+  }
+  if (typeof payment.message === "string" && payment.code != null && !payment.status) {
+    throw new Error(payment.message);
+  }
+
+  const status = String(payment.status ?? "").toUpperCase();
+  if (status === "FAILED") {
+    const reason =
+      typeof payment.failure_reason === "string" && payment.failure_reason
+        ? payment.failure_reason
+        : typeof payment.payment_error === "string" && payment.payment_error
+          ? payment.payment_error
+          : "Payment failed";
+    throw new Error(reason.replace(/^FAILURE_REASON_/, "").replace(/_/g, " "));
+  }
+  if (status && status !== "SUCCEEDED") {
+    throw new Error(
+      status === "IN_FLIGHT"
+        ? "Payment still in flight — check Activity before retrying"
+        : status.replace(/_/g, " "),
+    );
+  }
+  if (!status) {
+    throw new Error(
+      `LND REST payment missing status: ${JSON.stringify(payment).slice(0, 160)}`,
+    );
+  }
+
+  const paymentHash = hashToHex(payment.payment_hash);
+  if (!paymentHash) {
+    throw new Error(
+      `LND REST returned no payment hash: ${JSON.stringify(payment).slice(0, 160)}`,
+    );
+  }
+  const preimage = hashToHex(payment.payment_preimage) || undefined;
+  const feeSats =
+    amountSats(payment.fee_sat) ||
+    Math.floor(amountSats(payment.fee_msat) / 1000) ||
+    undefined;
+  return {
+    paymentHash,
+    preimage: preimage && !/^0+$/.test(preimage) ? preimage : undefined,
+    feeSats: feeSats && feeSats > 0 ? feeSats : undefined,
+  };
+}
+
+/**
+ * Look up a payment by hash via ListPayments (recent first).
+ * Docs: GET /v1/payments — use reversed=true for newest payments first;
+ * include_incomplete=true so IN_FLIGHT / FAILED still appear.
+ * https://lightning.engineering/api-docs/api/lnd/lightning/list-payments/
+ */
+export async function lndLookupPaymentByHash(
+  cfg: LndRestConfig,
+  paymentHashHex: string,
+): Promise<Record<string, unknown> | null> {
+  const want = paymentHashHex.trim().toLowerCase();
+  if (!want) return null;
+  const payments = await lndFetch<{ payments?: RawPayment[] }>(
+    cfg,
+    `/v1/payments?include_incomplete=true&max_payments=50&reversed=true&omit_hops=true`,
   );
+  for (const p of payments.payments ?? []) {
+    const h = hashToHex(p.payment_hash);
+    if (h === want) return p;
+  }
+  return null;
 }
 
 /**
@@ -273,7 +419,9 @@ function parseLndRestStreamBody(text: string): Record<string, unknown> {
  *   POST `/v2/router/send`, body `payment_request` + `timeout_seconds` +
  *   `fee_limit_sat` (default 0 → only zero-fee routes; set non-zero),
  *   `no_inflight_updates` for a single terminal Payment. Streaming response;
- *   unwrap `result` per lnd REST websocket docs.
+ *   unwrap `result` per lnd REST websocket docs. Wait for SUCCEEDED / FAILED.
+ * - On client abort before stream end: ListPayments lookup by BOLT11 hash
+ *   so a settled payment is not reported as a hard failure.
  */
 export async function lndPayInvoice(
   cfg: LndRestConfig,
@@ -300,10 +448,11 @@ export async function lndPayInvoice(
   const payAmt = invoiceAmt ?? override!;
   // API: default fee_limit_sat=0 only considers zero-fee routes → NO_ROUTE.
   const feeLimitSat = Math.max(10, Math.ceil(payAmt * 0.05));
+  const knownHash = bolt11PaymentHash(invoice);
 
   const body: Record<string, unknown> = {
     payment_request: invoice,
-    timeout_seconds: 60,
+    timeout_seconds: LND_SEND_TIMEOUT_SECONDS,
     fee_limit_sat: String(feeLimitSat),
     no_inflight_updates: true,
   };
@@ -313,75 +462,71 @@ export async function lndPayInvoice(
 
   const path = "/v2/router/send";
   const url = joinUrl(cfg.restUrl, path);
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      // BTCPay + LND REST: hex macaroon in Grpc-Metadata-macaroon.
-      "Grpc-Metadata-macaroon": cfg.macaroonHex,
-    },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LND_SEND_CLIENT_TIMEOUT_MS);
 
-  const text = await res.text();
-  if (!res.ok) {
-    const detail = text.slice(0, 200);
-    throw new Error(
-      detail
-        ? `LND REST ${res.status} ${path}: ${detail}`
-        : `LND REST request failed (${res.status} ${path})`,
-    );
-  }
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        // BTCPay + LND REST: hex macaroon in Grpc-Metadata-macaroon.
+        "Grpc-Metadata-macaroon": cfg.macaroonHex,
+      },
+      body: JSON.stringify(body),
+    });
 
-  const payment = parseLndRestStreamBody(text);
+    const text = await res.text();
+    if (!res.ok) {
+      const detail = text.slice(0, 200);
+      throw new Error(
+        detail
+          ? `LND REST ${res.status} ${path}: ${detail}`
+          : `LND REST request failed (${res.status} ${path})`,
+      );
+    }
 
-  // Top-level error object (some proxies) before a Payment message.
-  if (payment.error && typeof payment.error === "object") {
-    const err = payment.error as { message?: string; code?: number };
-    throw new Error(err.message?.trim() || `LND REST error code ${err.code ?? "?"}`);
+    return paymentResultFromRaw(parseTerminalPaymentFromStream(text));
+  } catch (e) {
+    if (isAbortError(e) || controller.signal.aborted) {
+      if (knownHash) {
+        try {
+          const looked = await lndLookupPaymentByHash(cfg, knownHash);
+          if (looked) {
+            const status = String(looked.status ?? "").toUpperCase();
+            if (status === "SUCCEEDED") {
+              return paymentResultFromRaw(looked);
+            }
+            if (status === "FAILED") {
+              return paymentResultFromRaw(looked);
+            }
+          }
+        } catch (lookupErr) {
+          console.warn("[basic] lnd REST payment lookup after timeout", lookupErr);
+        }
+      }
+      throw new Error(
+        `Payment timed out after ${LND_SEND_TIMEOUT_SECONDS}s — check Activity before retrying`,
+      );
+    }
+    // Stream truncated / proxy closed: still try hash lookup before failing.
+    if (knownHash) {
+      try {
+        const looked = await lndLookupPaymentByHash(cfg, knownHash);
+        if (looked && String(looked.status ?? "").toUpperCase() === "SUCCEEDED") {
+          return paymentResultFromRaw(looked);
+        }
+      } catch {
+        /* fall through to original error */
+      }
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
-  if (typeof payment.message === "string" && payment.code != null && !payment.status) {
-    throw new Error(payment.message);
-  }
-
-  const status = String(payment.status ?? "").toUpperCase();
-  if (status && status !== "SUCCEEDED") {
-    const reason =
-      typeof payment.failure_reason === "string" && payment.failure_reason
-        ? payment.failure_reason
-        : typeof payment.payment_error === "string" && payment.payment_error
-          ? payment.payment_error
-          : status || "Payment failed";
-    throw new Error(reason.replace(/^FAILURE_REASON_/, "").replace(/_/g, " "));
-  }
-  if (!status) {
-    throw new Error(
-      `LND REST payment missing status: ${JSON.stringify(payment).slice(0, 160)}`,
-    );
-  }
-
-  // Payment.payment_hash is a string (hex) in the REST Payment schema.
-  const paymentHash = hashToHex(payment.payment_hash);
-  if (!paymentHash) {
-    throw new Error(
-      `LND REST returned no payment hash: ${JSON.stringify(payment).slice(0, 160)}`,
-    );
-  }
-  const preimage = hashToHex(payment.payment_preimage) || undefined;
-  const feeSats =
-    amountSats(payment.fee_sat) ||
-    Math.floor(amountSats(payment.fee_msat) / 1000) ||
-    undefined;
-  return {
-    paymentHash,
-    preimage: preimage && !/^0+$/.test(preimage) ? preimage : undefined,
-    feeSats: feeSats && feeSats > 0 ? feeSats : undefined,
-  };
 }
-
-type RawPayment = Record<string, unknown>;
-type RawInvoice = Record<string, unknown>;
 
 function mapOutgoingPayment(p: RawPayment): LightningPaymentInput | null {
   const status = String(p.status ?? "").toUpperCase();
@@ -437,7 +582,12 @@ function mapSettledInvoice(inv: RawInvoice): LightningPaymentInput | null {
   };
 }
 
-/** Fetch recent settled LN payments + invoices for Activity. */
+/**
+ * Fetch recent settled LN payments + invoices for Activity.
+ * ListPayments: GET /v1/payments with reversed=true so max_payments returns
+ * the newest payments (default forwards order is oldest-first).
+ * https://lightning.engineering/api-docs/api/lnd/lightning/list-payments/
+ */
 export async function lndListHistory(
   cfg: LndRestConfig,
   opts?: { limit?: number },
@@ -448,7 +598,7 @@ export async function lndListHistory(
   try {
     const payments = await lndFetch<{ payments?: RawPayment[] }>(
       cfg,
-      `/v1/payments?include_incomplete=false&max_payments=${limit}`,
+      `/v1/payments?include_incomplete=false&max_payments=${limit}&reversed=true&omit_hops=true`,
     );
     for (const p of payments.payments ?? []) {
       const mapped = mapOutgoingPayment(p);

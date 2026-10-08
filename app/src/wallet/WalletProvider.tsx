@@ -2555,8 +2555,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         setBalanceStatus("ready");
         void writeCachedBalance(getNetworkConfig().id, walletId, bal);
         try {
-          const n = await syncLightningHistory(getNetworkConfig().id, walletId);
-          if (n > 0) setActivityEpoch((e) => e + 1);
+          await syncLightningHistory(getNetworkConfig().id, walletId);
+          // Always rematerialize Activity after LN history sync — balance may
+          // have moved even when the previous UI list was empty / stale.
+          if (selectedIdRef.current === walletId) {
+            setActivityEpoch((e) => e + 1);
+          }
         } catch (e) {
           console.warn("[basic] lightning history sync failed", e);
         }
