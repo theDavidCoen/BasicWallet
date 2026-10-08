@@ -21,7 +21,7 @@ Use at your own risk. There is no warranty.
 
 ## Download
 
-Latest release: **[v0.9.2](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.9.2)** (arm64-v8a APK + SHA256).
+Latest release: **[v0.9.3](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.9.3)** (arm64-v8a APK + SHA256).
 
 All builds: [Releases](https://github.com/theDavidCoen/BasicWallet/releases). Prefer verifying the checksum before install.
 
@@ -35,7 +35,7 @@ Basic (`app.basic.wallet`) is an experimental mobile wallet built with **Expo / 
 | **Bitcoin UX** | Receive / send, activity, multi-wallet switcher, recovery |
 | **Fiat Mode** | Per-wallet stable unit (DePix/BRL mainnet, USDT Mutinynet) via Arkade swaps |
 | **Bitcoin Maxi Mode** | Default ON: inbound alt-assets → sats when Fiat Mode is off |
-| **Lightning** | **Arkade intents** (Personal Send BOLT11 / LNURL / Lightning Address; BIP21 receive may embed `lightning=`) plus optional user-linked node (BTCPay / LNDHub). Not Boltz. |
+| **Lightning** | **Arkade intents** (Personal Send BOLT11 / LNURL / Lightning Address; BIP21 receive may embed `lightning=`) plus optional user-linked node (BTCPay **LND REST** / LNDHub) with Activity/Send/Receive/POS UX. Not Boltz. |
 | **Backup** | Passkey-oriented onboarding, Advanced Backup via Nostr and/or home server |
 | **Contacts** | Local encrypted contacts, share over Nostr gift wraps |
 | **Ask Cursor** | Optional on-device Nostr bot (Cursor Cloud Agents) under Chat & Pay; **New session** / `/new` / `/stop` for the bot thread |
@@ -57,7 +57,7 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 - **Fiat Mode** — hold a stable unit on the selected Arkade wallet; enter/exit via Home R$ / ₿; inbound auto-swap while on
 - **Bitcoin Maxi Mode** — quietly convert inbound designated stables to sats when Fiat Mode is off (default ON)
 - Browse activity and manage **multiple wallets**
-- **Connect a Lightning node** (BTCPay LND REST, LNDHub) for node balance / LN flows
+- **Connect a Lightning node** (BTCPay LND REST, LNDHub) for node balance / LN flows; LND REST Activity + Send with preimage/memo; Receive / Send / POS Lightning UX
 - **Arkade Lightning** — from a Personal (Arkade seed) wallet: pay BOLT11 / LNURL / Lightning Address via the intents corridor (Confirm + biometrics, no auto-pay); Receive BIP21 may embed a minted `lightning=` invoice when a solver can mint for the amount
 - Collaborative offboard and **unilateral exit** related settings (escape hatches)
 - Set app PIN / biometrics gates for sensitive actions
