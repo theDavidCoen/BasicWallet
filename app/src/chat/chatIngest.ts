@@ -31,6 +31,11 @@ import {
 import { freezeFiatCaptionFromSats } from "./formatChatAmount";
 import { buildPayToJson } from "./payToJson";
 import type { ChatEnvelope } from "./types";
+import { shouldSkipBotThreadIngest } from "../agent/botChatSessionCut";
+import {
+  getBotChatIgnoreBeforeMs,
+  hydrateBotChatIgnoreBefore,
+} from "../agent/botIdentity";
 
 function resolveContactId(
   peerPubkey: string,
@@ -69,6 +74,8 @@ export async function ingestChatEnvelope(opts: {
   envelope: ChatEnvelope;
   peerPubkey: string;
   wrapEventId: string;
+  /** Kind 1059 created_at (seconds). Used for Ask Cursor /new session cut. */
+  wrapCreatedAtSec?: number;
 }): Promise<boolean> {
   const { envelope, peerPubkey, wrapEventId } = opts;
   if (findMessageByNostrEventId(wrapEventId)) return false;
@@ -76,6 +83,25 @@ export async function ingestChatEnvelope(opts: {
   const contactId = resolveContactId(peerPubkey, envelope.threadContactHint);
   if (!contactId) {
     console.warn("[basic] chat ingest: no matching contact for peer", peerPubkey.slice(0, 12));
+    return false;
+  }
+
+  // Ask Cursor /new: SQLite clear is not enough — relays still serve old bot wraps.
+  await hydrateBotChatIgnoreBefore();
+  if (
+    shouldSkipBotThreadIngest({
+      contactId,
+      ignoreBeforeMs: getBotChatIgnoreBeforeMs(),
+      sentAtMs: envelope.sentAt,
+      wrapCreatedAtSec: opts.wrapCreatedAtSec,
+    })
+  ) {
+    console.warn("[basic] bot chat ingest skipped (new session cut)", {
+      wrap: wrapEventId.slice(0, 12),
+      sentAt: envelope.sentAt ?? null,
+      wrapCreatedAtSec: opts.wrapCreatedAtSec ?? null,
+      cut: getBotChatIgnoreBeforeMs(),
+    });
     return false;
   }
 

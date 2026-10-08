@@ -16,6 +16,12 @@ import { readPublicIdentity } from "../nostr/identityStore";
 const BOT_NSEC_KEY = "basic.wallet.cursor.bot.nsec.v1";
 const BOT_META_KEY = "basic.wallet.cursor.bot.meta.v1";
 const BOT_AGENT_ID_KEY = "basic.wallet.cursor.agentId.v1";
+/** Ignore bot-thread gift-wrap re-ingest older than this (Ask Cursor /new). */
+const BOT_CHAT_IGNORE_BEFORE_KEY = "basic.wallet.cursor.bot.chatIgnoreBefore.v1";
+
+/** In-memory cut so ingest can skip relay catch-up without awaiting AsyncStorage. */
+let botChatIgnoreBeforeMs = 0;
+let botChatIgnoreBeforeHydrated = false;
 
 const SECURE_OPTIONS: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
@@ -112,6 +118,46 @@ export async function storeCursorAgentId(agentId: string | null): Promise<void> 
 }
 
 /**
+ * Load persisted Ask Cursor session cut into memory.
+ * Call on bot boot so gift-wrap catch-up cannot revive a prior /new.
+ */
+export async function hydrateBotChatIgnoreBefore(): Promise<void> {
+  if (botChatIgnoreBeforeHydrated) return;
+  botChatIgnoreBeforeHydrated = true;
+  try {
+    const raw = await AsyncStorage.getItem(BOT_CHAT_IGNORE_BEFORE_KEY);
+    const n = raw ? Number(raw) : 0;
+    if (Number.isFinite(n) && n > botChatIgnoreBeforeMs) {
+      botChatIgnoreBeforeMs = n;
+    }
+  } catch {
+    /* */
+  }
+}
+
+/** Sync read for ingest (0 = no cut / not yet set). */
+export function getBotChatIgnoreBeforeMs(): number {
+  return botChatIgnoreBeforeMs;
+}
+
+/**
+ * Stamp a New session cut at Date.now(). Historical bot→owner wraps on relays
+ * stay, but local ingest must not revive them into the cleared thread.
+ */
+export async function markBotChatSessionReset(
+  atMs: number = Date.now(),
+): Promise<void> {
+  const cut = Math.max(0, Math.floor(atMs));
+  botChatIgnoreBeforeMs = cut;
+  botChatIgnoreBeforeHydrated = true;
+  try {
+    await AsyncStorage.setItem(BOT_CHAT_IGNORE_BEFORE_KEY, String(cut));
+  } catch {
+    /* */
+  }
+}
+
+/**
  * Ensure bot nsec exists and bind to the current user identity as owner.
  * Does not enable the watcher by itself — caller sets enabled + starts watch.
  */
@@ -167,6 +213,13 @@ export async function wipeBotIdentity(): Promise<void> {
   } catch {
     /* */
   }
+  try {
+    await AsyncStorage.removeItem(BOT_CHAT_IGNORE_BEFORE_KEY);
+  } catch {
+    /* */
+  }
+  botChatIgnoreBeforeMs = 0;
+  botChatIgnoreBeforeHydrated = true;
   try {
     await AsyncStorage.removeItem("basic.wallet.cursor.bot.processed.v1");
   } catch {

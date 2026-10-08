@@ -15,6 +15,7 @@ import { botReplyPayRequest, botReplyText } from "./botReply";
 import {
   isBotEnabled,
   loadStoredCursorAgentId,
+  markBotChatSessionReset,
   storeCursorAgentId,
 } from "./botIdentity";
 import { matchBotSlashCommand } from "./botSlashCommands";
@@ -63,8 +64,14 @@ export async function cancelActiveBotCloudWork(): Promise<{
   return { cancelled: true };
 }
 
-/** Cancel in-flight work and drop stored Cloud agentId (next ask = new agent). */
+/**
+ * Cancel in-flight work, drop stored Cloud agentId (next ask = new agent),
+ * and stamp a chat session cut so relay gift-wrap catch-up cannot revive
+ * the cleared Ask Cursor thread.
+ */
 export async function resetBotCloudSession(): Promise<void> {
+  // Cut first (sync memory) so in-flight catch-up cannot race past clear.
+  await markBotChatSessionReset();
   await cancelActiveBotCloudWork();
   await storeCursorAgentId(null);
 }
