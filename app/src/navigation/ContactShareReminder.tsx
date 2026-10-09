@@ -27,6 +27,7 @@ import {
 } from "../contacts/contactShareWatch";
 import { contactDisplayName, midEllipsis } from "../contacts/types";
 import { unregisterPushBestEffort } from "../notifications/register";
+import { useHomeTourUiOpen } from "../home/useHomeTourUiOpen";
 import { useWallet } from "../wallet/WalletProvider";
 import { useSheets } from "./SheetHost";
 import { colors } from "../theme/colors";
@@ -50,6 +51,7 @@ export function ContactShareReminder({
   const [offer, setOffer] = useState<ContactShareOffer | null>(null);
   const [routeName, setRouteName] = useState<string | undefined>();
   const translateY = useRef(new Animated.Value(0)).current;
+  const homeTourOpen = useHomeTourUiOpen();
 
   const sheetOpen =
     activityOpen ||
@@ -153,7 +155,8 @@ export function ContactShareReminder({
     }),
   ).current;
 
-  const hidden = sheetOpen || !offer || !hasWallet || routeName !== "Home";
+  const hidden =
+    sheetOpen || homeTourOpen || !offer || !hasWallet || routeName !== "Home";
 
   if (hidden) return null;
 

@@ -21,6 +21,9 @@ export const HOME_TOUR_PENDING_KEY = "basic.wallet.homeTour.pending.v1";
 let pendingLatch = false;
 /** In-memory: true once done is known; null = unread. */
 let doneLatch: boolean | null = null;
+/** True while the tour Modal is visible — banners/toasts must stay hidden. */
+let tourUiOpen = false;
+const tourUiListeners = new Set<() => void>();
 
 export function isHomeTourPendingSync(): boolean {
   return pendingLatch;
@@ -28,6 +31,30 @@ export function isHomeTourPendingSync(): boolean {
 
 export function isHomeTourDoneSync(): boolean {
   return doneLatch === true;
+}
+
+/** Home chat/backup banners check this (and subscribe) to stay off during the tour. */
+export function isHomeTourUiOpen(): boolean {
+  return tourUiOpen;
+}
+
+export function setHomeTourUiOpen(open: boolean): void {
+  if (tourUiOpen === open) return;
+  tourUiOpen = open;
+  for (const fn of tourUiListeners) {
+    try {
+      fn();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+export function subscribeHomeTourUi(listener: () => void): () => void {
+  tourUiListeners.add(listener);
+  return () => {
+    tourUiListeners.delete(listener);
+  };
 }
 
 export async function isHomeTourDone(): Promise<boolean> {
@@ -63,10 +90,13 @@ export async function armHomeTourIfNeeded(): Promise<void> {
   if (doneLatch === true) return;
   // Optimistic latch immediately so any concurrent Home mount sees pending.
   pendingLatch = true;
+  // Hide Home banners before Home/Modal paint (chat toast was racing the tour).
+  setHomeTourUiOpen(true);
   try {
     if ((await AsyncStorage.getItem(HOME_TOUR_DONE_KEY)) === "1") {
       doneLatch = true;
       pendingLatch = false;
+      setHomeTourUiOpen(false);
       return;
     }
     doneLatch = false;
@@ -80,6 +110,7 @@ export async function armHomeTourIfNeeded(): Promise<void> {
 export async function markHomeTourDone(): Promise<void> {
   pendingLatch = false;
   doneLatch = true;
+  setHomeTourUiOpen(false);
   try {
     await AsyncStorage.setItem(HOME_TOUR_DONE_KEY, "1");
     await AsyncStorage.removeItem(HOME_TOUR_PENDING_KEY);

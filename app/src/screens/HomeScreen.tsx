@@ -60,6 +60,7 @@ import {
   isHomeTourPending,
   isHomeTourPendingSync,
   markHomeTourDone,
+  setHomeTourUiOpen,
 } from "../home/homeTour";
 
 const MUTINYNET_OK = "#7DCEA0";
@@ -190,6 +191,7 @@ export function HomeScreen() {
       setTourStep(0);
       setTourOpen(true);
       setTourBlocking(true);
+      setHomeTourUiOpen(true);
       return;
     }
     let cancelled = false;
@@ -200,8 +202,10 @@ export function HomeScreen() {
         setTourStep(0);
         setTourOpen(true);
         setTourBlocking(true);
+        setHomeTourUiOpen(true);
       } else {
         setTourBlocking(false);
+        setHomeTourUiOpen(false);
       }
     })();
     return () => {
@@ -209,9 +213,15 @@ export function HomeScreen() {
     };
   }, []);
 
+  // Keep UI-open latch in sync (banners subscribe).
+  useEffect(() => {
+    setHomeTourUiOpen(tourOpen);
+  }, [tourOpen]);
+
   const dismissTour = useCallback(() => {
     setTourOpen(false);
     setTourBlocking(false);
+    setHomeTourUiOpen(false);
     void markHomeTourDone();
   }, []);
 
@@ -220,11 +230,16 @@ export function HomeScreen() {
       if (prev >= HOME_TOUR_STEPS.length - 1) {
         setTourOpen(false);
         setTourBlocking(false);
+        setHomeTourUiOpen(false);
         void markHomeTourDone();
         return prev;
       }
       return prev + 1;
     });
+  }, []);
+
+  const retreatTour = useCallback(() => {
+    setTourStep((prev) => Math.max(0, prev - 1));
   }, []);
 
   const openSettings = useCallback(() => {
@@ -1006,6 +1021,7 @@ export function HomeScreen() {
           stepIndex={tourStep}
           onSkip={dismissTour}
           onNext={advanceTour}
+          onBack={retreatTour}
         />
       </View>
     </GestureDetector>

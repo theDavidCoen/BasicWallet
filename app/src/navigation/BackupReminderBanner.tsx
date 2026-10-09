@@ -8,6 +8,7 @@ import {
   needsBackupPassphraseEntry,
   onBackupPassphraseSessionChange,
 } from "../nostr/backupSync";
+import { useHomeTourUiOpen } from "../home/useHomeTourUiOpen";
 import { isBackupReminderPending } from "../wallet/backupReminder";
 import { colors } from "../theme/colors";
 import { useWallet } from "../wallet/WalletProvider";
@@ -40,6 +41,7 @@ export function BackupReminderBanner({
   const [bannerKind, setBannerKind] = useState<BannerKind>(null);
   const [passphraseSheetOpen, setPassphraseSheetOpen] = useState(false);
   const [routeName, setRouteName] = useState<string | undefined>();
+  const homeTourOpen = useHomeTourUiOpen();
 
   const sheetOpen =
     activityOpen ||
@@ -100,6 +102,7 @@ export function BackupReminderBanner({
 
   const hidden =
     sheetOpen ||
+    homeTourOpen ||
     bannerKind == null ||
     !hasWallet ||
     routeName !== "Home";

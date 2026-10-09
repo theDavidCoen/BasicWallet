@@ -1,14 +1,12 @@
 /**
  * Spotlight D Home onboarding tour overlay.
  *
- * Transparent Modal + GestureHandlerRootView (same portal pattern as
- * InteractiveBottomSheet). Full-screen dim Pressable without GH root was
- * dead on Samsung rc.4 — taps never reached Skip/Next.
- *
- * Card cluster is a fixed-width column (card → dots → Skip/Next).
+ * Transparent Modal + GestureHandlerRootView. Card cluster sits in the lower
+ * Home void (below Chat & Pay), not mid-screen. Horizontal swipe on the card
+ * → Next (←) / Back (→). Skip / Next / outside-tap = Skip remain.
  */
 
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import {
   Modal,
   Pressable,
@@ -16,11 +14,13 @@ import {
   Text,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from "react-native";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import Animated, {
   Easing,
   cancelAnimation,
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withDelay,
@@ -43,12 +43,14 @@ import { colors } from "../theme/colors";
 
 const CARD_WIDTH = 300;
 const STEP_COUNT = HOME_TOUR_STEPS.length;
+const SWIPE_THRESHOLD = 48;
 
 type Props = {
   visible: boolean;
   stepIndex: number;
   onSkip: () => void;
   onNext: () => void;
+  onBack: () => void;
 };
 
 /** Soft drifting arrow — no boxes, no chrome-sized chevrons. */
@@ -206,19 +208,57 @@ function TourBody({
   stepIndex,
   onSkip,
   onNext,
+  onBack,
 }: {
   stepIndex: number;
   onSkip: () => void;
   onNext: () => void;
+  onBack: () => void;
 }) {
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
+  const { height: windowH } = useWindowDimensions();
   const step = HOME_TOUR_STEPS[Math.max(0, Math.min(stepIndex, STEP_COUNT - 1))]!;
   const isLast = step.n >= STEP_COUNT;
+  const dragX = useSharedValue(0);
+
+  const cardSwipe = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX([-16, 16])
+        .failOffsetY([-36, 36])
+        .onUpdate((e) => {
+          "worklet";
+          dragX.value = e.translationX;
+        })
+        .onEnd((e) => {
+          "worklet";
+          const dx = e.translationX;
+          dragX.value = withTiming(0, { duration: 120 });
+          // Swipe left (←) → Next · swipe right (→) → Back
+          if (dx < -SWIPE_THRESHOLD) {
+            runOnJS(onNext)();
+          } else if (dx > SWIPE_THRESHOLD) {
+            runOnJS(onBack)();
+          }
+        })
+        .onFinalize(() => {
+          "worklet";
+          dragX.value = withTiming(0, { duration: 120 });
+        }),
+    [dragX, onBack, onNext],
+  );
+
+  const clusterAnim = useAnimatedStyle(() => ({
+    transform: [{ translateX: dragX.value * 0.35 }],
+  }));
+
+  // Sit in the lower void under Chat & Pay (not vertically centered).
+  const stagePadBottom = Math.max(insets.bottom, 16) + 72;
+  const stagePadTop = Math.round(windowH * 0.42);
 
   return (
     <View style={styles.portalRoot}>
-      {/* Dim behind cluster — outside tap = Skip */}
       <Pressable
         style={styles.dim}
         onPress={onSkip}
@@ -228,64 +268,73 @@ function TourBody({
 
       <StepHints step={step} insetsTop={insets.top} />
 
-      <View style={styles.centerStage} pointerEvents="box-none">
-        {/* Absorb touches on the card cluster so they do not fall through to dim. */}
-        <View
-          style={styles.cluster}
-          collapsable={false}
-          onStartShouldSetResponder={() => true}
-        >
-          <View
-            style={styles.card}
-            accessible
-            accessibilityRole="summary"
-            accessibilityLabel={`${step.n}. ${t(step.titleKey)}`}
-          >
-            <Text style={styles.stepNum}>{step.n}</Text>
-            <Text style={styles.title}>{t(step.titleKey)}</Text>
-            <Text style={styles.body}>{t(step.bodyKey)}</Text>
-          </View>
-
-          <View style={styles.dotsRow} pointerEvents="none">
-            {HOME_TOUR_STEPS.map((s) => (
-              <View
-                key={s.id}
-                style={[styles.dot, s.n === step.n ? styles.dotActive : null]}
-              />
-            ))}
-          </View>
-
-          <View style={styles.navRow}>
-            <TouchableOpacity
-              onPress={onSkip}
-              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
-              accessibilityRole="button"
-              accessibilityLabel={t("home.tourSkip")}
-              activeOpacity={0.6}
-              style={styles.navBtn}
+      <View
+        style={[
+          styles.centerStage,
+          { paddingTop: stagePadTop, paddingBottom: stagePadBottom },
+        ]}
+        pointerEvents="box-none"
+      >
+        <GestureDetector gesture={cardSwipe}>
+          <Animated.View style={[styles.cluster, clusterAnim]} collapsable={false}>
+            <View
+              style={styles.card}
+              accessible
+              accessibilityRole="summary"
+              accessibilityLabel={`${step.n}. ${t(step.titleKey)}`}
             >
-              <Text style={styles.navSkip}>{t("home.tourSkip")}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={onNext}
-              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
-              accessibilityRole="button"
-              accessibilityLabel={isLast ? t("home.tourDone") : t("home.tourNext")}
-              activeOpacity={0.6}
-              style={styles.navBtnEnd}
-            >
-              <Text style={styles.navNext}>
-                {isLast ? t("home.tourDone") : t("home.tourNext")}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+              <Text style={styles.stepNum}>{step.n}</Text>
+              <Text style={styles.title}>{t(step.titleKey)}</Text>
+              <Text style={styles.body}>{t(step.bodyKey)}</Text>
+            </View>
+
+            <View style={styles.dotsRow} pointerEvents="none">
+              {HOME_TOUR_STEPS.map((s) => (
+                <View
+                  key={s.id}
+                  style={[styles.dot, s.n === step.n ? styles.dotActive : null]}
+                />
+              ))}
+            </View>
+
+            <View style={styles.navRow}>
+              <TouchableOpacity
+                onPress={onSkip}
+                hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+                accessibilityRole="button"
+                accessibilityLabel={t("home.tourSkip")}
+                activeOpacity={0.6}
+                style={styles.navBtn}
+              >
+                <Text style={styles.navSkip}>{t("home.tourSkip")}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={onNext}
+                hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+                accessibilityRole="button"
+                accessibilityLabel={isLast ? t("home.tourDone") : t("home.tourNext")}
+                activeOpacity={0.6}
+                style={styles.navBtnEnd}
+              >
+                <Text style={styles.navNext}>
+                  {isLast ? t("home.tourDone") : t("home.tourNext")}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+        </GestureDetector>
       </View>
     </View>
   );
 }
 
-export function HomeTourOverlay({ visible, stepIndex, onSkip, onNext }: Props) {
+export function HomeTourOverlay({
+  visible,
+  stepIndex,
+  onSkip,
+  onNext,
+  onBack,
+}: Props) {
   return (
     <Modal
       visible={visible}
@@ -296,7 +345,12 @@ export function HomeTourOverlay({ visible, stepIndex, onSkip, onNext }: Props) {
     >
       <SafeAreaProvider initialMetrics={initialWindowMetrics}>
         <GestureHandlerRootView style={styles.portalRoot}>
-          <TourBody stepIndex={stepIndex} onSkip={onSkip} onNext={onNext} />
+          <TourBody
+            stepIndex={stepIndex}
+            onSkip={onSkip}
+            onNext={onNext}
+            onBack={onBack}
+          />
         </GestureHandlerRootView>
       </SafeAreaProvider>
     </Modal>
@@ -314,7 +368,7 @@ const styles = StyleSheet.create({
   },
   centerStage: {
     ...StyleSheet.absoluteFill,
-    justifyContent: "center",
+    justifyContent: "flex-end",
     alignItems: "center",
     paddingHorizontal: 24,
     zIndex: 2,
