@@ -17,9 +17,13 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { BasicLogo } from "../components/BasicLogo";
+import { useI18n } from "../i18n";
 import {
   createNewPrfEntropy,
   createOrGetPrfEntropy,
+  isNoCreateOptionError,
+  mapPasskeyCreateError,
+  PasskeyNoCreateOptionError,
   PasskeyNotFoundError,
   PasskeyPrfUnavailableError,
 } from "../onboarding/passkeyPrf";
@@ -38,30 +42,11 @@ type DetectPhase =
   | "almostReady";
 type Phase = CreatePhase | DetectPhase;
 
-const PHASE_TITLE: Record<Phase, string> = {
-  detecting: "DETECTING PASSKEY",
-  creating: "CREATING PASSKEY",
-  deriving: "DERIVING SECRETS",
-  discoveringIndexes: "DISCOVERING INDEXES",
-  discoveringLabels: "DISCOVERING LABELS",
-  almostReady: "ALMOST READY",
-};
-
-const PHASE_CAPTION: Partial<Record<Phase, string>> = {
-  detecting:
-    "Looking for an existing passkey.\nIf the wrong manager opens, tap Sign-in options or use the links below.",
-  creating:
-    "Save the passkey in Google Password Manager\n(or another provider that supports PRF).",
-  deriving: "Building your wallet keys from the passkey proof.",
-  discoveringIndexes: "Scanning for passkey wallets…",
-  discoveringLabels: "Fetching names from Nostr…",
-  almostReady: "Opening your wallet…",
-};
-
 export function PasskeyProgressScreen() {
   const navigation = useNavigation<RootNav>();
   const route = useRoute<RouteProp<RootStackParamList, "PasskeyProgress">>();
   const insets = useSafeAreaInsets();
+  const { t } = useI18n();
   const { provisionFromPasskeyEntropy } = useWallet();
   const mode = route.params.mode;
   const [phase, setPhase] = useState<Phase>(mode === "create" ? "creating" : "detecting");
@@ -69,49 +54,94 @@ export function PasskeyProgressScreen() {
   const cancelled = useRef(false);
   const phaseTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
+  const phaseTitle = (p: Phase): string => {
+    switch (p) {
+      case "detecting":
+        return t("onboarding.passkeyDetectingTitle");
+      case "creating":
+        return t("onboarding.passkeyCreatingTitle");
+      case "deriving":
+        return t("onboarding.passkeyDerivingTitle");
+      case "discoveringIndexes":
+        return t("onboarding.passkeyDiscoveringIndexesTitle");
+      case "discoveringLabels":
+        return t("onboarding.passkeyDiscoveringLabelsTitle");
+      case "almostReady":
+        return t("onboarding.passkeyAlmostReadyTitle");
+    }
+  };
+
+  const phaseCaption = (p: Phase): string => {
+    switch (p) {
+      case "detecting":
+        return t("onboarding.passkeyDetectingCaption");
+      case "creating":
+        return t("onboarding.passkeyCreatingCaption");
+      case "deriving":
+        return t("onboarding.passkeyDerivingCaption");
+      case "discoveringIndexes":
+        return t("onboarding.passkeyDiscoveringIndexesCaption");
+      case "discoveringLabels":
+        return t("onboarding.passkeyDiscoveringLabelsCaption");
+      case "almostReady":
+        return t("onboarding.passkeyAlmostReadyCaption");
+    }
+  };
+
   const clearPhaseTimers = useCallback(() => {
-    for (const t of phaseTimers.current) clearTimeout(t);
+    for (const timer of phaseTimers.current) clearTimeout(timer);
     phaseTimers.current = [];
   }, []);
 
+  const goBackTerms = useCallback(() => {
+    if (navigation.canGoBack()) navigation.goBack();
+    else navigation.replace("TermsOfUse", { mode: "passkey" });
+  }, [navigation]);
+
   const fail = useCallback(
-    (title: string, message: string) => {
-      const prfHint = /PRF|password manager|Google Password/i.test(message);
+    (title: string, message: string, opts?: { offerSettings?: boolean }) => {
+      const offerSettings =
+        opts?.offerSettings ||
+        /PRF|password manager|Google Password|passkey provider|No passkey provider/i.test(
+          message,
+        );
       Alert.alert(
         title,
-        prfHint ? `${message}\n\n${PRF_PROVIDER_HELP}` : message,
-        prfHint
+        offerSettings ? `${message}\n\n${PRF_PROVIDER_HELP}` : message,
+        offerSettings
           ? [
               {
-                text: "Passkey settings",
+                text: t("onboarding.passkeySettings"),
                 onPress: () => {
-                  void openPasskeyProviderSettings().finally(() => {
-                    if (navigation.canGoBack()) navigation.goBack();
-                    else navigation.replace("TermsOfUse", { mode: "passkey" });
-                  });
+                  void openPasskeyProviderSettings().finally(() => goBackTerms());
                 },
               },
               {
-                text: "OK",
+                text: t("common.cancel"),
                 style: "cancel",
-                onPress: () => {
-                  if (navigation.canGoBack()) navigation.goBack();
-                  else navigation.replace("TermsOfUse", { mode: "passkey" });
-                },
+                onPress: goBackTerms,
               },
             ]
           : [
               {
                 text: "OK",
-                onPress: () => {
-                  if (navigation.canGoBack()) navigation.goBack();
-                  else navigation.replace("TermsOfUse", { mode: "passkey" });
-                },
+                onPress: goBackTerms,
               },
             ],
       );
     },
-    [navigation],
+    [goBackTerms, t],
+  );
+
+  const failCreate = useCallback(
+    (e: unknown) => {
+      const mapped = mapPasskeyCreateError(e);
+      fail(t("onboarding.passkeyCreateFailedTitle"), mapped.message, {
+        offerSettings:
+          mapped instanceof PasskeyNoCreateOptionError || isNoCreateOptionError(mapped),
+      });
+    },
+    [fail, t],
   );
 
   const runTimedProvisionPhases = useCallback(
@@ -148,43 +178,51 @@ export function PasskeyProgressScreen() {
 
   const runCreate = useCallback(async () => {
     setPhase("creating");
-    const entropy = await createNewPrfEntropy();
-    if (cancelled.current) return;
-    await runTimedProvisionPhases("create", entropy);
-    if (cancelled.current) return;
-    setPhase("almostReady");
-    navigation.replace("Ready");
-  }, [navigation, runTimedProvisionPhases]);
+    try {
+      const entropy = await createNewPrfEntropy();
+      if (cancelled.current) return;
+      await runTimedProvisionPhases("create", entropy);
+      if (cancelled.current) return;
+      setPhase("almostReady");
+      navigation.replace("Ready");
+    } catch (e) {
+      if (cancelled.current) return;
+      if (/cancel|UserCancelled/i.test(e instanceof Error ? e.message : String(e))) {
+        goBackTerms();
+        return;
+      }
+      failCreate(e);
+    }
+  }, [failCreate, goBackTerms, navigation, runTimedProvisionPhases]);
 
-  const offerCreateOrRestore = useCallback(() => {
+  const offerRestoreAfterCancel = useCallback(() => {
     Alert.alert(
-      "Passkey missing",
-      "No matching Basic Wallet passkey was found.\n\n" +
-        "Create needs a PRF-capable provider such as Google Password Manager.",
+      t("onboarding.passkeyMissingTitle"),
+      t("onboarding.passkeyMissingBody"),
       [
         {
-          text: "Passkey settings",
+          text: t("onboarding.passkeySettings"),
           onPress: () => void openPasskeyProviderSettings(),
         },
         {
-          text: "Restore",
+          text: t("onboarding.passkeyRestore"),
           onPress: () => navigation.replace("RestoreWallet", { mode: "full" }),
         },
         {
-          text: "Create new passkey",
+          text: t("onboarding.passkeyCreateNew"),
           style: "destructive",
           onPress: () => {
             navigation.replace("PasskeyProgress", { mode: "create" });
           },
         },
         {
-          text: "Cancel",
+          text: t("common.cancel"),
           style: "cancel",
           onPress: () => navigation.replace("TermsOfUse", { mode: "passkey" }),
         },
       ],
     );
-  }, [navigation]);
+  }, [navigation, t]);
 
   const runDetect = useCallback(async () => {
     setPhase("detecting");
@@ -198,12 +236,13 @@ export function PasskeyProgressScreen() {
     } catch (e) {
       if (cancelled.current) return;
       if (e instanceof PasskeyNotFoundError) {
-        offerCreateOrRestore();
+        // New install / no Basic passkey: skip the hang and create immediately.
+        navigation.replace("PasskeyProgress", { mode: "create" });
         return;
       }
       throw e;
     }
-  }, [navigation, offerCreateOrRestore, runTimedProvisionPhases]);
+  }, [navigation, runTimedProvisionPhases]);
 
   useEffect(() => {
     if (started.current) return;
@@ -217,24 +256,35 @@ export function PasskeyProgressScreen() {
         const msg =
           e instanceof PasskeyPrfUnavailableError || e instanceof Error
             ? e.message
-            : "Unknown error";
+            : t("common.unknownError");
         if (/cancel|UserCancelled/i.test(msg)) {
-          offerCreateOrRestore();
+          offerRestoreAfterCancel();
           return;
         }
-        fail(mode === "create" ? "Could not create wallet" : "Could not open wallet", msg);
+        if (mode === "create" || isNoCreateOptionError(e)) {
+          failCreate(e);
+          return;
+        }
+        fail(t("onboarding.passkeyOpenFailedTitle"), msg);
       }
     })();
     return () => {
       cancelled.current = true;
       clearPhaseTimers();
     };
-  }, [clearPhaseTimers, fail, mode, offerCreateOrRestore, runCreate, runDetect]);
+  }, [
+    clearPhaseTimers,
+    fail,
+    failCreate,
+    mode,
+    offerRestoreAfterCancel,
+    runCreate,
+    runDetect,
+    t,
+  ]);
 
-  const showPasskeySettings =
-    phase === "detecting" || phase === "creating";
-  /** Always available on detect path (fresh install or after reset). */
-  const showCreateInstead = mode === "detect";
+  /** Settings escape hatch only while creating (not during detect). */
+  const showPasskeySettings = phase === "creating";
 
   return (
     <View style={[styles.root, { paddingTop: Math.max(insets.top, 12) + 8 }]}>
@@ -243,33 +293,19 @@ export function PasskeyProgressScreen() {
       </View>
 
       <View style={styles.center}>
-        <Text style={styles.title}>{PHASE_TITLE[phase]}</Text>
-        <Text style={styles.caption}>{PHASE_CAPTION[phase] ?? "Please wait…"}</Text>
+        <Text style={styles.title}>{phaseTitle(phase)}</Text>
+        <Text style={styles.caption}>{phaseCaption(phase)}</Text>
         <ActivityIndicator color={colors.fg} style={styles.spin} />
-        <Text style={styles.hint}>Please wait</Text>
+        <Text style={styles.hint}>{t("onboarding.passkeyPleaseWait")}</Text>
 
-        {showPasskeySettings || showCreateInstead ? (
+        {showPasskeySettings ? (
           <View style={styles.links}>
-            {showPasskeySettings ? (
-              <Pressable
-                style={styles.linkBtn}
-                onPress={() => void openPasskeyProviderSettings()}
-              >
-                <Text style={styles.linkText}>Open passkey settings</Text>
-              </Pressable>
-            ) : null}
-            {showCreateInstead ? (
-              <Pressable
-                style={styles.linkBtn}
-                onPress={() => {
-                  cancelled.current = true;
-                  clearPhaseTimers();
-                  navigation.replace("PasskeyProgress", { mode: "create" });
-                }}
-              >
-                <Text style={styles.linkText}>Create new passkey instead</Text>
-              </Pressable>
-            ) : null}
+            <Pressable
+              style={styles.linkBtn}
+              onPress={() => void openPasskeyProviderSettings()}
+            >
+              <Text style={styles.linkText}>{t("onboarding.passkeyOpenSettings")}</Text>
+            </Pressable>
           </View>
         ) : null}
       </View>

@@ -8,7 +8,7 @@ License: [MIT](../LICENSE) (same as the repo; Settings → About links to the Gi
 
 ## First launch
 
-1. Create with **passkey** (recommended) or continue **without passkey** (device-only + Advanced Backup).
+1. Create with **passkey** (recommended) or continue **without passkey** (device-only + Advanced Backup). Continue looks for an existing passkey, then creates one if none is found; enable Google Password Manager (or another passkey provider) if create offers no options.
 2. Or **restore** from seed / Nostr package / home server (onboarding **Restore options** chip, or Settings → Restore).
 3. Or **pair** from a logged-in nearby phone (onboarding **pair** chip) — see [Bluetooth pair / fast login](#bluetooth-pair--fast-login).
 4. Prefer a backup before you receive funds: passkey and/or Advanced Backup (Nostr / home server).
