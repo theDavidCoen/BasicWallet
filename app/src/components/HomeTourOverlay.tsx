@@ -215,38 +215,43 @@ function ChromeHints({
 
 /**
  * Minimal hit target — native responder grant, no Pressable state machine.
- * Callbacks via refs so rapid taps never wait on a stale closure remount.
+ * Always claims responder when `armed` (same path for Back and Next).
+ * Callers no-op in onPress when at bounds — never gate the hit on step index
+ * (rc.17: Back used enabled=!isFirst so taps right after Next were dropped
+ * until re-render flipped the flag).
  */
 function TourHit({
   onPress,
-  enabled,
+  armed,
   label,
   style,
   textStyle,
   children,
 }: {
   onPress: () => void;
-  enabled: boolean;
+  armed: boolean;
   label: string;
   style?: object;
-  textStyle: object;
+  textStyle: object | object[];
   children: string;
 }) {
   const onPressRef = useRef(onPress);
-  const enabledRef = useRef(enabled);
+  const armedRef = useRef(armed);
   onPressRef.current = onPress;
-  enabledRef.current = enabled;
+  armedRef.current = armed;
 
   return (
     <View
       accessibilityRole="button"
       accessibilityLabel={label}
-      accessibilityState={{ disabled: !enabled }}
       style={style}
       collapsable={false}
-      onStartShouldSetResponder={() => enabledRef.current}
+      // Always take the gesture when armed — identical Back/Next hit path.
+      onStartShouldSetResponder={() => armedRef.current}
+      onMoveShouldSetResponder={() => false}
+      onResponderTerminationRequest={() => false}
       onResponderGrant={() => {
-        if (enabledRef.current) onPressRef.current();
+        if (armedRef.current) onPressRef.current();
       }}
     >
       <Text style={textStyle}>{children}</Text>
@@ -318,8 +323,11 @@ function TourBody({
   const insets = useSafeAreaInsets();
   const [stepIndex, setStepIndex] = useState(0);
   const [armed, setArmed] = useState(false);
+  /** Sync source of truth for nav — updated before setState so Back never waits on paint. */
+  const stepRef = useRef(0);
   const onSkipRef = useRef(onSkip);
   const onDoneRef = useRef(onDone);
+  const backPressT0 = useRef(0);
   onSkipRef.current = onSkip;
   onDoneRef.current = onDone;
 
@@ -334,23 +342,38 @@ function TourBody({
   const isFirst = step.n <= 1;
   const isLast = step.n >= STEP_COUNT;
 
+  useEffect(() => {
+    if (!backPressT0.current) return;
+    const dt = Date.now() - backPressT0.current;
+    console.log(`[HomeTour] back paintDtMs=${dt} step=${stepIndex}`);
+    backPressT0.current = 0;
+  }, [stepIndex]);
+
   const clusterTop = useMemo(() => {
     const windowH = Dimensions.get("window").height;
     return Math.round(windowH * CLUSTER_TOP_FRAC);
   }, []);
 
   const goNext = () => {
-    setStepIndex((prev) => {
-      if (prev >= STEP_COUNT - 1) {
-        queueMicrotask(() => onDoneRef.current());
-        return prev;
-      }
-      return prev + 1;
-    });
+    const prev = stepRef.current;
+    if (prev >= STEP_COUNT - 1) {
+      queueMicrotask(() => onDoneRef.current());
+      return;
+    }
+    const next = prev + 1;
+    stepRef.current = next;
+    setStepIndex(next);
   };
 
   const goBack = () => {
-    setStepIndex((prev) => Math.max(0, prev - 1));
+    // Same hit path as Next: always invoked when armed; no-op at 0 without
+    // disabling the responder (that was the Back-only lag on rc.17).
+    const prev = stepRef.current;
+    if (prev <= 0) return;
+    backPressT0.current = Date.now();
+    const next = prev - 1;
+    stepRef.current = next;
+    setStepIndex(next);
   };
 
   const goSkip = () => {
@@ -373,31 +396,30 @@ function TourBody({
           collapsable={false}
           pointerEvents="box-none"
         >
-          <View
-            style={styles.card}
-            pointerEvents="auto"
-            collapsable={false}
-            accessible
-            accessibilityRole="summary"
-            accessibilityLabel={`${step.n}. ${t(step.titleKey)}`}
-          >
-            <Text style={styles.stepNum}>{step.n}</Text>
-            <Text style={styles.title}>{t(step.titleKey)}</Text>
-            <Text style={styles.body}>{t(step.bodyKey)}</Text>
+          <View style={styles.card} pointerEvents="auto" collapsable={false}>
+            <Text style={styles.stepNum} pointerEvents="none">
+              {step.n}
+            </Text>
+            <Text style={styles.title} pointerEvents="none">
+              {t(step.titleKey)}
+            </Text>
+            <Text style={styles.body} pointerEvents="none">
+              {t(step.bodyKey)}
+            </Text>
 
-            {/* Back / Next inside the card — always mounted. */}
+            {/* Back / Next — identical armed hit path; equal flex hit boxes. */}
             <View style={styles.cardFooter} collapsable={false}>
               <TourHit
-                enabled={armed && !isFirst}
+                armed={armed}
                 onPress={goBack}
                 label={backLabel}
                 style={styles.cardNavBtn}
-                textStyle={isFirst ? styles.navBackMuted : styles.navBack}
+                textStyle={[styles.navBack, isFirst ? styles.navBackMuted : null]}
               >
                 {backLabel}
               </TourHit>
               <TourHit
-                enabled={armed}
+                armed={armed}
                 onPress={goNext}
                 label={nextLabel}
                 style={styles.cardNavBtnEnd}
@@ -408,7 +430,7 @@ function TourBody({
             </View>
           </View>
 
-          <View style={styles.dotsRow} pointerEvents="auto">
+          <View style={styles.dotsRow} pointerEvents="none">
             {HOME_TOUR_STEPS.map((s) => (
               <View
                 key={s.id}
@@ -417,9 +439,9 @@ function TourBody({
             ))}
           </View>
 
-          <View style={styles.skipRow} pointerEvents="auto" collapsable={false}>
+          <View style={styles.skipRow} pointerEvents="box-none" collapsable={false}>
             <TourHit
-              enabled={armed}
+              armed={armed}
               onPress={goSkip}
               label={skipLabel}
               style={styles.skipHit}
@@ -505,20 +527,24 @@ const styles = StyleSheet.create({
   cardFooter: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
+    alignItems: "stretch",
     marginTop: 16,
     paddingTop: 4,
   },
   cardNavBtn: {
-    paddingVertical: 12,
+    flex: 1,
+    paddingVertical: 18,
     paddingRight: 12,
-    minWidth: 72,
+    minHeight: 52,
+    justifyContent: "center",
   },
   cardNavBtnEnd: {
-    paddingVertical: 12,
+    flex: 1,
+    paddingVertical: 18,
     paddingLeft: 12,
-    minWidth: 72,
+    minHeight: 52,
     alignItems: "flex-end",
+    justifyContent: "center",
   },
   dotsRow: {
     width: CARD_WIDTH,
@@ -559,9 +585,7 @@ const styles = StyleSheet.create({
     color: colors.caption,
   },
   navBackMuted: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 14,
-    color: "transparent",
+    opacity: 0,
   },
   navSkip: {
     fontFamily: "JetBrainsMono_400Regular",
