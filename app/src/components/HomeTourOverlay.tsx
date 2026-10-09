@@ -1,12 +1,11 @@
 /**
  * Spotlight D Home onboarding tour overlay.
  *
- * Architecture (rc.24):
+ * Architecture (rc.25):
  * - UX frozen: in-card Back/Next, Skip under, chrome hints, no card swipe.
- * - Unified long high-contrast arrows (no circle pulses).
- * - Add Wallet / Fiat: ↑ arrows, tip on command circles; Settings: → under logo,
- *   opacity pulse only (no translate). Soft* on active step only.
- * - Home poll setState paused while tour open; host pointerEvents=auto.
+ * - Add Wallet / Fiat: ↑ arrows, tip on command circles; POS/QR swipe arrows.
+ * - Settings: fingerprint imprint under logo; opacity pulse only (no translate).
+ * - Soft* on active step only; Home poll paused while tour open.
  */
 
 import {
@@ -64,6 +63,8 @@ const ARROW_STROKE = "rgba(255,255,255,0.92)";
 const ARROW_RIGHT_PATH = "M2 12 H34 M26 4 L42 12 L26 20";
 /** Tip near y=2 — place container so tip kisses circle bottom. */
 const ARROW_UP_PATH = "M12 46 V10 M5 17 L12 2 L19 17";
+/** Fingerprint imprint under logo (Settings long-press hint). */
+const FP_SIZE = 40;
 
 type HintKind = (typeof HOME_TOUR_STEPS)[number]["hint"];
 type SwipeDir = "left" | "right";
@@ -194,10 +195,33 @@ function SoftTapUpArrowHint() {
   );
 }
 
+/** Fingerprint / finger-imprint glyph (stroke ridges). */
+function FingerprintGlyph() {
+  const common = {
+    fill: "none" as const,
+    stroke: ARROW_STROKE,
+    strokeWidth: 1.65,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+  };
+  return (
+    <Svg width={FP_SIZE} height={FP_SIZE} viewBox="0 0 24 24">
+      <Path {...common} d="M12 3.2c-3.7 0-6.7 3-6.7 6.7" />
+      <Path {...common} d="M18.7 9.9c0-3.7-3-6.7-6.7-6.7" />
+      <Path {...common} d="M7.6 11.2c0-2.4 2-4.4 4.4-4.4s4.4 2 4.4 4.4" />
+      <Path {...common} d="M9.2 14.2c0-1.5 1.3-2.8 2.8-2.8s2.8 1.3 2.8 2.8" />
+      <Path {...common} d="M12 14.8v4.2" />
+      <Path {...common} d="M6.8 13.6c.2 3.2 2.2 5.9 5.2 6.9" />
+      <Path {...common} d="M17.2 13.6c-.3 2.4-1.6 4.4-3.6 5.6" />
+      <Path {...common} d="M9.4 17.6c.6 1.2 1.7 2 3 2 .8 0 1.5-.3 2.1-.8" />
+    </Svg>
+  );
+}
+
 /**
- * Settings — → under logo, centered. No translation; whitening pulse only.
+ * Settings — fingerprint under logo, centered. No translation; whitening pulse only.
  */
-function SoftSettingsArrowHint() {
+function SoftSettingsFingerprintHint() {
   const opacity = useSharedValue(0.4);
 
   useEffect(() => {
@@ -220,7 +244,7 @@ function SoftSettingsArrowHint() {
 
   return (
     <Animated.View style={[styles.hintAnim, style]} pointerEvents="none">
-      <ArrowRightGlyph />
+      <FingerprintGlyph />
     </Animated.View>
   );
 }
@@ -248,10 +272,10 @@ const TourHintsLayer = memo(function TourHintsLayer({
   const cornerArrowTop = circleBottom - 2;
   const cornerArrowLeft = CHROME_PAD_X + CMD_CIRCLE / 2 - ARROW_UP_W / 2;
   /**
-   * Settings: under the Basic wordmark, centered — points right; opacity only.
+   * Settings: fingerprint imprint under the Basic wordmark; opacity pulse only.
    */
   const logoTop = headerY + (HEADER_ROW_H - HOME_LOGO_H) / 2;
-  const settingsArrowTop = logoTop + HOME_LOGO_H + 10;
+  const settingsHintTop = logoTop + HOME_LOGO_H + 8;
   const swipeTop = headerY + 96;
 
   return (
@@ -268,10 +292,10 @@ const TourHintsLayer = memo(function TourHintsLayer({
       ) : null}
       {activeHint === "pulse_settings" ? (
         <View
-          style={[styles.pulseCenterRow, { top: settingsArrowTop }]}
+          style={[styles.pulseCenterRow, { top: settingsHintTop }]}
           pointerEvents="none"
         >
-          <SoftSettingsArrowHint />
+          <SoftSettingsFingerprintHint />
         </View>
       ) : null}
       {activeHint === "pulse_avatar" ? (
@@ -726,7 +750,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     right: 0,
-    height: ARROW_H + 12,
+    height: FP_SIZE + 8,
     alignItems: "center",
     justifyContent: "center",
     zIndex: 1,
