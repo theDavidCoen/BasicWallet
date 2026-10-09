@@ -39,6 +39,8 @@ const CLUSTER_TOP_FRAC = 0.52;
 
 /** Ignore presses for this long after mount (touch bleed from prior screen). */
 const TOUR_ARM_MS = 480;
+/** Dim dismiss only if finger moves less than this (swipe ≠ Skip). */
+const DIM_TAP_SLOP_PX = 12;
 
 type Props = {
   visible: boolean;
@@ -248,6 +250,55 @@ function TourPress({
   );
 }
 
+/**
+ * Outside dismiss: only a deliberate tap. Swipes / pans / cancelled touches
+ * must never Skip (rc.15: card pan fell through pointerEvents=none → dim onPress).
+ */
+function DimTapSkip({
+  armed,
+  onSkip,
+  label,
+}: {
+  armed: boolean;
+  onSkip: () => void;
+  label: string;
+}) {
+  const start = useRef<{ x: number; y: number } | null>(null);
+  const moved = useRef(false);
+
+  return (
+    <View
+      style={styles.dim}
+      pointerEvents={armed ? "auto" : "none"}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onTouchStart={(e) => {
+        const { pageX, pageY } = e.nativeEvent;
+        start.current = { x: pageX, y: pageY };
+        moved.current = false;
+      }}
+      onTouchMove={(e) => {
+        if (!start.current || moved.current) return;
+        const { pageX, pageY } = e.nativeEvent;
+        const dx = pageX - start.current.x;
+        const dy = pageY - start.current.y;
+        if (dx * dx + dy * dy > DIM_TAP_SLOP_PX * DIM_TAP_SLOP_PX) {
+          moved.current = true;
+        }
+      }}
+      onTouchEnd={() => {
+        const ok = armed && start.current != null && !moved.current;
+        start.current = null;
+        if (ok) onSkip();
+      }}
+      onTouchCancel={() => {
+        start.current = null;
+        moved.current = true;
+      }}
+    />
+  );
+}
+
 function TourBody({
   onSkip,
   onDone,
@@ -311,17 +362,10 @@ function TourBody({
 
   return (
     <View style={styles.portalRoot} pointerEvents="box-none">
-      <Pressable
-        style={styles.dim}
-        pointerEvents={armed ? "auto" : "none"}
-        onPress={() => {
-          if (!armed) return;
-          goSkip();
-        }}
-        accessibilityRole="button"
-        accessibilityLabel={t("home.tourSkip")}
-        android_disableSound
-        unstable_pressDelay={0}
+      <DimTapSkip
+        armed={armed}
+        onSkip={goSkip}
+        label={t("home.tourSkip")}
       />
 
       <ChromeHints hint={step.hint} insetsTop={insets.top} />
@@ -332,9 +376,10 @@ function TourBody({
           collapsable={false}
           pointerEvents="box-none"
         >
+          {/* Absorb pans on the card — never let them hit the dim Skip. */}
           <View
             style={styles.card}
-            pointerEvents="none"
+            pointerEvents="auto"
             accessible
             accessibilityRole="summary"
             accessibilityLabel={`${step.n}. ${t(step.titleKey)}`}
@@ -344,7 +389,7 @@ function TourBody({
             <Text style={styles.body}>{t(step.bodyKey)}</Text>
           </View>
 
-          <View style={styles.dotsRow} pointerEvents="none">
+          <View style={styles.dotsRow} pointerEvents="auto">
             {HOME_TOUR_STEPS.map((s) => (
               <View
                 key={s.id}
