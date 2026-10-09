@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { Text, View } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { useI18n } from "../i18n";
+import { armHomeTourIfNeeded } from "../home/homeTour";
 import { markWarmupSeen } from "../wallet/warmupSeen";
 import { ui } from "../theme/ui";
 
@@ -13,6 +14,8 @@ export function ReadyScreen() {
   useEffect(() => {
     // Next cold start should say WELCOME BACK, not SETTING UP.
     void markWarmupSeen();
+    // Fresh install + first wallet → arm Spotlight D tour (no-op after Reset app).
+    void armHomeTourIfNeeded();
     const timer = setTimeout(() => {
       navigation.reset({ index: 0, routes: [{ name: "Home" }] });
     }, 600);

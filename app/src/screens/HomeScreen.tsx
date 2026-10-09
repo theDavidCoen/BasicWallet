@@ -54,6 +54,12 @@ import {
   subscribeChatStore,
 } from "../chat/chatStore";
 import { useI18n } from "../i18n";
+import { HomeTourOverlay } from "../components/HomeTourOverlay";
+import {
+  HOME_TOUR_STEPS,
+  isHomeTourPending,
+  markHomeTourDone,
+} from "../home/homeTour";
 
 const MUTINYNET_OK = "#7DCEA0";
 const MUTINYNET_DOWN = "#E07070";
@@ -134,6 +140,9 @@ export function HomeScreen() {
   /** Home primary unit: sats or one of the enabled display fiats. */
   const [balanceUnit, setBalanceUnit] = useState<"sats" | DisplayCurrencyCode>("sats");
   const [chatUnreadTotal, setChatUnreadTotal] = useState(0);
+  /** Spotlight D tour — armed only after fresh-install first wallet. */
+  const [tourOpen, setTourOpen] = useState(false);
+  const [tourStep, setTourStep] = useState(0);
   const handleRef = useRef<View>(null);
   /** 0 undecided · 1 POS (LTR) · -1 scan (RTL) */
   const sideDir = useSharedValue(0);
@@ -167,6 +176,42 @@ export function HomeScreen() {
       refreshChatUnread();
     }, [refreshChatUnread]),
   );
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      void (async () => {
+        const pending = await isHomeTourPending();
+        if (cancelled || !pending) return;
+        // Wait a beat so Home chrome is painted before the dim overlay.
+        requestAnimationFrame(() => {
+          if (!cancelled) {
+            setTourStep(0);
+            setTourOpen(true);
+          }
+        });
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, []),
+  );
+
+  const dismissTour = useCallback(() => {
+    setTourOpen(false);
+    void markHomeTourDone();
+  }, []);
+
+  const advanceTour = useCallback(() => {
+    setTourStep((prev) => {
+      if (prev >= HOME_TOUR_STEPS.length - 1) {
+        setTourOpen(false);
+        void markHomeTourDone();
+        return prev;
+      }
+      return prev + 1;
+    });
+  }, []);
 
   const openSettings = useCallback(() => {
     navigation.navigate("Settings");
@@ -451,7 +496,7 @@ export function HomeScreen() {
   const { pan, homeSwipe, pullResync } = useMemo(() => {
     /** Swipe down from below the logo → force balance + activity resync (α95/α96). */
     const pullDown = Gesture.Pan()
-      .enabled(!activityOpen && !posOpen && !scanOpen && !fiatModeSheetOpen)
+      .enabled(!activityOpen && !posOpen && !scanOpen && !fiatModeSheetOpen && !tourOpen)
       .activeOffsetY(28)
       .failOffsetX([-36, 36])
       .onUpdate((e) => {
@@ -528,7 +573,7 @@ export function HomeScreen() {
     const sidesSettled =
       (posOpen && !posSkipEnter) || (scanOpen && !scanSkipEnter);
     const swipe = Gesture.Pan()
-      .enabled(!activityOpen && !sidesSettled)
+      .enabled(!activityOpen && !sidesSettled && !tourOpen)
       .activeOffsetX([-12, 12])
       .failOffsetY([-56, 56])
       .onBegin(() => {
@@ -633,6 +678,7 @@ export function HomeScreen() {
     clearHomeDragJS,
     dragStartY,
     fiatModeSheetOpen,
+    tourOpen,
     finishDismissJS,
     finishPosDismissJS,
     finishScanDismissJS,
@@ -934,6 +980,13 @@ export function HomeScreen() {
             )}
           </View>
         </ScreenChrome>
+        {tourOpen ? (
+          <HomeTourOverlay
+            stepIndex={tourStep}
+            onSkip={dismissTour}
+            onNext={advanceTour}
+          />
+        ) : null}
       </View>
     </GestureDetector>
   );
