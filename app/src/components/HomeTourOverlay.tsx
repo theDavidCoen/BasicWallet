@@ -6,7 +6,7 @@
  * (no TouchableOpacity delay, no gesture-arena first-touch steal).
  */
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Dimensions,
   Pressable,
@@ -191,28 +191,36 @@ function ChromeHints({
   }
 }
 
-/** Instant press — fires on touch down, no opacity animation work. */
+/**
+ * Instant press after the tour is armed.
+ * onPressIn is snappy; ignored until `armed` so a leftover touch from Ready /
+ * backup Continue cannot Skip the tour on the same gesture (Samsung rc.13).
+ */
 function TourPress({
   onPress,
   label,
   style,
   textStyle,
   children,
+  armed,
 }: {
   onPress: () => void;
   label: string;
   style?: object;
   textStyle: object;
   children: string;
+  armed: boolean;
 }) {
   return (
     <Pressable
-      onPressIn={onPress}
+      onPressIn={() => {
+        if (!armed) return;
+        onPress();
+      }}
       hitSlop={{ top: 16, bottom: 16, left: 12, right: 12 }}
       accessibilityRole="button"
       accessibilityLabel={label}
       style={style}
-      // Avoid Android ripple / press delay fighting the first tap.
       android_disableSound
       unstable_pressDelay={0}
     >
@@ -220,6 +228,9 @@ function TourPress({
     </Pressable>
   );
 }
+
+/** Ignore presses for this long after mount (touch bleed from prior screen). */
+const TOUR_ARM_MS = 480;
 
 function TourBody({
   stepIndex,
@@ -237,6 +248,13 @@ function TourBody({
   const step = HOME_TOUR_STEPS[Math.max(0, Math.min(stepIndex, STEP_COUNT - 1))]!;
   const isFirst = step.n <= 1;
   const isLast = step.n >= STEP_COUNT;
+  const [armed, setArmed] = useState(false);
+
+  useEffect(() => {
+    setArmed(false);
+    const id = setTimeout(() => setArmed(true), TOUR_ARM_MS);
+    return () => clearTimeout(id);
+  }, []);
 
   const clusterTop = useMemo(() => {
     const windowH = Dimensions.get("window").height;
@@ -247,7 +265,12 @@ function TourBody({
     <View style={styles.portalRoot} pointerEvents="box-none">
       <Pressable
         style={styles.dim}
-        onPressIn={onSkip}
+        // Deliberate outside tap (not onPressIn) + inert until armed.
+        pointerEvents={armed ? "auto" : "none"}
+        onPress={() => {
+          if (!armed) return;
+          onSkip();
+        }}
         accessibilityRole="button"
         accessibilityLabel={t("home.tourSkip")}
         android_disableSound
@@ -290,6 +313,7 @@ function TourBody({
               <View style={styles.navBtn} />
             ) : (
               <TourPress
+                armed={armed}
                 onPress={onBack}
                 label={t("home.tourBack")}
                 style={styles.navBtn}
@@ -299,6 +323,7 @@ function TourBody({
               </TourPress>
             )}
             <TourPress
+              armed={armed}
               onPress={onSkip}
               label={t("home.tourSkip")}
               style={styles.navBtnCenter}
@@ -307,6 +332,7 @@ function TourBody({
               {t("home.tourSkip")}
             </TourPress>
             <TourPress
+              armed={armed}
               onPress={onNext}
               label={isLast ? t("home.tourDone") : t("home.tourNext")}
               style={styles.navBtnEnd}
