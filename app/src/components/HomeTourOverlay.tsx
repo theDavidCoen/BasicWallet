@@ -1,17 +1,15 @@
 /**
  * Spotlight D Home onboarding tour overlay.
- * Centered numbered card · dots under card · Skip/Next aligned to card edges ·
- * tap outside = Skip · soft swipe / tap-pulse hints on Home chrome.
+ *
+ * Transparent Modal (new RN root) — must NOT be an AbsoluteFill sibling of
+ * Home ScreenChrome (that crushed layout on Samsung in 0.9.6-rc.3).
+ *
+ * Card cluster is a fixed-width column (card → dots → Skip/Next). Nav sits
+ * immediately under the card edges — never a full-screen footer.
  */
 
 import { useEffect } from "react";
-import {
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-  useWindowDimensions,
-} from "react-native";
+import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, {
   Easing,
   cancelAnimation,
@@ -22,7 +20,12 @@ import Animated, {
   withSequence,
   withTiming,
 } from "react-native-reanimated";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaProvider,
+  initialWindowMetrics,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
+import Svg, { Path } from "react-native-svg";
 import {
   HOME_TOUR_STEPS,
   type HomeTourStep,
@@ -34,23 +37,24 @@ const CARD_WIDTH = 300;
 const STEP_COUNT = HOME_TOUR_STEPS.length;
 
 type Props = {
+  visible: boolean;
   stepIndex: number;
   onSkip: () => void;
   onNext: () => void;
 };
 
-function SwipeHint({ direction }: { direction: "ltr" | "rtl" }) {
-  const x = useSharedValue(direction === "ltr" ? -36 : 36);
+/** Soft drifting arrow — no boxes, no chrome-sized chevrons. */
+function SoftSwipeHint({ direction }: { direction: "ltr" | "rtl" }) {
+  const x = useSharedValue(direction === "ltr" ? -28 : 28);
   const opacity = useSharedValue(0.35);
 
   useEffect(() => {
-    const from = direction === "ltr" ? -40 : 40;
-    const to = direction === "ltr" ? 40 : -40;
+    const from = direction === "ltr" ? -28 : 28;
+    const to = direction === "ltr" ? 28 : -28;
     x.value = from;
-    opacity.value = 0.25;
     x.value = withRepeat(
       withSequence(
-        withTiming(to, { duration: 900, easing: Easing.inOut(Easing.quad) }),
+        withTiming(to, { duration: 1100, easing: Easing.inOut(Easing.quad) }),
         withTiming(from, { duration: 0 }),
       ),
       -1,
@@ -58,8 +62,8 @@ function SwipeHint({ direction }: { direction: "ltr" | "rtl" }) {
     );
     opacity.value = withRepeat(
       withSequence(
-        withTiming(0.95, { duration: 450 }),
-        withTiming(0.25, { duration: 450 }),
+        withTiming(0.7, { duration: 550 }),
+        withTiming(0.25, { duration: 550 }),
       ),
       -1,
       false,
@@ -75,25 +79,36 @@ function SwipeHint({ direction }: { direction: "ltr" | "rtl" }) {
     opacity: opacity.value,
   }));
 
+  // Simple arrow path; flipped for RTL.
+  const d =
+    direction === "ltr"
+      ? "M4 12 H20 M14 6 L20 12 L14 18"
+      : "M20 12 H4 M10 6 L4 12 L10 18";
+
   return (
     <Animated.View style={[styles.swipeHint, style]} pointerEvents="none">
-      <Text style={styles.swipeChevrons}>
-        {direction === "ltr" ? "› › ›" : "‹ ‹ ‹"}
-      </Text>
+      <Svg width={36} height={24} viewBox="0 0 24 24">
+        <Path
+          d={d}
+          fill="none"
+          stroke={colors.fg}
+          strokeWidth={1.6}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </Svg>
     </Animated.View>
   );
 }
 
-function usePulseAnim() {
+function useSoftPulse() {
   const scale = useSharedValue(1);
-  const opacity = useSharedValue(0.55);
+  const opacity = useSharedValue(0.45);
 
   useEffect(() => {
-    scale.value = 1;
-    opacity.value = 0.55;
     scale.value = withRepeat(
       withSequence(
-        withTiming(1.55, { duration: 700, easing: Easing.out(Easing.quad) }),
+        withTiming(1.35, { duration: 800, easing: Easing.out(Easing.quad) }),
         withTiming(1, { duration: 0 }),
       ),
       -1,
@@ -101,8 +116,8 @@ function usePulseAnim() {
     );
     opacity.value = withRepeat(
       withSequence(
-        withTiming(0, { duration: 700, easing: Easing.out(Easing.quad) }),
-        withDelay(80, withTiming(0.55, { duration: 0 })),
+        withTiming(0, { duration: 800, easing: Easing.out(Easing.quad) }),
+        withDelay(120, withTiming(0.45, { duration: 0 })),
       ),
       -1,
       false,
@@ -119,16 +134,25 @@ function usePulseAnim() {
   }));
 }
 
-function PulseRing({
+function SoftPulse({
   top,
   left,
   right,
+  center,
 }: {
   top: number;
   left?: number;
   right?: number;
+  center?: boolean;
 }) {
-  const style = usePulseAnim();
+  const style = useSoftPulse();
+  if (center) {
+    return (
+      <View style={[styles.pulseCenterRow, { top }]} pointerEvents="none">
+        <Animated.View style={[styles.pulseRing, style]} />
+      </View>
+    );
+  }
   return (
     <Animated.View
       pointerEvents="none"
@@ -143,68 +167,51 @@ function PulseRing({
   );
 }
 
-function PulseRingInline() {
-  const style = usePulseAnim();
-  return <Animated.View pointerEvents="none" style={[styles.pulseRing, style]} />;
-}
-
 function StepHints({ step, insetsTop }: { step: HomeTourStep; insetsTop: number }) {
   const headerY = Math.max(insetsTop, 12) + 8 + 10;
+  // Keep swipe hint in the upper band (above the centered card), not over mid chrome.
+  const swipeTop = headerY + 72;
 
   switch (step.hint) {
     case "swipe_ltr":
       return (
-        <View style={styles.swipeZone} pointerEvents="none">
-          <SwipeHint direction="ltr" />
+        <View style={[styles.swipeBand, { top: swipeTop }]} pointerEvents="none">
+          <SoftSwipeHint direction="ltr" />
         </View>
       );
     case "swipe_rtl":
       return (
-        <View style={styles.swipeZone} pointerEvents="none">
-          <SwipeHint direction="rtl" />
+        <View style={[styles.swipeBand, { top: swipeTop }]} pointerEvents="none">
+          <SoftSwipeHint direction="rtl" />
         </View>
       );
     case "pulse_settings":
-      // Soft pulse over empty header / logo zone (long-press target).
-      return (
-        <View style={[styles.pulseCenterRow, { top: headerY }]} pointerEvents="none">
-          <PulseRingInline />
-        </View>
-      );
+      return <SoftPulse top={headerY} center />;
     case "pulse_avatar":
-      return <PulseRing top={headerY} left={28} />;
+      return <SoftPulse top={headerY} left={28} />;
     case "pulse_fiat":
-      return <PulseRing top={headerY} right={28} />;
+      return <SoftPulse top={headerY} right={28} />;
     default:
       return null;
   }
 }
 
-export function HomeTourOverlay({ stepIndex, onSkip, onNext }: Props) {
+function TourBody({
+  stepIndex,
+  onSkip,
+  onNext,
+}: {
+  stepIndex: number;
+  onSkip: () => void;
+  onNext: () => void;
+}) {
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
-  const { height: windowH } = useWindowDimensions();
   const step = HOME_TOUR_STEPS[Math.max(0, Math.min(stepIndex, STEP_COUNT - 1))]!;
   const isLast = step.n >= STEP_COUNT;
-  const cardEnter = useSharedValue(0);
-
-  useEffect(() => {
-    cardEnter.value = 0;
-    cardEnter.value = withTiming(1, { duration: 220, easing: Easing.out(Easing.cubic) });
-  }, [cardEnter, step.n]);
-
-  const cardAnim = useAnimatedStyle(() => ({
-    opacity: cardEnter.value,
-    transform: [{ translateY: (1 - cardEnter.value) * 10 }],
-  }));
 
   return (
-    <View
-      style={[styles.root, { minHeight: windowH }]}
-      pointerEvents="box-none"
-      accessibilityViewIsModal
-    >
-      {/* Soft dim — tap = Skip */}
+    <View style={styles.portalRoot} pointerEvents="box-none">
       <Pressable
         style={styles.dim}
         onPress={onSkip}
@@ -214,8 +221,9 @@ export function HomeTourOverlay({ stepIndex, onSkip, onNext }: Props) {
 
       <StepHints step={step} insetsTop={insets.top} />
 
-      <View style={styles.centerColumn} pointerEvents="box-none">
-        <Animated.View style={[styles.cardWrap, cardAnim]}>
+      {/* Fixed-width cluster: card + dots + nav — never stretches to screen height. */}
+      <View style={styles.centerStage} pointerEvents="box-none">
+        <View style={styles.cluster} pointerEvents="box-none">
           <View
             style={styles.card}
             accessible
@@ -251,38 +259,55 @@ export function HomeTourOverlay({ stepIndex, onSkip, onNext }: Props) {
               hitSlop={12}
               accessibilityRole="button"
               accessibilityLabel={isLast ? t("home.tourDone") : t("home.tourNext")}
-              style={[styles.navBtn, styles.navBtnRight]}
+              style={styles.navBtnEnd}
             >
               <Text style={styles.navNext}>
                 {isLast ? t("home.tourDone") : t("home.tourNext")}
               </Text>
             </Pressable>
           </View>
-        </Animated.View>
+        </View>
       </View>
     </View>
   );
 }
 
+export function HomeTourOverlay({ visible, stepIndex, onSkip, onNext }: Props) {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      onRequestClose={onSkip}
+    >
+      <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+        <TourBody stepIndex={stepIndex} onSkip={onSkip} onNext={onNext} />
+      </SafeAreaProvider>
+    </Modal>
+  );
+}
+
 const styles = StyleSheet.create({
-  root: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 200,
-    elevation: 200,
+  portalRoot: {
+    flex: 1,
   },
   dim: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.48)",
+    ...StyleSheet.absoluteFill,
+    backgroundColor: "rgba(0,0,0,0.45)",
   },
-  centerColumn: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: "center",
+  centerStage: {
+    ...StyleSheet.absoluteFill,
     justifyContent: "center",
+    alignItems: "center",
     paddingHorizontal: 24,
   },
-  cardWrap: {
+  /** Intrinsic height only — critical so Skip/Next stay under the card. */
+  cluster: {
     width: CARD_WIDTH,
     maxWidth: "100%",
+    flexGrow: 0,
+    flexShrink: 0,
   },
   card: {
     backgroundColor: colors.card,
@@ -316,7 +341,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     gap: 8,
-    marginTop: 14,
+    marginTop: 12,
   },
   dot: {
     width: 7,
@@ -334,15 +359,15 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginTop: 14,
-    width: "100%",
+    marginTop: 12,
   },
   navBtn: {
-    minWidth: 72,
-    paddingVertical: 6,
+    paddingVertical: 4,
+    paddingRight: 8,
   },
-  navBtnRight: {
-    alignItems: "flex-end",
+  navBtnEnd: {
+    paddingVertical: 4,
+    paddingLeft: 8,
   },
   navSkip: {
     fontFamily: "JetBrainsMono_400Regular",
@@ -354,42 +379,38 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.fg,
   },
-  swipeZone: {
-    ...StyleSheet.absoluteFillObject,
+  swipeBand: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    height: 40,
     alignItems: "center",
     justifyContent: "center",
-    paddingBottom: 80,
   },
   swipeHint: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  swipeChevrons: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 28,
-    color: colors.fg,
-    letterSpacing: 4,
+    alignItems: "center",
+    justifyContent: "center",
   },
   pulseRing: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 1.5,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1.25,
     borderColor: colors.fg,
   },
   pulseRingAbs: {
     position: "absolute",
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 1.5,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1.25,
     borderColor: colors.fg,
   },
   pulseCenterRow: {
     position: "absolute",
     left: 0,
     right: 0,
-    height: 44,
+    height: 40,
     alignItems: "center",
     justifyContent: "center",
   },

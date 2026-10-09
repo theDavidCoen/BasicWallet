@@ -980,13 +980,12 @@ export function HomeScreen() {
             )}
           </View>
         </ScreenChrome>
-        {tourOpen ? (
-          <HomeTourOverlay
-            stepIndex={tourStep}
-            onSkip={dismissTour}
-            onNext={advanceTour}
-          />
-        ) : null}
+        <HomeTourOverlay
+          visible={tourOpen}
+          stepIndex={tourStep}
+          onSkip={dismissTour}
+          onNext={advanceTour}
+        />
       </View>
     </GestureDetector>
   );
