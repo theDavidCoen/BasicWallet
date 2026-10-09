@@ -2,11 +2,11 @@
  * Spotlight D Home onboarding tour overlay.
  *
  * AbsoluteFill sibling of homeSwipe. No card pan — Back / Skip / Next.
- * Chrome hints on Home (edges / header). Instant step changes via onPressIn
- * (no TouchableOpacity delay, no gesture-arena first-touch steal).
+ * Step index is owned here so Next/Back do not re-render HomeScreen.
+ * Chrome hints stay mounted (opacity toggle) to avoid Reanimated remount hitch.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Dimensions,
   Pressable,
@@ -37,12 +37,14 @@ const CARD_WIDTH = 300;
 const STEP_COUNT = HOME_TOUR_STEPS.length;
 const CLUSTER_TOP_FRAC = 0.52;
 
+/** Ignore presses for this long after mount (touch bleed from prior screen). */
+const TOUR_ARM_MS = 480;
+
 type Props = {
   visible: boolean;
-  stepIndex: number;
   onSkip: () => void;
-  onNext: () => void;
-  onBack: () => void;
+  /** Last-step Next / Done — parent releases locks + marks done. */
+  onDone: () => void;
 };
 
 function SoftSwipeHint({ direction }: { direction: "ltr" | "rtl" }) {
@@ -138,63 +140,80 @@ function SoftPulseHint() {
   );
 }
 
+/** All hint trees stay mounted; only opacity flips per step (no Reanimated remount). */
 function ChromeHints({
-  step,
+  hint,
   insetsTop,
 }: {
-  step: HomeTourStep;
+  hint: HomeTourStep["hint"];
   insetsTop: number;
 }) {
   const headerY = Math.max(insetsTop, 12) + 8;
   const logoPulseTop = headerY + 4;
   const swipeTop = headerY + 96;
 
-  switch (step.hint) {
-    case "swipe_ltr":
-      return (
-        <View style={[styles.swipeBand, { top: swipeTop }]} pointerEvents="none">
-          <SoftSwipeHint direction="ltr" />
-        </View>
-      );
-    case "swipe_rtl":
-      return (
-        <View style={[styles.swipeBand, { top: swipeTop }]} pointerEvents="none">
-          <SoftSwipeHint direction="rtl" />
-        </View>
-      );
-    case "pulse_settings":
-      return (
-        <View style={[styles.pulseCenterRow, { top: logoPulseTop }]} pointerEvents="none">
-          <SoftPulseHint />
-        </View>
-      );
-    case "pulse_avatar":
-      return (
-        <View
-          style={[styles.pulseAbs, { top: logoPulseTop, left: 20 }]}
-          pointerEvents="none"
-        >
-          <SoftPulseHint />
-        </View>
-      );
-    case "pulse_fiat":
-      return (
-        <View
-          style={[styles.pulseAbs, { top: logoPulseTop, right: 20 }]}
-          pointerEvents="none"
-        >
-          <SoftPulseHint />
-        </View>
-      );
-    default:
-      return null;
-  }
+  return (
+    <>
+      <View
+        style={[
+          styles.swipeBand,
+          { top: swipeTop, opacity: hint === "swipe_ltr" ? 1 : 0 },
+        ]}
+        pointerEvents="none"
+      >
+        <SoftSwipeHint direction="ltr" />
+      </View>
+      <View
+        style={[
+          styles.swipeBand,
+          { top: swipeTop, opacity: hint === "swipe_rtl" ? 1 : 0 },
+        ]}
+        pointerEvents="none"
+      >
+        <SoftSwipeHint direction="rtl" />
+      </View>
+      <View
+        style={[
+          styles.pulseCenterRow,
+          { top: logoPulseTop, opacity: hint === "pulse_settings" ? 1 : 0 },
+        ]}
+        pointerEvents="none"
+      >
+        <SoftPulseHint />
+      </View>
+      <View
+        style={[
+          styles.pulseAbs,
+          {
+            top: logoPulseTop,
+            left: 20,
+            opacity: hint === "pulse_avatar" ? 1 : 0,
+          },
+        ]}
+        pointerEvents="none"
+      >
+        <SoftPulseHint />
+      </View>
+      <View
+        style={[
+          styles.pulseAbs,
+          {
+            top: logoPulseTop,
+            right: 20,
+            opacity: hint === "pulse_fiat" ? 1 : 0,
+          },
+        ]}
+        pointerEvents="none"
+      >
+        <SoftPulseHint />
+      </View>
+    </>
+  );
 }
 
 /**
- * Instant press after the tour is armed.
- * onPressIn is snappy; ignored until `armed` so a leftover touch from Ready /
- * backup Continue cannot Skip the tour on the same gesture (Samsung rc.13).
+ * Instant press via onTouchStart (fires before Pressable press state machine).
+ * Armed gate blocks Ready/backup touch bleed on first open.
  */
 function TourPress({
   onPress,
@@ -213,7 +232,7 @@ function TourPress({
 }) {
   return (
     <Pressable
-      onPressIn={() => {
+      onTouchStart={() => {
         if (!armed) return;
         onPress();
       }}
@@ -229,26 +248,18 @@ function TourPress({
   );
 }
 
-/** Ignore presses for this long after mount (touch bleed from prior screen). */
-const TOUR_ARM_MS = 480;
-
 function TourBody({
-  stepIndex,
   onSkip,
-  onNext,
-  onBack,
+  onDone,
 }: {
-  stepIndex: number;
   onSkip: () => void;
-  onNext: () => void;
-  onBack: () => void;
+  onDone: () => void;
 }) {
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
-  const step = HOME_TOUR_STEPS[Math.max(0, Math.min(stepIndex, STEP_COUNT - 1))]!;
-  const isFirst = step.n <= 1;
-  const isLast = step.n >= STEP_COUNT;
+  const [stepIndex, setStepIndex] = useState(0);
   const [armed, setArmed] = useState(false);
+  const pressT0 = useRef(0);
 
   useEffect(() => {
     setArmed(false);
@@ -256,20 +267,56 @@ function TourBody({
     return () => clearTimeout(id);
   }, []);
 
+  const step =
+    HOME_TOUR_STEPS[Math.max(0, Math.min(stepIndex, STEP_COUNT - 1))]!;
+  const isFirst = step.n <= 1;
+  const isLast = step.n >= STEP_COUNT;
+
+  useEffect(() => {
+    const dt = pressT0.current ? Date.now() - pressT0.current : -1;
+    console.log(
+      `[HomeTour] step=${stepIndex} id=${step.id} paintDtMs=${dt}`,
+    );
+  }, [step.id, stepIndex]);
+
   const clusterTop = useMemo(() => {
     const windowH = Dimensions.get("window").height;
     return Math.round(windowH * CLUSTER_TOP_FRAC);
   }, []);
 
+  const goNext = () => {
+    pressT0.current = Date.now();
+    console.log(`[HomeTour] press next at=${pressT0.current}`);
+    setStepIndex((prev) => {
+      if (prev >= STEP_COUNT - 1) {
+        // Defer parent unlock so this press returns before Home re-renders.
+        queueMicrotask(() => onDone());
+        return prev;
+      }
+      return prev + 1;
+    });
+  };
+
+  const goBack = () => {
+    pressT0.current = Date.now();
+    console.log(`[HomeTour] press back at=${pressT0.current}`);
+    setStepIndex((prev) => Math.max(0, prev - 1));
+  };
+
+  const goSkip = () => {
+    pressT0.current = Date.now();
+    console.log(`[HomeTour] press skip at=${pressT0.current}`);
+    queueMicrotask(() => onSkip());
+  };
+
   return (
     <View style={styles.portalRoot} pointerEvents="box-none">
       <Pressable
         style={styles.dim}
-        // Deliberate outside tap (not onPressIn) + inert until armed.
         pointerEvents={armed ? "auto" : "none"}
         onPress={() => {
           if (!armed) return;
-          onSkip();
+          goSkip();
         }}
         accessibilityRole="button"
         accessibilityLabel={t("home.tourSkip")}
@@ -277,8 +324,7 @@ function TourBody({
         unstable_pressDelay={0}
       />
 
-      {/* No remount key — avoid Reanimated restart hitch on each Next. */}
-      <ChromeHints step={step} insetsTop={insets.top} />
+      <ChromeHints hint={step.hint} insetsTop={insets.top} />
 
       <View style={styles.stage} pointerEvents="box-none">
         <View
@@ -307,24 +353,20 @@ function TourBody({
             ))}
           </View>
 
-          {/* Claim the nav strip so taps never fall through to dim. */}
+          {/* All three nav buttons stay mounted — no Back remount on step 1→2. */}
           <View style={styles.navRow} pointerEvents="auto" collapsable={false}>
-            {isFirst ? (
-              <View style={styles.navBtn} />
-            ) : (
-              <TourPress
-                armed={armed}
-                onPress={onBack}
-                label={t("home.tourBack")}
-                style={styles.navBtn}
-                textStyle={styles.navBack}
-              >
-                {t("home.tourBack")}
-              </TourPress>
-            )}
+            <TourPress
+              armed={armed && !isFirst}
+              onPress={goBack}
+              label={t("home.tourBack")}
+              style={styles.navBtn}
+              textStyle={isFirst ? styles.navBackMuted : styles.navBack}
+            >
+              {t("home.tourBack")}
+            </TourPress>
             <TourPress
               armed={armed}
-              onPress={onSkip}
+              onPress={goSkip}
               label={t("home.tourSkip")}
               style={styles.navBtnCenter}
               textStyle={styles.navSkip}
@@ -333,7 +375,7 @@ function TourBody({
             </TourPress>
             <TourPress
               armed={armed}
-              onPress={onNext}
+              onPress={goNext}
               label={isLast ? t("home.tourDone") : t("home.tourNext")}
               style={styles.navBtnEnd}
               textStyle={styles.navNext}
@@ -347,22 +389,12 @@ function TourBody({
   );
 }
 
-export function HomeTourOverlay({
-  visible,
-  stepIndex,
-  onSkip,
-  onNext,
-  onBack,
-}: Props) {
+export function HomeTourOverlay({ visible, onSkip, onDone }: Props) {
   if (!visible) return null;
   return (
     <View style={styles.host} pointerEvents="box-none" collapsable={false}>
-      <TourBody
-        stepIndex={stepIndex}
-        onSkip={onSkip}
-        onNext={onNext}
-        onBack={onBack}
-      />
+      {/* key resets local step when tour re-opens after a rare remount. */}
+      <TourBody key="tour-body" onSkip={onSkip} onDone={onDone} />
     </View>
   );
 }
@@ -475,6 +507,11 @@ const styles = StyleSheet.create({
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 14,
     color: colors.caption,
+  },
+  navBackMuted: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 14,
+    color: "transparent",
   },
   navSkip: {
     fontFamily: "JetBrainsMono_400Regular",

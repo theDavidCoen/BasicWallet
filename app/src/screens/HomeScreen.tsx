@@ -56,7 +56,6 @@ import {
 import { useI18n } from "../i18n";
 import { HomeTourOverlay } from "../components/HomeTourOverlay";
 import {
-  HOME_TOUR_STEPS,
   isHomeTourPending,
   isHomeTourPendingSync,
   markHomeTourDone,
@@ -149,7 +148,6 @@ export function HomeScreen() {
    */
   const [tourOpen, setTourOpen] = useState(() => isHomeTourPendingSync());
   const [tourBlocking, setTourBlocking] = useState(() => isHomeTourPendingSync());
-  const [tourStep, setTourStep] = useState(0);
   const tourLocksHome = tourOpen || tourBlocking;
   const handleRef = useRef<View>(null);
   /** 0 undecided · 1 POS (LTR) · -1 scan (RTL) */
@@ -215,7 +213,6 @@ export function HomeScreen() {
   // Sync latch → Modal on first paint. Storage confirm only for cold paths.
   useEffect(() => {
     if (isHomeTourPendingSync()) {
-      setTourStep(0);
       setTourOpen(true);
       setTourBlocking(true);
       setHomeTourUiOpen(true);
@@ -226,7 +223,6 @@ export function HomeScreen() {
       const pending = await isHomeTourPending();
       if (cancelled) return;
       if (pending) {
-        setTourStep(0);
         setTourOpen(true);
         setTourBlocking(true);
         setHomeTourUiOpen(true);
@@ -252,23 +248,6 @@ export function HomeScreen() {
       void markHomeTourDone();
     });
   }, [releaseTourLocks]);
-
-  const advanceTour = useCallback(() => {
-    setTourStep((prev) => {
-      if (prev >= HOME_TOUR_STEPS.length - 1) {
-        releaseTourLocks();
-        queueMicrotask(() => {
-          void markHomeTourDone();
-        });
-        return prev;
-      }
-      return prev + 1;
-    });
-  }, [releaseTourLocks]);
-
-  const retreatTour = useCallback(() => {
-    setTourStep((prev) => Math.max(0, prev - 1));
-  }, []);
 
   const openSettings = useCallback(() => {
     navigation.navigate("Settings");
@@ -1078,10 +1057,8 @@ export function HomeScreen() {
       {/* Sibling overlay — not under homeSwipe. */}
       <HomeTourOverlay
         visible={tourOpen}
-        stepIndex={tourStep}
         onSkip={dismissTour}
-        onNext={advanceTour}
-        onBack={retreatTour}
+        onDone={dismissTour}
       />
     </View>
   );
