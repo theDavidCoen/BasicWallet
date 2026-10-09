@@ -1,7 +1,8 @@
 /**
  * Spotlight D Home onboarding tour overlay.
  *
- * AbsoluteFill sibling of homeSwipe. No card pan — Back / Skip / Next.
+ * AbsoluteFill sibling of homeSwipe. No card pan.
+ * Back / Next inside the card; Skip + dots under it.
  * Step index is owned here so Next/Back do not re-render HomeScreen.
  * Chrome hints stay mounted (opacity toggle) to avoid Reanimated remount hitch.
  */
@@ -9,7 +10,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Dimensions,
-  Pressable,
   StyleSheet,
   Text,
   View,
@@ -214,39 +214,43 @@ function ChromeHints({
 }
 
 /**
- * Instant press via onTouchStart (fires before Pressable press state machine).
- * Armed gate blocks Ready/backup touch bleed on first open.
+ * Minimal hit target — native responder grant, no Pressable state machine.
+ * Callbacks via refs so rapid taps never wait on a stale closure remount.
  */
-function TourPress({
+function TourHit({
   onPress,
+  enabled,
   label,
   style,
   textStyle,
   children,
-  armed,
 }: {
   onPress: () => void;
+  enabled: boolean;
   label: string;
   style?: object;
   textStyle: object;
   children: string;
-  armed: boolean;
 }) {
+  const onPressRef = useRef(onPress);
+  const enabledRef = useRef(enabled);
+  onPressRef.current = onPress;
+  enabledRef.current = enabled;
+
   return (
-    <Pressable
-      onTouchStart={() => {
-        if (!armed) return;
-        onPress();
-      }}
-      hitSlop={{ top: 16, bottom: 16, left: 12, right: 12 }}
+    <View
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityState={{ disabled: !enabled }}
       style={style}
-      android_disableSound
-      unstable_pressDelay={0}
+      collapsable={false}
+      onStartShouldSetResponder={() => enabledRef.current}
+      onResponderGrant={() => {
+        if (enabledRef.current) onPressRef.current();
+      }}
     >
       <Text style={textStyle}>{children}</Text>
-    </Pressable>
+    </View>
   );
 }
 
@@ -265,6 +269,10 @@ function DimTapSkip({
 }) {
   const start = useRef<{ x: number; y: number } | null>(null);
   const moved = useRef(false);
+  const onSkipRef = useRef(onSkip);
+  onSkipRef.current = onSkip;
+  const armedRef = useRef(armed);
+  armedRef.current = armed;
 
   return (
     <View
@@ -287,9 +295,9 @@ function DimTapSkip({
         }
       }}
       onTouchEnd={() => {
-        const ok = armed && start.current != null && !moved.current;
+        const ok = armedRef.current && start.current != null && !moved.current;
         start.current = null;
-        if (ok) onSkip();
+        if (ok) onSkipRef.current();
       }}
       onTouchCancel={() => {
         start.current = null;
@@ -310,7 +318,10 @@ function TourBody({
   const insets = useSafeAreaInsets();
   const [stepIndex, setStepIndex] = useState(0);
   const [armed, setArmed] = useState(false);
-  const pressT0 = useRef(0);
+  const onSkipRef = useRef(onSkip);
+  const onDoneRef = useRef(onDone);
+  onSkipRef.current = onSkip;
+  onDoneRef.current = onDone;
 
   useEffect(() => {
     setArmed(false);
@@ -323,25 +334,15 @@ function TourBody({
   const isFirst = step.n <= 1;
   const isLast = step.n >= STEP_COUNT;
 
-  useEffect(() => {
-    const dt = pressT0.current ? Date.now() - pressT0.current : -1;
-    console.log(
-      `[HomeTour] step=${stepIndex} id=${step.id} paintDtMs=${dt}`,
-    );
-  }, [step.id, stepIndex]);
-
   const clusterTop = useMemo(() => {
     const windowH = Dimensions.get("window").height;
     return Math.round(windowH * CLUSTER_TOP_FRAC);
   }, []);
 
   const goNext = () => {
-    pressT0.current = Date.now();
-    console.log(`[HomeTour] press next at=${pressT0.current}`);
     setStepIndex((prev) => {
       if (prev >= STEP_COUNT - 1) {
-        // Defer parent unlock so this press returns before Home re-renders.
-        queueMicrotask(() => onDone());
+        queueMicrotask(() => onDoneRef.current());
         return prev;
       }
       return prev + 1;
@@ -349,24 +350,20 @@ function TourBody({
   };
 
   const goBack = () => {
-    pressT0.current = Date.now();
-    console.log(`[HomeTour] press back at=${pressT0.current}`);
     setStepIndex((prev) => Math.max(0, prev - 1));
   };
 
   const goSkip = () => {
-    pressT0.current = Date.now();
-    console.log(`[HomeTour] press skip at=${pressT0.current}`);
-    queueMicrotask(() => onSkip());
+    queueMicrotask(() => onSkipRef.current());
   };
+
+  const backLabel = t("home.tourBack");
+  const skipLabel = t("home.tourSkip");
+  const nextLabel = isLast ? t("home.tourDone") : t("home.tourNext");
 
   return (
     <View style={styles.portalRoot} pointerEvents="box-none">
-      <DimTapSkip
-        armed={armed}
-        onSkip={goSkip}
-        label={t("home.tourSkip")}
-      />
+      <DimTapSkip armed={armed} onSkip={goSkip} label={skipLabel} />
 
       <ChromeHints hint={step.hint} insetsTop={insets.top} />
 
@@ -376,10 +373,10 @@ function TourBody({
           collapsable={false}
           pointerEvents="box-none"
         >
-          {/* Absorb pans on the card — never let them hit the dim Skip. */}
           <View
             style={styles.card}
             pointerEvents="auto"
+            collapsable={false}
             accessible
             accessibilityRole="summary"
             accessibilityLabel={`${step.n}. ${t(step.titleKey)}`}
@@ -387,6 +384,28 @@ function TourBody({
             <Text style={styles.stepNum}>{step.n}</Text>
             <Text style={styles.title}>{t(step.titleKey)}</Text>
             <Text style={styles.body}>{t(step.bodyKey)}</Text>
+
+            {/* Back / Next inside the card — always mounted. */}
+            <View style={styles.cardFooter} collapsable={false}>
+              <TourHit
+                enabled={armed && !isFirst}
+                onPress={goBack}
+                label={backLabel}
+                style={styles.cardNavBtn}
+                textStyle={isFirst ? styles.navBackMuted : styles.navBack}
+              >
+                {backLabel}
+              </TourHit>
+              <TourHit
+                enabled={armed}
+                onPress={goNext}
+                label={nextLabel}
+                style={styles.cardNavBtnEnd}
+                textStyle={styles.navNext}
+              >
+                {nextLabel}
+              </TourHit>
+            </View>
           </View>
 
           <View style={styles.dotsRow} pointerEvents="auto">
@@ -398,35 +417,16 @@ function TourBody({
             ))}
           </View>
 
-          {/* All three nav buttons stay mounted — no Back remount on step 1→2. */}
-          <View style={styles.navRow} pointerEvents="auto" collapsable={false}>
-            <TourPress
-              armed={armed && !isFirst}
-              onPress={goBack}
-              label={t("home.tourBack")}
-              style={styles.navBtn}
-              textStyle={isFirst ? styles.navBackMuted : styles.navBack}
-            >
-              {t("home.tourBack")}
-            </TourPress>
-            <TourPress
-              armed={armed}
+          <View style={styles.skipRow} pointerEvents="auto" collapsable={false}>
+            <TourHit
+              enabled={armed}
               onPress={goSkip}
-              label={t("home.tourSkip")}
-              style={styles.navBtnCenter}
+              label={skipLabel}
+              style={styles.skipHit}
               textStyle={styles.navSkip}
             >
-              {t("home.tourSkip")}
-            </TourPress>
-            <TourPress
-              armed={armed}
-              onPress={goNext}
-              label={isLast ? t("home.tourDone") : t("home.tourNext")}
-              style={styles.navBtnEnd}
-              textStyle={styles.navNext}
-            >
-              {isLast ? t("home.tourDone") : t("home.tourNext")}
-            </TourPress>
+              {skipLabel}
+            </TourHit>
           </View>
         </View>
       </View>
@@ -482,7 +482,7 @@ const styles = StyleSheet.create({
     borderColor: colors.fg,
     paddingHorizontal: 20,
     paddingTop: 18,
-    paddingBottom: 20,
+    paddingBottom: 12,
   },
   stepNum: {
     fontFamily: "JetBrainsMono_700Bold",
@@ -501,6 +501,24 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.caption,
     lineHeight: 20,
+  },
+  cardFooter: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 16,
+    paddingTop: 4,
+  },
+  cardNavBtn: {
+    paddingVertical: 12,
+    paddingRight: 12,
+    minWidth: 72,
+  },
+  cardNavBtnEnd: {
+    paddingVertical: 12,
+    paddingLeft: 12,
+    minWidth: 72,
+    alignItems: "flex-end",
   },
   dotsRow: {
     width: CARD_WIDTH,
@@ -523,30 +541,17 @@ const styles = StyleSheet.create({
     backgroundColor: colors.fg,
     borderColor: colors.fg,
   },
-  navRow: {
+  skipRow: {
     width: CARD_WIDTH,
     maxWidth: "100%",
-    flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    marginTop: 12,
+    marginTop: 4,
   },
-  navBtn: {
-    paddingVertical: 10,
-    paddingRight: 8,
-    minWidth: 72,
-  },
-  navBtnCenter: {
-    paddingVertical: 10,
-    paddingHorizontal: 8,
+  skipHit: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
     minWidth: 72,
     alignItems: "center",
-  },
-  navBtnEnd: {
-    paddingVertical: 10,
-    paddingLeft: 8,
-    minWidth: 72,
-    alignItems: "flex-end",
   },
   navBack: {
     fontFamily: "JetBrainsMono_400Regular",
