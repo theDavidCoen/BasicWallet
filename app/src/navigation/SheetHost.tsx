@@ -70,6 +70,7 @@ import { useFiatMode } from "../fiat/FiatModeProvider";
 import { FiatModeEnterSheetContent } from "../fiat/FiatModeEnterSheetContent";
 import { FiatModeExitSheetContent } from "../fiat/FiatModeExitSheetContent";
 import { requireUserPresence } from "../security/userPresence";
+import { isHomeTourUiOpen } from "../home/homeTour";
 
 export type FundsSentPayload = {
   amount: number;
@@ -562,6 +563,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
   ]);
 
   const beginActivityDrag = useCallback(() => {
+    if (isHomeTourUiOpen()) return;
     setWalletOpen(false);
     resetWalletFlow();
     setPosOpen(false);
@@ -583,6 +585,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
   }, [clearFundsNotice, resetActivityFlow, resetWalletFlow]);
 
   const beginPosDrag = useCallback(() => {
+    // Spotlight D tour owns the screen — never open POS under the Modal.
+    if (isHomeTourUiOpen()) return;
     // Activity open/dragging owns the gesture — never flash POS underneath.
     if (activityOpen) return;
     // Scan already open — do not steal via Home swipe.
@@ -610,6 +614,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
   }, []);
 
   const beginScanDrag = useCallback(() => {
+    // Spotlight D tour owns the screen — never open Scan under the Modal.
+    if (isHomeTourUiOpen()) return;
     if (activityOpen) return;
     // POS already open — never open Scan underneath / replace it.
     if (posOpen) return;
@@ -636,6 +642,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
   }, []);
 
   const openPosSheet = useCallback(() => {
+    if (isHomeTourUiOpen()) return;
     setActivityOpen(false);
     setWalletOpen(false);
     resetWalletFlow();
@@ -653,6 +660,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
   }, [clearFundsNotice, resetWalletFlow]);
 
   const openScanSheet = useCallback(() => {
+    if (isHomeTourUiOpen()) return;
     // Interactive swipe already owns the sheet — do not re-run enter spring.
     if (scanOpen || scanSkipEnter) return;
     setActivityOpen(false);

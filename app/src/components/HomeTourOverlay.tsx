@@ -1,14 +1,19 @@
 /**
  * Spotlight D Home onboarding tour overlay.
  *
- * Transparent Modal + GestureHandlerRootView. Card cluster sits in the lower
- * Home void (below Chat & Pay), not mid-screen. Horizontal swipe on the card
- * → Next (←) / Back (→). Skip / Next / outside-tap = Skip remain.
+ * Transparent Modal + GestureHandlerRootView (captures the Android window so
+ * Home RNGH under the Modal cannot steal pans). Card cluster sits in the lower
+ * Home void (below Chat & Pay). Horizontal swipe on the card uses RN
+ * PanResponder (← Next / → Back) — RNGH Pan inside Modal conflicted with
+ * TouchableOpacity on Samsung. Skip / Next / outside-tap = Skip remain.
  */
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
+  Animated,
+  Easing,
   Modal,
+  PanResponder,
   Pressable,
   StyleSheet,
   Text,
@@ -16,18 +21,7 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
-import Animated, {
-  Easing,
-  cancelAnimation,
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withDelay,
-  withRepeat,
-  withSequence,
-  withTiming,
-} from "react-native-reanimated";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import {
   SafeAreaProvider,
   initialWindowMetrics,
@@ -55,39 +49,49 @@ type Props = {
 
 /** Soft drifting arrow — no boxes, no chrome-sized chevrons. */
 function SoftSwipeHint({ direction }: { direction: "ltr" | "rtl" }) {
-  const x = useSharedValue(direction === "ltr" ? -28 : 28);
-  const opacity = useSharedValue(0.35);
+  const x = useRef(new Animated.Value(direction === "ltr" ? -28 : 28)).current;
+  const opacity = useRef(new Animated.Value(0.35)).current;
 
   useEffect(() => {
     const from = direction === "ltr" ? -28 : 28;
     const to = direction === "ltr" ? 28 : -28;
-    x.value = from;
-    x.value = withRepeat(
-      withSequence(
-        withTiming(to, { duration: 1100, easing: Easing.inOut(Easing.quad) }),
-        withTiming(from, { duration: 0 }),
-      ),
-      -1,
-      false,
+    x.setValue(from);
+    const drift = Animated.loop(
+      Animated.sequence([
+        Animated.timing(x, {
+          toValue: to,
+          duration: 1100,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(x, {
+          toValue: from,
+          duration: 0,
+          useNativeDriver: true,
+        }),
+      ]),
     );
-    opacity.value = withRepeat(
-      withSequence(
-        withTiming(0.7, { duration: 550 }),
-        withTiming(0.25, { duration: 550 }),
-      ),
-      -1,
-      false,
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, {
+          toValue: 0.7,
+          duration: 550,
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacity, {
+          toValue: 0.25,
+          duration: 550,
+          useNativeDriver: true,
+        }),
+      ]),
     );
+    drift.start();
+    pulse.start();
     return () => {
-      cancelAnimation(x);
-      cancelAnimation(opacity);
+      drift.stop();
+      pulse.stop();
     };
   }, [direction, opacity, x]);
-
-  const style = useAnimatedStyle(() => ({
-    transform: [{ translateX: x.value }],
-    opacity: opacity.value,
-  }));
 
   const d =
     direction === "ltr"
@@ -95,7 +99,10 @@ function SoftSwipeHint({ direction }: { direction: "ltr" | "rtl" }) {
       : "M20 12 H4 M10 6 L4 12 L10 18";
 
   return (
-    <Animated.View style={[styles.swipeHint, style]} pointerEvents="none">
+    <Animated.View
+      style={[styles.swipeHint, { transform: [{ translateX: x }], opacity }]}
+      pointerEvents="none"
+    >
       <Svg width={36} height={24} viewBox="0 0 24 24">
         <Path
           d={d}
@@ -110,39 +117,6 @@ function SoftSwipeHint({ direction }: { direction: "ltr" | "rtl" }) {
   );
 }
 
-function useSoftPulse() {
-  const scale = useSharedValue(1);
-  const opacity = useSharedValue(0.45);
-
-  useEffect(() => {
-    scale.value = withRepeat(
-      withSequence(
-        withTiming(1.35, { duration: 800, easing: Easing.out(Easing.quad) }),
-        withTiming(1, { duration: 0 }),
-      ),
-      -1,
-      false,
-    );
-    opacity.value = withRepeat(
-      withSequence(
-        withTiming(0, { duration: 800, easing: Easing.out(Easing.quad) }),
-        withDelay(120, withTiming(0.45, { duration: 0 })),
-      ),
-      -1,
-      false,
-    );
-    return () => {
-      cancelAnimation(scale);
-      cancelAnimation(opacity);
-    };
-  }, [opacity, scale]);
-
-  return useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-    opacity: opacity.value,
-  }));
-}
-
 function SoftPulse({
   top,
   left,
@@ -154,11 +128,54 @@ function SoftPulse({
   right?: number;
   center?: boolean;
 }) {
-  const style = useSoftPulse();
+  const scale = useRef(new Animated.Value(1)).current;
+  const opacity = useRef(new Animated.Value(0.45)).current;
+
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.parallel([
+        Animated.sequence([
+          Animated.timing(scale, {
+            toValue: 1.35,
+            duration: 800,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(scale, {
+            toValue: 1,
+            duration: 0,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.sequence([
+          Animated.timing(opacity, {
+            toValue: 0,
+            duration: 800,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.delay(120),
+          Animated.timing(opacity, {
+            toValue: 0.45,
+            duration: 0,
+            useNativeDriver: true,
+          }),
+        ]),
+      ]),
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [opacity, scale]);
+
+  const ringStyle = {
+    transform: [{ scale }],
+    opacity,
+  };
+
   if (center) {
     return (
       <View style={[styles.pulseCenterRow, { top }]} pointerEvents="none">
-        <Animated.View style={[styles.pulseRing, style]} />
+        <Animated.View style={[styles.pulseRing, ringStyle]} />
       </View>
     );
   }
@@ -170,7 +187,7 @@ function SoftPulse({
         { top },
         left != null ? { left } : null,
         right != null ? { right } : null,
-        style,
+        ringStyle,
       ]}
     />
   );
@@ -220,45 +237,63 @@ function TourBody({
   const { height: windowH } = useWindowDimensions();
   const step = HOME_TOUR_STEPS[Math.max(0, Math.min(stepIndex, STEP_COUNT - 1))]!;
   const isLast = step.n >= STEP_COUNT;
-  const dragX = useSharedValue(0);
+  const dragX = useRef(new Animated.Value(0)).current;
+  const onNextRef = useRef(onNext);
+  const onBackRef = useRef(onBack);
+  onNextRef.current = onNext;
+  onBackRef.current = onBack;
 
-  const cardSwipe = useMemo(
+  const cardPan = useMemo(
     () =>
-      Gesture.Pan()
-        .activeOffsetX([-16, 16])
-        .failOffsetY([-36, 36])
-        .onUpdate((e) => {
-          "worklet";
-          dragX.value = e.translationX;
-        })
-        .onEnd((e) => {
-          "worklet";
-          const dx = e.translationX;
-          dragX.value = withTiming(0, { duration: 120 });
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onStartShouldSetPanResponderCapture: () => false,
+        onMoveShouldSetPanResponder: (_, g) =>
+          Math.abs(g.dx) > 12 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2,
+        onMoveShouldSetPanResponderCapture: (_, g) =>
+          Math.abs(g.dx) > 12 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2,
+        onPanResponderGrant: () => {
+          dragX.stopAnimation();
+        },
+        onPanResponderMove: (_, g) => {
+          dragX.setValue(g.dx);
+        },
+        onPanResponderRelease: (_, g) => {
+          const dx = g.dx;
+          Animated.timing(dragX, {
+            toValue: 0,
+            duration: 120,
+            useNativeDriver: true,
+          }).start();
           // Swipe left (←) → Next · swipe right (→) → Back
           if (dx < -SWIPE_THRESHOLD) {
-            runOnJS(onNext)();
+            onNextRef.current();
           } else if (dx > SWIPE_THRESHOLD) {
-            runOnJS(onBack)();
+            onBackRef.current();
           }
-        })
-        .onFinalize(() => {
-          "worklet";
-          dragX.value = withTiming(0, { duration: 120 });
-        }),
-    [dragX, onBack, onNext],
+        },
+        onPanResponderTerminate: () => {
+          Animated.timing(dragX, {
+            toValue: 0,
+            duration: 120,
+            useNativeDriver: true,
+          }).start();
+        },
+      }),
+    [dragX],
   );
-
-  const clusterAnim = useAnimatedStyle(() => ({
-    transform: [{ translateX: dragX.value * 0.35 }],
-  }));
 
   // Sit in the lower void under Chat & Pay (not vertically centered).
   const stagePadBottom = Math.max(insets.bottom, 16) + 72;
   const stagePadTop = Math.round(windowH * 0.42);
 
   return (
-    <View style={styles.portalRoot}>
+    <View
+      style={styles.portalRoot}
+      // Claim the full Modal window so underlying Home never sees the touch.
+      onStartShouldSetResponder={() => true}
+      onMoveShouldSetResponder={() => true}
+    >
       <Pressable
         style={styles.dim}
         onPress={onSkip}
@@ -275,54 +310,59 @@ function TourBody({
         ]}
         pointerEvents="box-none"
       >
-        <GestureDetector gesture={cardSwipe}>
-          <Animated.View style={[styles.cluster, clusterAnim]} collapsable={false}>
-            <View
-              style={styles.card}
-              accessible
-              accessibilityRole="summary"
-              accessibilityLabel={`${step.n}. ${t(step.titleKey)}`}
+        <Animated.View
+          style={[
+            styles.cluster,
+            { transform: [{ translateX: Animated.multiply(dragX, 0.35) }] },
+          ]}
+          collapsable={false}
+          {...cardPan.panHandlers}
+        >
+          <View
+            style={styles.card}
+            accessible
+            accessibilityRole="summary"
+            accessibilityLabel={`${step.n}. ${t(step.titleKey)}`}
+          >
+            <Text style={styles.stepNum}>{step.n}</Text>
+            <Text style={styles.title}>{t(step.titleKey)}</Text>
+            <Text style={styles.body}>{t(step.bodyKey)}</Text>
+          </View>
+
+          <View style={styles.dotsRow} pointerEvents="none">
+            {HOME_TOUR_STEPS.map((s) => (
+              <View
+                key={s.id}
+                style={[styles.dot, s.n === step.n ? styles.dotActive : null]}
+              />
+            ))}
+          </View>
+
+          <View style={styles.navRow}>
+            <TouchableOpacity
+              onPress={onSkip}
+              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+              accessibilityRole="button"
+              accessibilityLabel={t("home.tourSkip")}
+              activeOpacity={0.6}
+              style={styles.navBtn}
             >
-              <Text style={styles.stepNum}>{step.n}</Text>
-              <Text style={styles.title}>{t(step.titleKey)}</Text>
-              <Text style={styles.body}>{t(step.bodyKey)}</Text>
-            </View>
-
-            <View style={styles.dotsRow} pointerEvents="none">
-              {HOME_TOUR_STEPS.map((s) => (
-                <View
-                  key={s.id}
-                  style={[styles.dot, s.n === step.n ? styles.dotActive : null]}
-                />
-              ))}
-            </View>
-
-            <View style={styles.navRow}>
-              <TouchableOpacity
-                onPress={onSkip}
-                hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
-                accessibilityRole="button"
-                accessibilityLabel={t("home.tourSkip")}
-                activeOpacity={0.6}
-                style={styles.navBtn}
-              >
-                <Text style={styles.navSkip}>{t("home.tourSkip")}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={onNext}
-                hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
-                accessibilityRole="button"
-                accessibilityLabel={isLast ? t("home.tourDone") : t("home.tourNext")}
-                activeOpacity={0.6}
-                style={styles.navBtnEnd}
-              >
-                <Text style={styles.navNext}>
-                  {isLast ? t("home.tourDone") : t("home.tourNext")}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </Animated.View>
-        </GestureDetector>
+              <Text style={styles.navSkip}>{t("home.tourSkip")}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={onNext}
+              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+              accessibilityRole="button"
+              accessibilityLabel={isLast ? t("home.tourDone") : t("home.tourNext")}
+              activeOpacity={0.6}
+              style={styles.navBtnEnd}
+            >
+              <Text style={styles.navNext}>
+                {isLast ? t("home.tourDone") : t("home.tourNext")}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </Animated.View>
       </View>
     </View>
   );
@@ -341,6 +381,7 @@ export function HomeTourOverlay({
       transparent
       animationType="none"
       statusBarTranslucent
+      presentationStyle="overFullScreen"
       onRequestClose={onSkip}
     >
       <SafeAreaProvider initialMetrics={initialWindowMetrics}>

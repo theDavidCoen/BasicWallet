@@ -162,7 +162,7 @@ export const HOME_TOUR_STEPS: readonly HomeTourStep[] = [
     n: 1,
     hint: "swipe_ltr",
     titleKey: "home.tourPosTitle",
-    bodyKey: "home.tourTourPosBody",
+    bodyKey: "home.tourPosBody",
   },
   {
     id: "qr",

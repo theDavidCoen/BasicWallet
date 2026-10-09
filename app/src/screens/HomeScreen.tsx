@@ -156,11 +156,33 @@ export function HomeScreen() {
   const sideDir = useSharedValue(0);
   /** 1 = Activity/POS/Scan open or Activity dragging — block competing Home pans. */
   const sidesLocked = useSharedValue(activityOpen || posOpen || scanOpen ? 1 : 0);
+  /** Worklet-visible tour latch — `.enabled(false)` alone still leaked pans under Modal on Samsung. */
+  const tourLockedSv = useSharedValue(tourLocksHome ? 1 : 0);
 
   useEffect(() => {
     sidesLocked.value =
       activityOpen || homeDragging || posOpen || scanOpen ? 1 : 0;
   }, [activityOpen, homeDragging, posOpen, scanOpen, sidesLocked]);
+
+  useEffect(() => {
+    tourLockedSv.value = tourLocksHome ? 1 : 0;
+  }, [tourLocksHome, tourLockedSv]);
+
+  // If a side sheet somehow opened under the tour, force-dismiss it.
+  useEffect(() => {
+    if (!tourLocksHome) return;
+    if (posOpen) dismissPosSheet();
+    if (scanOpen) dismissScanSheet();
+    if (activityOpen) dismissActivity();
+  }, [
+    activityOpen,
+    dismissActivity,
+    dismissPosSheet,
+    dismissScanSheet,
+    posOpen,
+    scanOpen,
+    tourLocksHome,
+  ]);
 
   const refreshChatUnread = useCallback(() => {
     try {
@@ -536,6 +558,7 @@ export function HomeScreen() {
       .failOffsetX([-36, 36])
       .onUpdate((e) => {
         "worklet";
+        if (tourLockedSv.value) return;
         pullY.value = Math.max(0, e.translationY);
       })
       .onEnd((e) => {
@@ -559,6 +582,7 @@ export function HomeScreen() {
       .failOffsetX([-40, 40])
       .onBegin(() => {
         "worklet";
+        if (tourLockedSv.value) return;
         // Lock sides immediately — before JS sets activityOpen (prevents POS/Scan flash).
         sidesLocked.value = 1;
         cancelAnimation(translateY);
@@ -614,6 +638,7 @@ export function HomeScreen() {
       .failOffsetY([-56, 56])
       .onBegin(() => {
         "worklet";
+        if (tourLockedSv.value) return;
         if (sidesLocked.value) return;
         if (Math.abs(posX.value - posOpenX.value) < 48) return;
         if (Math.abs(scanX.value - scanOpenX.value) < 48) return;
@@ -624,6 +649,10 @@ export function HomeScreen() {
       })
       .onUpdate((e) => {
         "worklet";
+        if (tourLockedSv.value) {
+          sideDir.value = 0;
+          return;
+        }
         // In-progress POS/Scan drag continues even after we lock sides.
         if (sideDir.value === 0) {
           if (sidesLocked.value) return;
@@ -715,6 +744,7 @@ export function HomeScreen() {
     dragStartY,
     fiatModeSheetOpen,
     tourLocksHome,
+    tourLockedSv,
     finishDismissJS,
     finishPosDismissJS,
     finishScanDismissJS,
@@ -769,18 +799,33 @@ export function HomeScreen() {
   return (
     <GestureDetector gesture={homeSwipe}>
       <View style={styles.full} collapsable={false}>
+        <View
+          style={styles.full}
+          // Full-screen Modal still leaks pans on some Samsung builds — inert Home chrome.
+          pointerEvents={tourLocksHome ? "none" : "auto"}
+          collapsable={false}
+        >
         <SyncProgressBar active={balanceStatus === "loading"} />
         <ScreenChrome
           logoScale={1}
           avatar={
-            <WalletAvatar label={avatarLabel} onPress={openWalletSwitcher} />
+            <WalletAvatar
+              label={avatarLabel}
+              onPress={tourLocksHome ? undefined : openWalletSwitcher}
+            />
           }
           headerRight={
             <View style={styles.headerRightStack}>
               {selectedWallet?.kind === "arkade" ? (
                 <Pressable
                   // InteractiveBottomSheet via SheetHost (same pattern as Wallets).
-                  onPress={fiatMode ? openFiatModeExit : openFiatModeEnter}
+                  onPress={
+                    tourLocksHome
+                      ? undefined
+                      : fiatMode
+                        ? openFiatModeExit
+                        : openFiatModeEnter
+                  }
                   hitSlop={8}
                   accessibilityRole="button"
                   accessibilityLabel={
@@ -844,7 +889,7 @@ export function HomeScreen() {
               ) : null}
             </View>
           }
-          onLongPressEmpty={openSettings}
+          onLongPressEmpty={tourLocksHome ? undefined : openSettings}
         >
           <View style={styles.flex}>
             <GestureDetector gesture={pullResync}>
@@ -1008,7 +1053,10 @@ export function HomeScreen() {
             </GestureDetector>
 
             {rateFooter ? (
-              <Pressable onPress={openSettings} hitSlop={12}>
+              <Pressable
+                onPress={tourLocksHome ? undefined : openSettings}
+                hitSlop={12}
+              >
                 <Text style={styles.rateFooter}>{rateFooter}</Text>
               </Pressable>
             ) : (
@@ -1016,6 +1064,7 @@ export function HomeScreen() {
             )}
           </View>
         </ScreenChrome>
+        </View>
         <HomeTourOverlay
           visible={tourOpen}
           stepIndex={tourStep}
