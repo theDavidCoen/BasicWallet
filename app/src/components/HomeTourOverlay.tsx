@@ -1,11 +1,11 @@
 /**
  * Spotlight D Home onboarding tour overlay.
  *
- * Architecture (rc.22):
+ * Architecture (rc.23):
  * - UX frozen: in-card Back/Next, Skip under, chrome hints, no card swipe.
- * - Soft motion restored — only the **active** step mounts Soft* (one withRepeat).
- * - Home poll setState still paused while tour open (rc.21 lag win).
- * - HomeTourOverlay memo + stable skip/done; host pointerEvents=auto.
+ * - Unified long high-contrast arrows for swipe + tap targets (no circle pulses).
+ * - Soft nudge on active step only (one withRepeat).
+ * - Home poll setState paused while tour open; host pointerEvents=auto.
  */
 
 import {
@@ -29,7 +29,6 @@ import Animated, {
   cancelAnimation,
   useAnimatedStyle,
   useSharedValue,
-  withDelay,
   withRepeat,
   withSequence,
   withTiming,
@@ -50,8 +49,15 @@ const DIM_TAP_SLOP_PX = 12;
 const HOME_LOGO_H = Math.round(62 * 0.55);
 /** ScreenChrome header minHeight. */
 const HEADER_ROW_H = 48;
+/** Unified tour arrow — longer + high-contrast white. */
+const ARROW_W = 64;
+const ARROW_H = 32;
+const ARROW_STROKE = "rgba(255,255,255,0.92)";
+/** Shaft + head in viewBox 0 0 48 24 (points right; rotate for other dirs). */
+const ARROW_PATH = "M2 12 H34 M26 4 L42 12 L26 20";
 
 type HintKind = (typeof HOME_TOUR_STEPS)[number]["hint"];
+type ArrowDir = "left" | "right" | "up" | "down";
 
 type Props = {
   visible: boolean;
@@ -59,96 +65,88 @@ type Props = {
   onDone: () => void;
 };
 
-function SoftSwipeHint({ direction }: { direction: "ltr" | "rtl" }) {
-  const x = useSharedValue(direction === "ltr" ? -28 : 28);
-  const opacity = useSharedValue(0.35);
-
-  useEffect(() => {
-    const from = direction === "ltr" ? -28 : 28;
-    const to = direction === "ltr" ? 28 : -28;
-    x.value = from;
-    x.value = withRepeat(
-      withSequence(
-        withTiming(to, { duration: 1100, easing: Easing.inOut(Easing.quad) }),
-        withTiming(from, { duration: 0 }),
-      ),
-      -1,
-      false,
-    );
-    opacity.value = withRepeat(
-      withSequence(
-        withTiming(0.7, { duration: 550 }),
-        withTiming(0.25, { duration: 550 }),
-      ),
-      -1,
-      false,
-    );
-    return () => {
-      cancelAnimation(x);
-      cancelAnimation(opacity);
-    };
-  }, [direction, opacity, x]);
-
-  const style = useAnimatedStyle(() => ({
-    transform: [{ translateX: x.value }],
-    opacity: opacity.value,
-  }));
-
-  const d =
-    direction === "ltr"
-      ? "M4 12 H20 M14 6 L20 12 L14 18"
-      : "M20 12 H4 M10 6 L4 12 L10 18";
-
+function ArrowGlyph({ pointing }: { pointing: ArrowDir }) {
+  const rotate =
+    pointing === "right"
+      ? "0deg"
+      : pointing === "left"
+        ? "180deg"
+        : pointing === "up"
+          ? "-90deg"
+          : "90deg";
   return (
-    <Animated.View style={[styles.hintAnim, style]} pointerEvents="none">
-      <Svg width={36} height={24} viewBox="0 0 24 24">
+    <View style={{ transform: [{ rotate }] }}>
+      <Svg width={ARROW_W} height={ARROW_H} viewBox="0 0 48 24">
         <Path
-          d={d}
+          d={ARROW_PATH}
           fill="none"
-          stroke={colors.fg}
-          strokeWidth={1.6}
+          stroke={ARROW_STROKE}
+          strokeWidth={2.2}
           strokeLinecap="round"
           strokeLinejoin="round"
         />
       </Svg>
-    </Animated.View>
+    </View>
   );
 }
 
-function SoftPulseHint() {
-  const scale = useSharedValue(1);
-  const opacity = useSharedValue(0.45);
+/** Soft nudge along the arrow axis (swipe or tap). One withRepeat when mounted. */
+function SoftArrowHint({ pointing }: { pointing: ArrowDir }) {
+  const axis = pointing === "left" || pointing === "right" ? "x" : "y";
+  const sign =
+    pointing === "right" || pointing === "down" ? 1 : -1;
+  const from = -14 * sign;
+  const to = 14 * sign;
+  const tx = useSharedValue(axis === "x" ? from : 0);
+  const ty = useSharedValue(axis === "y" ? from : 0);
+  const opacity = useSharedValue(0.55);
 
   useEffect(() => {
-    scale.value = withRepeat(
-      withSequence(
-        withTiming(1.35, { duration: 800, easing: Easing.out(Easing.quad) }),
-        withTiming(1, { duration: 0 }),
-      ),
-      -1,
-      false,
-    );
+    if (axis === "x") {
+      tx.value = from;
+      tx.value = withRepeat(
+        withSequence(
+          withTiming(to, { duration: 1000, easing: Easing.inOut(Easing.quad) }),
+          withTiming(from, { duration: 0 }),
+        ),
+        -1,
+        false,
+      );
+    } else {
+      ty.value = from;
+      ty.value = withRepeat(
+        withSequence(
+          withTiming(to, { duration: 900, easing: Easing.inOut(Easing.quad) }),
+          withTiming(from, { duration: 0 }),
+        ),
+        -1,
+        false,
+      );
+    }
     opacity.value = withRepeat(
       withSequence(
-        withTiming(0, { duration: 800, easing: Easing.out(Easing.quad) }),
-        withDelay(120, withTiming(0.45, { duration: 0 })),
+        withTiming(1, { duration: 500 }),
+        withTiming(0.5, { duration: 500 }),
       ),
       -1,
       false,
     );
     return () => {
-      cancelAnimation(scale);
+      cancelAnimation(tx);
+      cancelAnimation(ty);
       cancelAnimation(opacity);
     };
-  }, [opacity, scale]);
+  }, [axis, from, opacity, to, tx, ty]);
 
   const style = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
+    transform: [{ translateX: tx.value }, { translateY: ty.value }],
     opacity: opacity.value,
   }));
 
   return (
-    <Animated.View style={[styles.pulseRing, style]} pointerEvents="none" />
+    <Animated.View style={[styles.hintAnim, style]} pointerEvents="none">
+      <ArrowGlyph pointing={pointing} />
+    </Animated.View>
   );
 }
 
@@ -165,50 +163,51 @@ const TourHintsLayer = memo(function TourHintsLayer({
   insetsTop: number;
 }) {
   const headerY = Math.max(insetsTop, 12) + 8;
-  /** Avatar / Fiat Mode sit in the header row. */
-  const cornerPulseTop = headerY + (HEADER_ROW_H - 40) / 2;
   /**
-   * Settings: under the Basic wordmark, centered — not overlapping the logo.
-   * Logo is vertically centered in the 48px header row.
+   * Add Wallet / Fiat: arrow sits above the header circles and points down.
+   */
+  const cornerArrowTop = Math.max(insetsTop, headerY - ARROW_H - 4);
+  /**
+   * Settings: under the Basic wordmark, centered — arrow points up at the logo.
    */
   const logoTop = headerY + (HEADER_ROW_H - HOME_LOGO_H) / 2;
-  const settingsPulseTop = logoTop + HOME_LOGO_H + 8;
+  const settingsArrowTop = logoTop + HOME_LOGO_H + 10;
   const swipeTop = headerY + 96;
 
   return (
     <>
       {activeHint === "swipe_ltr" ? (
         <View style={[styles.swipeBand, { top: swipeTop }]} pointerEvents="none">
-          <SoftSwipeHint direction="ltr" />
+          <SoftArrowHint pointing="right" />
         </View>
       ) : null}
       {activeHint === "swipe_rtl" ? (
         <View style={[styles.swipeBand, { top: swipeTop }]} pointerEvents="none">
-          <SoftSwipeHint direction="rtl" />
+          <SoftArrowHint pointing="left" />
         </View>
       ) : null}
       {activeHint === "pulse_settings" ? (
         <View
-          style={[styles.pulseCenterRow, { top: settingsPulseTop }]}
+          style={[styles.pulseCenterRow, { top: settingsArrowTop }]}
           pointerEvents="none"
         >
-          <SoftPulseHint />
+          <SoftArrowHint pointing="up" />
         </View>
       ) : null}
       {activeHint === "pulse_avatar" ? (
         <View
-          style={[styles.pulseAbs, { top: cornerPulseTop, left: 20 }]}
+          style={[styles.cornerArrow, { top: cornerArrowTop, left: 8 }]}
           pointerEvents="none"
         >
-          <SoftPulseHint />
+          <SoftArrowHint pointing="down" />
         </View>
       ) : null}
       {activeHint === "pulse_fiat" ? (
         <View
-          style={[styles.pulseAbs, { top: cornerPulseTop, right: 20 }]}
+          style={[styles.cornerArrow, { top: cornerArrowTop, right: 8 }]}
           pointerEvents="none"
         >
-          <SoftPulseHint />
+          <SoftArrowHint pointing="down" />
         </View>
       ) : null}
     </>
@@ -634,7 +633,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     right: 0,
-    height: 40,
+    height: ARROW_H + 16,
     alignItems: "center",
     justifyContent: "center",
     zIndex: 1,
@@ -643,26 +642,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  pulseRing: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 1.25,
-    borderColor: colors.fg,
-  },
   pulseCenterRow: {
     position: "absolute",
     left: 0,
     right: 0,
-    height: 40,
+    height: ARROW_H + 12,
     alignItems: "center",
     justifyContent: "center",
     zIndex: 1,
   },
-  pulseAbs: {
+  cornerArrow: {
     position: "absolute",
-    width: 40,
-    height: 40,
+    width: ARROW_W + 8,
+    height: ARROW_H + 12,
     alignItems: "center",
     justifyContent: "center",
     zIndex: 1,
