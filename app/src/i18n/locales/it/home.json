@@ -29,6 +29,7 @@
   "pendingConvertBelowMin": "+ %{sats} sats da convertire al raggiungimento del minimo",
   "pendingConvert": "+ %{sats} sats da convertire",
   "pendingConvertStableBelowMin": "+ %{qty} %{ticker} da convertire al raggiungimento del minimo",
+  "tourBack": "Indietro",
   "tourSkip": "Salta",
   "tourNext": "Avanti",
   "tourDone": "Fine",
