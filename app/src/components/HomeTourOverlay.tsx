@@ -1,11 +1,11 @@
 /**
  * Spotlight D Home onboarding tour overlay.
  *
- * Architecture (rc.25):
+ * Architecture (rc.26):
  * - UX frozen: in-card Back/Next, Skip under, chrome hints, no card swipe.
- * - Add Wallet / Fiat: ↑ arrows, tip on command circles; POS/QR swipe arrows.
- * - Settings: fingerprint imprint under logo; opacity pulse only (no translate).
- * - Soft* on active step only; Home poll paused while tour open.
+ * - Settings: fingerprint in white ring under logo; opacity pulse only.
+ * - Soft* for active + prefetch(next) so first Next does not pay Reanimated mount.
+ * - Home poll paused while tour open; host pointerEvents=auto.
  */
 
 import {
@@ -63,8 +63,9 @@ const ARROW_STROKE = "rgba(255,255,255,0.92)";
 const ARROW_RIGHT_PATH = "M2 12 H34 M26 4 L42 12 L26 20";
 /** Tip near y=2 — place container so tip kisses circle bottom. */
 const ARROW_UP_PATH = "M12 46 V10 M5 17 L12 2 L19 17";
-/** Fingerprint imprint under logo (Settings long-press hint). */
-const FP_SIZE = 40;
+/** Fingerprint in white ring under logo (Settings long-press hint). */
+const FP_RING = 48;
+const FP_ICON = 26;
 
 type HintKind = (typeof HOME_TOUR_STEPS)[number]["hint"];
 type SwipeDir = "left" | "right";
@@ -107,13 +108,27 @@ function ArrowUpGlyph() {
   );
 }
 
-/** POS / QR swipe — soft nudge along axis. */
-function SoftSwipeArrowHint({ pointing }: { pointing: SwipeDir }) {
+/**
+ * Soft* `lit`: visible pulse. `!lit` = prefetch warm (opacity 0, withRepeat already running)
+ * so the first Next into that step does not pay Reanimated mount.
+ */
+function SoftSwipeArrowHint({
+  pointing,
+  lit,
+}: {
+  pointing: SwipeDir;
+  lit: boolean;
+}) {
   const sign = pointing === "right" ? 1 : -1;
   const from = -14 * sign;
   const to = 14 * sign;
   const tx = useSharedValue(from);
   const opacity = useSharedValue(0.55);
+  const litSv = useSharedValue(lit ? 1 : 0);
+
+  useEffect(() => {
+    litSv.value = lit ? 1 : 0;
+  }, [lit, litSv]);
 
   useEffect(() => {
     tx.value = from;
@@ -141,7 +156,7 @@ function SoftSwipeArrowHint({ pointing }: { pointing: SwipeDir }) {
 
   const style = useAnimatedStyle(() => ({
     transform: [{ translateX: tx.value }],
-    opacity: opacity.value,
+    opacity: litSv.value * opacity.value,
   }));
 
   return (
@@ -155,9 +170,14 @@ function SoftSwipeArrowHint({ pointing }: { pointing: SwipeDir }) {
  * Add Wallet / Fiat — ↑ arrow; tip aimed at command circle.
  * Small nudge toward the circle (tip stays near it).
  */
-function SoftTapUpArrowHint() {
+function SoftTapUpArrowHint({ lit }: { lit: boolean }) {
   const ty = useSharedValue(6);
   const opacity = useSharedValue(0.6);
+  const litSv = useSharedValue(lit ? 1 : 0);
+
+  useEffect(() => {
+    litSv.value = lit ? 1 : 0;
+  }, [lit, litSv]);
 
   useEffect(() => {
     ty.value = 6;
@@ -185,7 +205,7 @@ function SoftTapUpArrowHint() {
 
   const style = useAnimatedStyle(() => ({
     transform: [{ translateY: ty.value }],
-    opacity: opacity.value,
+    opacity: litSv.value * opacity.value,
   }));
 
   return (
@@ -195,34 +215,40 @@ function SoftTapUpArrowHint() {
   );
 }
 
-/** Fingerprint / finger-imprint glyph (stroke ridges). */
-function FingerprintGlyph() {
+/** Fingerprint ridges inside a clean white ring. */
+function FingerprintInRing() {
   const common = {
     fill: "none" as const,
     stroke: ARROW_STROKE,
-    strokeWidth: 1.65,
+    strokeWidth: 1.55,
     strokeLinecap: "round" as const,
     strokeLinejoin: "round" as const,
   };
   return (
-    <Svg width={FP_SIZE} height={FP_SIZE} viewBox="0 0 24 24">
-      <Path {...common} d="M12 3.2c-3.7 0-6.7 3-6.7 6.7" />
-      <Path {...common} d="M18.7 9.9c0-3.7-3-6.7-6.7-6.7" />
-      <Path {...common} d="M7.6 11.2c0-2.4 2-4.4 4.4-4.4s4.4 2 4.4 4.4" />
-      <Path {...common} d="M9.2 14.2c0-1.5 1.3-2.8 2.8-2.8s2.8 1.3 2.8 2.8" />
-      <Path {...common} d="M12 14.8v4.2" />
-      <Path {...common} d="M6.8 13.6c.2 3.2 2.2 5.9 5.2 6.9" />
-      <Path {...common} d="M17.2 13.6c-.3 2.4-1.6 4.4-3.6 5.6" />
-      <Path {...common} d="M9.4 17.6c.6 1.2 1.7 2 3 2 .8 0 1.5-.3 2.1-.8" />
-    </Svg>
+    <View style={styles.fpRing}>
+      <Svg width={FP_ICON} height={FP_ICON} viewBox="0 0 24 24">
+        <Path {...common} d="M8.2 10.2c0-2.1 1.7-3.8 3.8-3.8s3.8 1.7 3.8 3.8" />
+        <Path {...common} d="M6.4 11c.2-3.1 2.7-5.5 5.6-5.5s5.4 2.4 5.6 5.5" />
+        <Path {...common} d="M9.5 13.2c0-1.4 1.1-2.5 2.5-2.5s2.5 1.1 2.5 2.5" />
+        <Path {...common} d="M12 13.6v3.8" />
+        <Path {...common} d="M7.2 13.8c.35 2.6 2.1 4.7 4.5 5.4" />
+        <Path {...common} d="M16.8 13.8c-.4 2.1-1.8 3.8-3.7 4.7" />
+        <Path {...common} d="M9.6 17.2c.55 1 1.55 1.65 2.7 1.65.7 0 1.35-.25 1.85-.7" />
+      </Svg>
+    </View>
   );
 }
 
 /**
- * Settings — fingerprint under logo, centered. No translation; whitening pulse only.
+ * Settings — fingerprint in ring under logo. No translation; whitening pulse only.
  */
-function SoftSettingsFingerprintHint() {
+function SoftSettingsFingerprintHint({ lit }: { lit: boolean }) {
   const opacity = useSharedValue(0.4);
+  const litSv = useSharedValue(lit ? 1 : 0);
+
+  useEffect(() => {
+    litSv.value = lit ? 1 : 0;
+  }, [lit, litSv]);
 
   useEffect(() => {
     opacity.value = withRepeat(
@@ -239,79 +265,80 @@ function SoftSettingsFingerprintHint() {
   }, [opacity]);
 
   const style = useAnimatedStyle(() => ({
-    opacity: opacity.value,
+    opacity: litSv.value * opacity.value,
   }));
 
   return (
     <Animated.View style={[styles.hintAnim, style]} pointerEvents="none">
-      <FingerprintGlyph />
+      <FingerprintInRing />
     </Animated.View>
   );
 }
 
+function hintMounted(kind: HintKind, active: HintKind, prefetch: HintKind | null) {
+  return kind === active || kind === prefetch;
+}
+
 /**
- * Only the active hint mounts Soft* (one withRepeat). Inactive = unmounted.
- * Re-renders on step change via `activeHint`; Home ticks do not reach here
- * (TourBody memo + stable callbacks).
+ * Active Soft* lit; next step Soft* prefetched warm (opacity 0).
+ * Caps at 2 withRepeat loops — avoids first-Next Reanimated mount cost.
  */
 const TourHintsLayer = memo(function TourHintsLayer({
   activeHint,
+  prefetchHint,
   insetsTop,
 }: {
   activeHint: HintKind;
+  prefetchHint: HintKind | null;
   insetsTop: number;
 }) {
   const headerY = Math.max(insetsTop, 12) + 8;
   /** Avatar / R$ are 28px, vertically centered in the 48px header row. */
   const circleTop = headerY + (HEADER_ROW_H - CMD_CIRCLE) / 2;
   const circleBottom = circleTop + CMD_CIRCLE;
-  /**
-   * ↑ arrow tip at top of glyph — place so tip kisses circle bottom.
-   * SoftTapUp starts with ty=6 so rest pose tip is slightly below, then nudges up.
-   */
   const cornerArrowTop = circleBottom - 2;
   const cornerArrowLeft = CHROME_PAD_X + CMD_CIRCLE / 2 - ARROW_UP_W / 2;
-  /**
-   * Settings: fingerprint imprint under the Basic wordmark; opacity pulse only.
-   */
   const logoTop = headerY + (HEADER_ROW_H - HOME_LOGO_H) / 2;
   const settingsHintTop = logoTop + HOME_LOGO_H + 8;
   const swipeTop = headerY + 96;
 
+  const show = (kind: HintKind) => hintMounted(kind, activeHint, prefetchHint);
+  const lit = (kind: HintKind) => kind === activeHint;
+
   return (
     <>
-      {activeHint === "swipe_ltr" ? (
+      {show("swipe_ltr") ? (
         <View style={[styles.swipeBand, { top: swipeTop }]} pointerEvents="none">
-          <SoftSwipeArrowHint pointing="right" />
+          <SoftSwipeArrowHint pointing="right" lit={lit("swipe_ltr")} />
         </View>
       ) : null}
-      {activeHint === "swipe_rtl" ? (
+      {show("swipe_rtl") ? (
         <View style={[styles.swipeBand, { top: swipeTop }]} pointerEvents="none">
-          <SoftSwipeArrowHint pointing="left" />
+          <SoftSwipeArrowHint pointing="left" lit={lit("swipe_rtl")} />
         </View>
       ) : null}
-      {activeHint === "pulse_settings" ? (
+      {show("pulse_settings") ? (
         <View
           style={[styles.pulseCenterRow, { top: settingsHintTop }]}
           pointerEvents="none"
         >
-          <SoftSettingsFingerprintHint />
+          <SoftSettingsFingerprintHint lit={lit("pulse_settings")} />
         </View>
       ) : null}
-      {activeHint === "pulse_avatar" ? (
+      {show("pulse_avatar") ? (
         <View
           style={[styles.cornerArrow, { top: cornerArrowTop, left: cornerArrowLeft }]}
           pointerEvents="none"
         >
-          <SoftTapUpArrowHint />
+          <SoftTapUpArrowHint lit={lit("pulse_avatar")} />
         </View>
       ) : null}
-      {activeHint === "pulse_fiat" ? (
+      {show("pulse_fiat") ? (
         <View
           style={[styles.cornerArrow, { top: cornerArrowTop, right: cornerArrowLeft }]}
           pointerEvents="none"
         >
-          <SoftTapUpArrowHint />
+          <SoftTapUpArrowHint lit={lit("pulse_fiat")} />
         </View>
       ) : null}
     </>
@@ -404,7 +431,7 @@ function DimTapSkip({
   );
 }
 
-type TapProbe = { dir: "back" | "next" | "skip"; t0: number };
+type TapProbe = { dir: "back" | "next" | "skip"; t0: number; fromStep: number };
 
 /**
  * Owns step state. Default-memoized; parent passes stable onSkip/onDone.
@@ -450,10 +477,19 @@ const TourBody = memo(function TourBody({
     logTourTap("commit", probe.dir, probe.t0, `step=${stepIndex}`);
     const t0 = probe.t0;
     const dir = probe.dir;
+    const fromStep = probe.fromStep;
     tapProbe.current = null;
     requestAnimationFrame(() => {
-      logTourTap("raf1", dir, t0);
-      requestAnimationFrame(() => logTourTap("raf2", dir, t0));
+      logTourTap("raf1", dir, t0, `step=${stepIndex}`);
+      requestAnimationFrame(() => {
+        const paintDtMs = Date.now() - t0;
+        logTourTap(
+          "paint",
+          dir,
+          t0,
+          `step=${stepIndex} from=${fromStep} paintDtMs=${paintDtMs}`,
+        );
+      });
     });
   }, [stepIndex]);
 
@@ -462,17 +498,24 @@ const TourBody = memo(function TourBody({
     return Math.round(windowH * CLUSTER_TOP_FRAC);
   }, []);
 
+  /** Prefetch Soft* for the next step so first Next into it is warm. */
+  const prefetchHint =
+    stepIndex < STEP_COUNT - 1
+      ? HOME_TOUR_STEPS[stepIndex + 1]!.hint
+      : null;
+
   const applyStep = useCallback((next: number, dir: "back" | "next", t0: number) => {
-    logTourTap("setState", dir, t0);
+    const fromStep = stepRef.current;
+    logTourTap("setState", dir, t0, `from=${fromStep} to=${next}`);
     const clamped = Math.max(0, Math.min(STEP_COUNT - 1, next));
     stepRef.current = clamped;
-    tapProbe.current = { dir, t0 };
+    tapProbe.current = { dir, t0, fromStep };
     setStepIndex(clamped);
   }, []);
 
   const goNext = useCallback(() => {
     const t0 = Date.now();
-    logTourTap("handler", "next", t0);
+    logTourTap("handler", "next", t0, `from=${stepRef.current}`);
     const prev = stepRef.current;
     if (prev >= STEP_COUNT - 1) {
       queueMicrotask(() => onDoneRef.current());
@@ -483,7 +526,7 @@ const TourBody = memo(function TourBody({
 
   const goBack = useCallback(() => {
     const t0 = Date.now();
-    logTourTap("handler", "back", t0);
+    logTourTap("handler", "back", t0, `from=${stepRef.current}`);
     const prev = stepRef.current;
     if (prev <= 0) return;
     applyStep(prev - 1, "back", t0);
@@ -492,7 +535,7 @@ const TourBody = memo(function TourBody({
   const goSkip = useCallback(() => {
     const t0 = Date.now();
     logTourTap("handler", "skip", t0);
-    tapProbe.current = { dir: "skip", t0 };
+    tapProbe.current = { dir: "skip", t0, fromStep: stepRef.current };
     queueMicrotask(() => onSkipRef.current());
   }, []);
 
@@ -504,7 +547,11 @@ const TourBody = memo(function TourBody({
     <View style={styles.portalRoot} pointerEvents="box-none">
       <DimTapSkip armed={dimArmed} onSkip={goSkip} label={skipLabel} />
 
-      <TourHintsLayer activeHint={step.hint} insetsTop={insets.top} />
+      <TourHintsLayer
+        activeHint={step.hint}
+        prefetchHint={prefetchHint}
+        insetsTop={insets.top}
+      />
 
       <View style={styles.stage} pointerEvents="box-none">
         <View
@@ -750,10 +797,20 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     right: 0,
-    height: FP_SIZE + 8,
+    height: FP_RING + 8,
     alignItems: "center",
     justifyContent: "center",
     zIndex: 1,
+  },
+  fpRing: {
+    width: FP_RING,
+    height: FP_RING,
+    borderRadius: FP_RING / 2,
+    borderWidth: 1.75,
+    borderColor: ARROW_STROKE,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
   },
   cornerArrow: {
     position: "absolute",
