@@ -36,6 +36,7 @@ Each locale folder has the same **namespace** JSON files (one file per feature a
 | `chat`, `cursor` | Chat & Pay / Ask Cursor |
 | `onboarding`, `restore`, `backup` | First launch / recovery |
 | `fiat`, `privacy`, `notifications`, `contacts`, `exit`, `about` | Destination settings |
+| `reset`, `logs`, `pair`, `node`, `nostr`, `archived`, `arkade` | Settings destinations (reset, logs, Bluetooth pair, connected node, Nostr identity, archived wallets, Arkade hub/network/delegates) |
 
 In code, keys look like `t("settings.language")` or `t("home.receive")` (namespace + key).
 

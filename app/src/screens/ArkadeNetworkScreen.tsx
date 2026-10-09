@@ -24,18 +24,20 @@ import {
   writeNetworkPrefs,
   type NetworkPrefs,
 } from "../config/networkPrefs";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
-const NETWORKS: { id: ArkadeNetworkId; label: string; hint: string }[] = [
-  { id: "mainnet", label: "Bitcoin mainnet", hint: "Real BTC · arkade.computer" },
-  { id: "mutinynet", label: "Mutinynet", hint: "Test coins · mutinynet.arkade.sh" },
-];
-
 export function ArkadeNetworkScreen() {
+  const { t } = useI18n();
   const [prefs, setPrefs] = useState<NetworkPrefs | null>(null);
   const [draftServer, setDraftServer] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const networks: { id: ArkadeNetworkId; label: string; hint: string }[] = [
+    { id: "mainnet", label: t("arkade.mainnetLabel"), hint: t("arkade.mainnetHint") },
+    { id: "mutinynet", label: t("arkade.mutinynetLabel"), hint: t("arkade.mutinynetHint") },
+  ];
 
   useFocusEffect(
     useCallback(() => {
@@ -60,7 +62,7 @@ export function ArkadeNetworkScreen() {
     if (trimmed) {
       const norm = normalizeArkServerUrl(trimmed);
       if (!norm) {
-        Alert.alert("Invalid server", "Enter a valid http(s) ASP URL.");
+        Alert.alert(t("arkade.invalidServerTitle"), t("arkade.invalidServerBody"));
         return;
       }
       customUrl = norm;
@@ -76,15 +78,16 @@ export function ArkadeNetworkScreen() {
     };
 
     const serverLine = customUrl ?? defaultArkServerUrl(next.networkId);
-    const netLabel = next.networkId === "mainnet" ? "Bitcoin mainnet" : "Mutinynet";
+    const netLabel =
+      next.networkId === "mainnet" ? t("arkade.mainnetLabel") : t("arkade.mutinynetLabel");
 
     Alert.alert(
-      "Switch network?",
-      `${netLabel}\n${serverLine}\n\nThe app will restart. Wallets and activity stay on each network separately.`,
+      t("arkade.switchTitle"),
+      t("arkade.switchBody", { net: netLabel, server: serverLine }),
       [
-        { text: "Cancel", style: "cancel" },
+        { text: t("common.cancel"), style: "cancel" },
         {
-          text: "Confirm and restart",
+          text: t("arkade.confirmRestart"),
           style: next.networkId === "mutinynet" ? "destructive" : "default",
           onPress: () => {
             void (async () => {
@@ -95,8 +98,8 @@ export function ArkadeNetworkScreen() {
               } catch (e) {
                 setBusy(false);
                 Alert.alert(
-                  "Could not restart",
-                  e instanceof Error ? e.message : "Unknown error",
+                  t("arkade.restartFailed"),
+                  e instanceof Error ? e.message : t("common.unknownError"),
                 );
               }
             })();
@@ -119,14 +122,11 @@ export function ArkadeNetworkScreen() {
   return (
     <ScreenChrome logoScale={0.77}>
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-        <Text style={ui.title}>NETWORK</Text>
-        <Text style={ui.caption}>
-          Choose Arkade network and optional custom ASP.{"\n"}
-          Confirm to save and restart the app.
-        </Text>
+        <Text style={ui.title}>{t("arkade.networkTitle")}</Text>
+        <Text style={ui.caption}>{t("arkade.networkCaption")}</Text>
 
-        <Text style={styles.section}>Network</Text>
-        {NETWORKS.map((n) => {
+        <Text style={styles.section}>{t("arkade.networkSection")}</Text>
+        {networks.map((n) => {
           const selected = prefs.networkId === n.id;
           return (
             <Pressable
@@ -142,8 +142,8 @@ export function ArkadeNetworkScreen() {
           );
         })}
 
-        <Text style={[styles.section, { marginTop: 28 }]}>ASP server</Text>
-        <Text style={styles.meta}>Default · {defaultUrl}</Text>
+        <Text style={[styles.section, { marginTop: 28 }]}>{t("arkade.aspSection")}</Text>
+        <Text style={styles.meta}>{t("arkade.defaultServer", { url: defaultUrl })}</Text>
         <TextInput
           style={styles.input}
           value={draftServer}
@@ -155,16 +155,14 @@ export function ArkadeNetworkScreen() {
           keyboardType="url"
           editable={!busy}
         />
-        <Text style={styles.meta}>
-          Leave empty to use the official server for this network.
-        </Text>
+        <Text style={styles.meta}>{t("arkade.aspEmptyHint")}</Text>
         {draftServer.trim() ? (
           <Pressable
             style={[ui.secondaryBtn, { marginTop: 12 }]}
             disabled={busy}
             onPress={() => setDraftServer("")}
           >
-            <Text style={ui.secondaryBtnText}>Use default server</Text>
+            <Text style={ui.secondaryBtnText}>{t("arkade.useDefault")}</Text>
           </Pressable>
         ) : null}
 
@@ -176,14 +174,11 @@ export function ArkadeNetworkScreen() {
           {busy ? (
             <ActivityIndicator color={colors.bg} />
           ) : (
-            <Text style={ui.primaryBtnText}>Apply and restart</Text>
+            <Text style={ui.primaryBtnText}>{t("arkade.applyRestart")}</Text>
           )}
         </Pressable>
 
-        <Text style={[ui.hint, { marginTop: 20 }]}>
-          Each network has its own wallets and encrypted local DB.{"\n"}
-          Switching does not move funds between networks.
-        </Text>
+        <Text style={[ui.hint, { marginTop: 20 }]}>{t("arkade.networkHint")}</Text>
       </ScrollView>
     </ScreenChrome>
   );

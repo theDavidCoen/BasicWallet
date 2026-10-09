@@ -12,12 +12,14 @@ import {
 } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { useI18n } from "../i18n";
 import { factoryResetWipeDevice } from "../security/appReset";
 import { requireUserPresence } from "../security/userPresence";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 import { useWallet } from "../wallet/WalletProvider";
 
+/** Safety phrase stays English across locales (typed confirm). */
 const CONFIRM_PHRASE = "Reset";
 
 /**
@@ -25,23 +27,36 @@ const CONFIRM_PHRASE = "Reset";
  */
 export function ResetAppScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
   const { applyFactoryReset } = useWallet();
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
 
   const phraseOk = typed.trim() === CONFIRM_PHRASE;
+  const bullets = [
+    t("reset.bullet1"),
+    t("reset.bullet2"),
+    t("reset.bullet3"),
+    t("reset.bullet4"),
+    t("reset.bullet5"),
+    t("reset.bullet6"),
+    t("reset.bullet7"),
+    t("reset.bullet8"),
+    t("reset.bullet9"),
+    t("reset.bullet10"),
+  ];
 
   async function onConfirm() {
     if (!phraseOk) {
-      Alert.alert("Type Reset", `Type exactly “${CONFIRM_PHRASE}” to continue.`);
+      Alert.alert(t("reset.alertTypeTitle"), t("reset.alertTypeBody"));
       return;
     }
 
     setBusy(true);
     try {
-      const auth = await requireUserPresence("Confirm factory reset");
+      const auth = await requireUserPresence(t("reset.authPrompt"));
       if (!auth.ok) {
-        Alert.alert("Authentication required", "App was not reset.");
+        Alert.alert(t("reset.authRequired"), t("reset.authNotReset"));
         return;
       }
 
@@ -50,7 +65,10 @@ export function ResetAppScreen() {
 
       navigation.reset({ index: 0, routes: [{ name: "OnboardingCreate" }] });
     } catch (e) {
-      Alert.alert("Reset failed", e instanceof Error ? e.message : "Unknown error");
+      Alert.alert(
+        t("reset.failedTitle"),
+        e instanceof Error ? e.message : t("common.unknownError"),
+      );
     } finally {
       setBusy(false);
     }
@@ -62,43 +80,27 @@ export function ResetAppScreen() {
         contentContainerStyle={{ paddingBottom: 40 }}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={ui.title}>RESET APP</Text>
-        <Text style={ui.caption}>
-          Permanently clears this device’s wallet data{"\n"}and returns you to onboarding.
-        </Text>
+        <Text style={ui.title}>{t("reset.title")}</Text>
+        <Text style={ui.caption}>{t("reset.caption")}</Text>
 
         <View style={ui.cardMuted}>
-          {[
-            "All seeds on this device are deleted",
-            "Nostr identity (nsec) is forgotten from Keystore",
-            "Without your own nsec backup, any Nostr relay package becomes unrecoverable",
-            "Local encrypted backup package is kept on this device (needs nsec + passphrase to open)",
-            "Activity history and wallet list are wiped",
-            "Transaction notes stay in the local database until you uninstall the app",
-            "You will land on the create / restore onboarding screen",
-            "Passkey link on this device is cleared — Continue with passkey asks your password manager to pick an existing key (never silent create)",
-            "Passkey child index map (active + archived) is kept for rematerialize from the same PRF",
-            "Any wallets not in the passkey tree will be removed (restore them from a Nostr / home backup)",
-          ].map((line) => (
+          {bullets.map((line) => (
             <Text key={line} style={[ui.caption, { textAlign: "left", marginBottom: 10 }]}>
               · {line}
             </Text>
           ))}
         </View>
 
-        <Text style={[ui.hint, { marginTop: 16 }]}>
-          This cannot be undone without a seed, passkey, or{"\n"}
-          encrypted package plus nsec and passphrase.
-        </Text>
+        <Text style={[ui.hint, { marginTop: 16 }]}>{t("reset.hint")}</Text>
 
-        <Text style={styles.label}>Type Reset to confirm</Text>
+        <Text style={styles.label}>{t("reset.typeLabel")}</Text>
         <TextInput
           style={styles.input}
           value={typed}
           onChangeText={setTyped}
           autoCapitalize="none"
           autoCorrect={false}
-          placeholder="Reset"
+          placeholder={t("reset.placeholder")}
           placeholderTextColor={colors.hint}
           editable={!busy}
         />
@@ -111,7 +113,7 @@ export function ResetAppScreen() {
           {busy ? (
             <ActivityIndicator color="#000" />
           ) : (
-            <Text style={ui.primaryBtnText}>Reset app</Text>
+            <Text style={ui.primaryBtnText}>{t("reset.confirmBtn")}</Text>
           )}
         </Pressable>
       </ScrollView>

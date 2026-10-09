@@ -1,0 +1,17 @@
+{
+  "title": "LOGS",
+  "caption": "Diagnóstico da sessão para o app inteiro (UI, Arkade, Lightning, rede). Seeds, chaves privadas, nsec/npub, xpub/xprv e similares nunca entram no buffer. Don't trust, verify.",
+  "save": "Salvar logs",
+  "saveHint": "CSV (timestamp, nível, mensagem)",
+  "share": "Compartilhar logs",
+  "shareHint": "Texto bruto (uma linha por entrada)",
+  "clear": "Limpar logs",
+  "noLogsTitle": "Sem logs",
+  "noLogsBody": "Nada capturado ainda.",
+  "saveFailed": "Falha ao salvar",
+  "shareFailed": "Falha ao compartilhar",
+  "clearTitle": "Limpar logs?",
+  "clearBody": "Remove todas as linhas em buffer deste dispositivo.",
+  "clearAction": "Limpar",
+  "clearFailed": "Falha ao limpar"
+}

@@ -6,12 +6,13 @@ import { useNavigation } from "@react-navigation/native";
 import { Pressable, ScrollView, StyleSheet, Text } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 
 const DANGER = "#E07070";
 
 type Row = {
-  label: string;
+  labelKey: string;
   danger?: boolean;
   on:
     | "ArkadeNetwork"
@@ -23,24 +24,25 @@ type Row = {
 };
 
 const ROWS: Row[] = [
-  { label: "Network", on: "ArkadeNetwork" },
-  { label: "Delegates", on: "Delegates" },
-  { label: "Restore Wallet", on: "RestoreWallet" },
-  { label: "Recovery address", on: "ExitRecoveryAddress" },
-  { label: "Collaborative Exit", on: "CollaborativeOffboard" },
-  { label: "Unilateral Exit", on: "UnilateralExitHub", danger: true },
+  { labelKey: "arkade.network", on: "ArkadeNetwork" },
+  { labelKey: "arkade.delegates", on: "Delegates" },
+  { labelKey: "arkade.restoreWallet", on: "RestoreWallet" },
+  { labelKey: "arkade.recoveryAddress", on: "ExitRecoveryAddress" },
+  { labelKey: "arkade.collaborativeExit", on: "CollaborativeOffboard" },
+  { labelKey: "arkade.unilateralExit", on: "UnilateralExitHub", danger: true },
 ];
 
 export function ArkadeSettingsScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={styles.title}>ARKADE</Text>
+      <Text style={styles.title}>{t("arkade.title")}</Text>
       <ScrollView style={styles.list} contentContainerStyle={{ paddingBottom: 40 }}>
         {ROWS.map((row) => (
           <Pressable
-            key={row.label}
+            key={row.labelKey}
             style={styles.row}
             onPress={() => {
               if (row.on === "RestoreWallet") {
@@ -57,7 +59,7 @@ export function ArkadeSettingsScreen() {
             }}
           >
             <Text style={[styles.rowLabel, row.danger && styles.dangerLabel]}>
-              {row.label}
+              {t(row.labelKey)}
             </Text>
             <Text style={[styles.chevron, row.danger && styles.dangerLabel]}>›</Text>
           </Pressable>

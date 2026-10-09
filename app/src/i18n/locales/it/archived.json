@@ -1,0 +1,11 @@
+{
+  "title": "WALLET ARCHIVIATI",
+  "caption": "I wallet passkey rimossi restano archiviati anche dopo una nuova installazione.\nRipristina li rimette nell’elenco wallet.",
+  "deviceOnlyNote": "L’archivio vale per i wallet derivati da passkey. I wallet solo-dispositivo vengono rimossi in modo permanente se non hai un backup.",
+  "empty": "Nessun wallet archiviato.",
+  "index": "Indice %{index}",
+  "restore": "Ripristina",
+  "restoreTitle": "Ripristinare il wallet?",
+  "restoreBody": "%{label} tornerà nell’elenco wallet.",
+  "restoreFailed": "Impossibile ripristinare"
+}

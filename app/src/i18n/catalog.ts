@@ -17,6 +17,13 @@ import enContacts from "./locales/en/contacts.json";
 import enBackup from "./locales/en/backup.json";
 import enExit from "./locales/en/exit.json";
 import enRestore from "./locales/en/restore.json";
+import enReset from "./locales/en/reset.json";
+import enLogs from "./locales/en/logs.json";
+import enPair from "./locales/en/pair.json";
+import enNode from "./locales/en/node.json";
+import enNostr from "./locales/en/nostr.json";
+import enArchived from "./locales/en/archived.json";
+import enArkade from "./locales/en/arkade.json";
 
 import itCommon from "./locales/it/common.json";
 import itSettings from "./locales/it/settings.json";
@@ -35,6 +42,13 @@ import itContacts from "./locales/it/contacts.json";
 import itBackup from "./locales/it/backup.json";
 import itExit from "./locales/it/exit.json";
 import itRestore from "./locales/it/restore.json";
+import itReset from "./locales/it/reset.json";
+import itLogs from "./locales/it/logs.json";
+import itPair from "./locales/it/pair.json";
+import itNode from "./locales/it/node.json";
+import itNostr from "./locales/it/nostr.json";
+import itArchived from "./locales/it/archived.json";
+import itArkade from "./locales/it/arkade.json";
 
 import ptCommon from "./locales/pt/common.json";
 import ptSettings from "./locales/pt/settings.json";
@@ -53,6 +67,13 @@ import ptContacts from "./locales/pt/contacts.json";
 import ptBackup from "./locales/pt/backup.json";
 import ptExit from "./locales/pt/exit.json";
 import ptRestore from "./locales/pt/restore.json";
+import ptReset from "./locales/pt/reset.json";
+import ptLogs from "./locales/pt/logs.json";
+import ptPair from "./locales/pt/pair.json";
+import ptNode from "./locales/pt/node.json";
+import ptNostr from "./locales/pt/nostr.json";
+import ptArchived from "./locales/pt/archived.json";
+import ptArkade from "./locales/pt/arkade.json";
 
 export type LocaleBundle = {
   common: typeof enCommon;
@@ -72,6 +93,13 @@ export type LocaleBundle = {
   backup: typeof enBackup;
   exit: typeof enExit;
   restore: typeof enRestore;
+  reset: typeof enReset;
+  logs: typeof enLogs;
+  pair: typeof enPair;
+  node: typeof enNode;
+  nostr: typeof enNostr;
+  archived: typeof enArchived;
+  arkade: typeof enArkade;
 };
 
 export const catalogs: Record<AppLocale, LocaleBundle> = {
@@ -93,6 +121,13 @@ export const catalogs: Record<AppLocale, LocaleBundle> = {
     backup: enBackup,
     exit: enExit,
     restore: enRestore,
+    reset: enReset,
+    logs: enLogs,
+    pair: enPair,
+    node: enNode,
+    nostr: enNostr,
+    archived: enArchived,
+    arkade: enArkade,
   },
   it: {
     common: itCommon,
@@ -112,6 +147,13 @@ export const catalogs: Record<AppLocale, LocaleBundle> = {
     backup: itBackup,
     exit: itExit,
     restore: itRestore,
+    reset: itReset,
+    logs: itLogs,
+    pair: itPair,
+    node: itNode,
+    nostr: itNostr,
+    archived: itArchived,
+    arkade: itArkade,
   },
   pt: {
     common: ptCommon,
@@ -131,6 +173,13 @@ export const catalogs: Record<AppLocale, LocaleBundle> = {
     backup: ptBackup,
     exit: ptExit,
     restore: ptRestore,
+    reset: ptReset,
+    logs: ptLogs,
+    pair: ptPair,
+    node: ptNode,
+    nostr: ptNostr,
+    archived: ptArchived,
+    arkade: ptArkade,
   },
 };
 
