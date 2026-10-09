@@ -198,16 +198,40 @@ export function HomeScreen() {
     tourLockedSv,
   ]);
 
-  /** One-shot spot rates after tour dismiss (interval may be mid-TTL). */
-  const refreshHomeSpotRatesNow = useCallback(async () => {
+  /** One-shot spot rates after tour dismiss (bypass TTL cache; always apply). */
+  const refreshHomeSpotRatesNow = useCallback(async (reason: string) => {
+    console.log(
+      `[HomeTourRates] refresh start reason=${reason} tourOpenRef=${tourOpenRef.current ? 1 : 0}`,
+    );
     try {
       const s = await readDisplayCurrencies();
       setFiatCodes(s.enabled);
-      if (s.enabled.length === 0) return;
-      const rates = await fetchSpotRates(s.enabled);
-      if (Object.keys(rates).length > 0) setFiatRates(rates);
-    } catch {
-      /* ignore — footer stays empty until next interval */
+      console.log(
+        `[HomeTourRates] codes=${s.enabled.join(",") || "(none)"}`,
+      );
+      if (s.enabled.length === 0) {
+        console.log("[HomeTourRates] abort empty codes");
+        return;
+      }
+      const rates = await fetchSpotRates(s.enabled, { force: true });
+      const keys = Object.keys(rates);
+      console.log(
+        `[HomeTourRates] fetch ok n=${keys.length} sample=${keys
+          .slice(0, 2)
+          .map((k) => `${k}:${rates[k as DisplayCurrencyCode]}`)
+          .join(",")}`,
+      );
+      // Always apply — do not re-check tourOpenRef (dismiss must paint footer).
+      if (keys.length > 0) {
+        setFiatRates(rates);
+        console.log("[HomeTourRates] setFiatRates applied");
+      } else {
+        console.log("[HomeTourRates] fetch empty — no setState");
+      }
+    } catch (e) {
+      console.log(
+        `[HomeTourRates] refresh error ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }, []);
 
@@ -297,12 +321,26 @@ export function HomeScreen() {
   );
 
   const dismissTour = useCallback(() => {
-    // UI unlock first; persist off the critical press path.
+    console.log("[HomeTourRates] dismissTour");
+    // Clear pending/done latches synchronously (async fn runs to first await)
+    // BEFORE unlock — avoids focus/QA consume reopening tour mid-fetch.
+    void markHomeTourDone();
     releaseTourLocks();
-    queueMicrotask(() => {
-      void markHomeTourDone();
-    });
-  }, [releaseTourLocks]);
+    // Tour freeze skipped rate/ASP setState — pull immediately (force, no TTL).
+    void refreshHomeSpotRatesNow("dismiss");
+    void refreshAspProbeNow();
+  }, [releaseTourLocks, refreshAspProbeNow, refreshHomeSpotRatesNow]);
+
+  // Belt: whenever tour closes, force rates (covers Skip/Done/outside + any path).
+  const wasTourOpenRef = useRef(tourOpen);
+  useEffect(() => {
+    const was = wasTourOpenRef.current;
+    wasTourOpenRef.current = tourOpen;
+    if (was && !tourOpen) {
+      console.log("[HomeTourRates] tourOpen false → refresh");
+      void refreshHomeSpotRatesNow("tourOpen→false");
+    }
+  }, [tourOpen, refreshHomeSpotRatesNow]);
 
   const openSettings = useCallback(() => {
     navigation.navigate("Settings");
@@ -431,10 +469,21 @@ export function HomeScreen() {
 
       const pull = async (codes: DisplayCurrencyCode[]) => {
         if (codes.length === 0 || cancelled) return;
-        if (tourOpenRef.current) return;
+        // Skip starting a new pull while tour is open (JS contention).
+        // If a pull is already in flight, still apply when it returns.
+        const blockedStart = tourOpenRef.current;
+        if (blockedStart) {
+          console.log("[HomeTourRates] poll skip start (tour open)");
+          return;
+        }
         const rates = await fetchSpotRates(codes);
-        if (tourOpenRef.current) return;
-        if (!cancelled && Object.keys(rates).length > 0) setFiatRates(rates);
+        if (cancelled) return;
+        if (Object.keys(rates).length > 0) {
+          setFiatRates(rates);
+          console.log(
+            `[HomeTourRates] poll setFiatRates n=${Object.keys(rates).length}`,
+          );
+        }
       };
 
       void (async () => {

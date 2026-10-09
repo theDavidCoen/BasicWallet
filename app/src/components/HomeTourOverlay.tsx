@@ -536,7 +536,8 @@ const TourBody = memo(function TourBody({
     const t0 = Date.now();
     logTourTap("handler", "skip", t0);
     tapProbe.current = { dir: "skip", t0, fromStep: stepRef.current };
-    queueMicrotask(() => onSkipRef.current());
+    // Sync dismiss — do not defer (latches + rates must clear on this turn).
+    onSkipRef.current();
   }, []);
 
   const backLabel = t("home.tourBack");

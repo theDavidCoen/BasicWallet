@@ -164,11 +164,15 @@ export async function requestForceHomeTourForQa(): Promise<void> {
   }
 }
 
+/**
+ * QA reopen only. Do **not** treat product `pendingLatch` as a force request —
+ * that re-opened the tour on every Home focus while pending and raced Skip
+ * (latches cleared in a microtask) back to `tourOpen=true` mid rate-fetch.
+ */
 export function consumeForceHomeTourForQa(): boolean {
-  if (!forceTourRequest && !pendingLatch) return false;
-  const forced = forceTourRequest;
+  if (!forceTourRequest) return false;
   forceTourRequest = false;
-  return forced || pendingLatch;
+  return true;
 }
 
 export type HomeTourStepId = "pos" | "qr" | "settings" | "add_wallet" | "fiat";
