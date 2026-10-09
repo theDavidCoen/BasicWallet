@@ -1,12 +1,11 @@
 /**
  * Spotlight D Home onboarding tour overlay.
  *
- * Architecture (rc.21 — structural lag fix):
+ * Architecture (rc.22):
  * - UX frozen: in-card Back/Next, Skip under, chrome hints, no card swipe.
- * - Static chrome hints (no Soft* withRepeat) — UI-thread animation was the
- *   lag source given commit≈7ms (rc.18) while taps still felt slow.
- * - hintSv opacity only; HomeTourOverlay memo + stable skip/done.
- * - host pointerEvents=auto; nav armed immediately; dim arm delay only.
+ * - Soft motion restored — only the **active** step mounts Soft* (one withRepeat).
+ * - Home poll setState still paused while tour open (rc.21 lag win).
+ * - HomeTourOverlay memo + stable skip/done; host pointerEvents=auto.
  */
 
 import {
@@ -26,12 +25,17 @@ import {
   View,
 } from "react-native";
 import Animated, {
+  Easing,
+  cancelAnimation,
   useAnimatedStyle,
   useSharedValue,
-  type SharedValue,
+  withDelay,
+  withRepeat,
+  withSequence,
+  withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Svg, { Circle, Path } from "react-native-svg";
+import Svg, { Path } from "react-native-svg";
 import { HOME_TOUR_STEPS } from "../home/homeTour";
 import { logTourTap } from "../home/homeTourPerf";
 import { useI18n } from "../i18n";
@@ -42,15 +46,12 @@ const STEP_COUNT = HOME_TOUR_STEPS.length;
 const CLUSTER_TOP_FRAC = 0.52;
 const TOUR_ARM_MS = 480;
 const DIM_TAP_SLOP_PX = 12;
+/** Home BasicLogo scale=1 → ink height (BasicLogo VIEW_H * 0.55). */
+const HOME_LOGO_H = Math.round(62 * 0.55);
+/** ScreenChrome header minHeight. */
+const HEADER_ROW_H = 48;
 
-/** Hint id → shared-value code (UI-thread opacity, no React prop churn). */
-const HINT_CODE: Record<(typeof HOME_TOUR_STEPS)[number]["hint"], number> = {
-  swipe_ltr: 0,
-  swipe_rtl: 1,
-  pulse_settings: 2,
-  pulse_avatar: 3,
-  pulse_fiat: 4,
-};
+type HintKind = (typeof HOME_TOUR_STEPS)[number]["hint"];
 
 type Props = {
   visible: boolean;
@@ -58,14 +59,48 @@ type Props = {
   onDone: () => void;
 };
 
-/** Static chevron — same chrome affordance, zero continuous Reanimated work. */
-function StaticSwipeHint({ direction }: { direction: "ltr" | "rtl" }) {
+function SoftSwipeHint({ direction }: { direction: "ltr" | "rtl" }) {
+  const x = useSharedValue(direction === "ltr" ? -28 : 28);
+  const opacity = useSharedValue(0.35);
+
+  useEffect(() => {
+    const from = direction === "ltr" ? -28 : 28;
+    const to = direction === "ltr" ? 28 : -28;
+    x.value = from;
+    x.value = withRepeat(
+      withSequence(
+        withTiming(to, { duration: 1100, easing: Easing.inOut(Easing.quad) }),
+        withTiming(from, { duration: 0 }),
+      ),
+      -1,
+      false,
+    );
+    opacity.value = withRepeat(
+      withSequence(
+        withTiming(0.7, { duration: 550 }),
+        withTiming(0.25, { duration: 550 }),
+      ),
+      -1,
+      false,
+    );
+    return () => {
+      cancelAnimation(x);
+      cancelAnimation(opacity);
+    };
+  }, [direction, opacity, x]);
+
+  const style = useAnimatedStyle(() => ({
+    transform: [{ translateX: x.value }],
+    opacity: opacity.value,
+  }));
+
   const d =
     direction === "ltr"
       ? "M4 12 H20 M14 6 L20 12 L14 18"
       : "M20 12 H4 M10 6 L4 12 L10 18";
+
   return (
-    <View style={styles.hintAnim} pointerEvents="none">
+    <Animated.View style={[styles.hintAnim, style]} pointerEvents="none">
       <Svg width={36} height={24} viewBox="0 0 24 24">
         <Path
           d={d}
@@ -76,99 +111,106 @@ function StaticSwipeHint({ direction }: { direction: "ltr" | "rtl" }) {
           strokeLinejoin="round"
         />
       </Svg>
-    </View>
+    </Animated.View>
   );
 }
 
-/** Static ring — replaces SoftPulse withRepeat (UI-thread thrash). */
-function StaticPulseHint() {
+function SoftPulseHint() {
+  const scale = useSharedValue(1);
+  const opacity = useSharedValue(0.45);
+
+  useEffect(() => {
+    scale.value = withRepeat(
+      withSequence(
+        withTiming(1.35, { duration: 800, easing: Easing.out(Easing.quad) }),
+        withTiming(1, { duration: 0 }),
+      ),
+      -1,
+      false,
+    );
+    opacity.value = withRepeat(
+      withSequence(
+        withTiming(0, { duration: 800, easing: Easing.out(Easing.quad) }),
+        withDelay(120, withTiming(0.45, { duration: 0 })),
+      ),
+      -1,
+      false,
+    );
+    return () => {
+      cancelAnimation(scale);
+      cancelAnimation(opacity);
+    };
+  }, [opacity, scale]);
+
+  const style = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+    opacity: opacity.value,
+  }));
+
   return (
-    <View style={styles.pulseRing} pointerEvents="none">
-      <Svg width={40} height={40} viewBox="0 0 40 40">
-        <Circle
-          cx={20}
-          cy={20}
-          r={18}
-          fill="none"
-          stroke={colors.fg}
-          strokeWidth={1.25}
-        />
-      </Svg>
-    </View>
+    <Animated.View style={[styles.pulseRing, style]} pointerEvents="none" />
   );
 }
 
 /**
- * Mounts once. Visibility via hintSv on the UI thread — not reconciled on step taps
- * when parent passes a stable SharedValue + stable insetsTop.
+ * Only the active hint mounts Soft* (one withRepeat). Inactive = unmounted.
+ * Re-renders on step change via `activeHint`; Home ticks do not reach here
+ * (TourBody memo + stable callbacks).
  */
 const TourHintsLayer = memo(function TourHintsLayer({
-  hintSv,
+  activeHint,
   insetsTop,
 }: {
-  hintSv: SharedValue<number>;
+  activeHint: HintKind;
   insetsTop: number;
 }) {
   const headerY = Math.max(insetsTop, 12) + 8;
-  const logoPulseTop = headerY + 4;
+  /** Avatar / Fiat Mode sit in the header row. */
+  const cornerPulseTop = headerY + (HEADER_ROW_H - 40) / 2;
+  /**
+   * Settings: under the Basic wordmark, centered — not overlapping the logo.
+   * Logo is vertically centered in the 48px header row.
+   */
+  const logoTop = headerY + (HEADER_ROW_H - HOME_LOGO_H) / 2;
+  const settingsPulseTop = logoTop + HOME_LOGO_H + 8;
   const swipeTop = headerY + 96;
-
-  const ltrStyle = useAnimatedStyle(() => ({
-    opacity: hintSv.value === 0 ? 1 : 0,
-  }));
-  const rtlStyle = useAnimatedStyle(() => ({
-    opacity: hintSv.value === 1 ? 1 : 0,
-  }));
-  const settingsStyle = useAnimatedStyle(() => ({
-    opacity: hintSv.value === 2 ? 1 : 0,
-  }));
-  const avatarStyle = useAnimatedStyle(() => ({
-    opacity: hintSv.value === 3 ? 1 : 0,
-  }));
-  const fiatStyle = useAnimatedStyle(() => ({
-    opacity: hintSv.value === 4 ? 1 : 0,
-  }));
 
   return (
     <>
-      <Animated.View
-        style={[styles.swipeBand, { top: swipeTop }, ltrStyle]}
-        pointerEvents="none"
-      >
-        <StaticSwipeHint direction="ltr" />
-      </Animated.View>
-      <Animated.View
-        style={[styles.swipeBand, { top: swipeTop }, rtlStyle]}
-        pointerEvents="none"
-      >
-        <StaticSwipeHint direction="rtl" />
-      </Animated.View>
-      <Animated.View
-        style={[styles.pulseCenterRow, { top: logoPulseTop }, settingsStyle]}
-        pointerEvents="none"
-      >
-        <StaticPulseHint />
-      </Animated.View>
-      <Animated.View
-        style={[
-          styles.pulseAbs,
-          { top: logoPulseTop, left: 20 },
-          avatarStyle,
-        ]}
-        pointerEvents="none"
-      >
-        <StaticPulseHint />
-      </Animated.View>
-      <Animated.View
-        style={[
-          styles.pulseAbs,
-          { top: logoPulseTop, right: 20 },
-          fiatStyle,
-        ]}
-        pointerEvents="none"
-      >
-        <StaticPulseHint />
-      </Animated.View>
+      {activeHint === "swipe_ltr" ? (
+        <View style={[styles.swipeBand, { top: swipeTop }]} pointerEvents="none">
+          <SoftSwipeHint direction="ltr" />
+        </View>
+      ) : null}
+      {activeHint === "swipe_rtl" ? (
+        <View style={[styles.swipeBand, { top: swipeTop }]} pointerEvents="none">
+          <SoftSwipeHint direction="rtl" />
+        </View>
+      ) : null}
+      {activeHint === "pulse_settings" ? (
+        <View
+          style={[styles.pulseCenterRow, { top: settingsPulseTop }]}
+          pointerEvents="none"
+        >
+          <SoftPulseHint />
+        </View>
+      ) : null}
+      {activeHint === "pulse_avatar" ? (
+        <View
+          style={[styles.pulseAbs, { top: cornerPulseTop, left: 20 }]}
+          pointerEvents="none"
+        >
+          <SoftPulseHint />
+        </View>
+      ) : null}
+      {activeHint === "pulse_fiat" ? (
+        <View
+          style={[styles.pulseAbs, { top: cornerPulseTop, right: 20 }]}
+          pointerEvents="none"
+        >
+          <SoftPulseHint />
+        </View>
+      ) : null}
     </>
   );
 });
@@ -278,7 +320,6 @@ const TourBody = memo(function TourBody({
   /** Dim/outside only — nav buttons work immediately (rc.19 arm gated all hits). */
   const [dimArmed, setDimArmed] = useState(false);
   const stepRef = useRef(0);
-  const hintSv = useSharedValue(HINT_CODE[HOME_TOUR_STEPS[0]!.hint]);
   const tapProbe = useRef<TapProbe | null>(null);
   const onSkipRef = useRef(onSkip);
   const onDoneRef = useRef(onDone);
@@ -318,17 +359,13 @@ const TourBody = memo(function TourBody({
     return Math.round(windowH * CLUSTER_TOP_FRAC);
   }, []);
 
-  const applyStep = useCallback(
-    (next: number, dir: "back" | "next", t0: number) => {
-      logTourTap("setState", dir, t0);
-      const clamped = Math.max(0, Math.min(STEP_COUNT - 1, next));
-      stepRef.current = clamped;
-      hintSv.value = HINT_CODE[HOME_TOUR_STEPS[clamped]!.hint];
-      tapProbe.current = { dir, t0 };
-      setStepIndex(clamped);
-    },
-    [hintSv],
-  );
+  const applyStep = useCallback((next: number, dir: "back" | "next", t0: number) => {
+    logTourTap("setState", dir, t0);
+    const clamped = Math.max(0, Math.min(STEP_COUNT - 1, next));
+    stepRef.current = clamped;
+    tapProbe.current = { dir, t0 };
+    setStepIndex(clamped);
+  }, []);
 
   const goNext = useCallback(() => {
     const t0 = Date.now();
@@ -364,7 +401,7 @@ const TourBody = memo(function TourBody({
     <View style={styles.portalRoot} pointerEvents="box-none">
       <DimTapSkip armed={dimArmed} onSkip={goSkip} label={skipLabel} />
 
-      <TourHintsLayer hintSv={hintSv} insetsTop={insets.top} />
+      <TourHintsLayer activeHint={step.hint} insetsTop={insets.top} />
 
       <View style={styles.stage} pointerEvents="box-none">
         <View
@@ -609,8 +646,9 @@ const styles = StyleSheet.create({
   pulseRing: {
     width: 40,
     height: 40,
-    alignItems: "center",
-    justifyContent: "center",
+    borderRadius: 20,
+    borderWidth: 1.25,
+    borderColor: colors.fg,
   },
   pulseCenterRow: {
     position: "absolute",
