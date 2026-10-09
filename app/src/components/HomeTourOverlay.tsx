@@ -1,18 +1,18 @@
 /**
  * Spotlight D Home onboarding tour overlay.
  *
- * Transparent Modal + GestureHandlerRootView (rc.5 — Skip/Next taps work on
- * Samsung). Never claim responder on the portal root (rc.7 dead controls).
+ * No GestureHandlerRootView in this Modal — a second GH root on Samsung fought
+ * Home's RNGH (dead card swipe in rc.8–rc.9, freeze after dismiss on POS swipe).
+ * Skip/Next/dim use RN Pressable/TouchableOpacity (rc.5 pattern without GH).
  *
- * Card swipe uses RNGH Gesture.Pan on the card body only — PanResponder does
- * not receive moves inside GestureHandlerRootView on Samsung (rc.8). Skip/Next
- * stay TouchableOpacity outside the GestureDetector.
+ * Card swipe: RN responder on the card body only (pageX delta, ~48px). No
+ * PanResponder, no RNGH Pan. Buttons stay outside the swipe target.
  *
- * Absolute cluster from window bottom: hint → card → dots → Skip/Next.
- * Hint is keyed by step so swipe/pulse swaps immediately with the copy.
+ * Cluster pinned with frozen window metrics (top = % of window height) so
+ * rates/footer/Chat&Pay cannot shift it: hint → card → dots → Skip/Next.
  */
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import {
   Dimensions,
   Modal,
@@ -21,12 +21,11 @@ import {
   Text,
   TouchableOpacity,
   View,
+  type GestureResponderEvent,
 } from "react-native";
-import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import Animated, {
   Easing,
   cancelAnimation,
-  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withDelay,
@@ -49,8 +48,12 @@ import { colors } from "../theme/colors";
 const CARD_WIDTH = 300;
 const STEP_COUNT = HOME_TOUR_STEPS.length;
 const SWIPE_THRESHOLD = 48;
-/** Cluster bottom edge as a fraction of window height (under Chat & Pay). */
-const CLUSTER_BOTTOM_FRAC = 0.14;
+/**
+ * Top edge of the cluster as a fraction of window height.
+ * Frozen at mount — independent of Home content / rates / safe-area settle.
+ * ~0.52 keeps hint+card in the lower void under Chat & Pay on phones.
+ */
+const CLUSTER_TOP_FRAC = 0.52;
 
 type Props = {
   visible: boolean;
@@ -154,10 +157,6 @@ function SoftPulseHint() {
   );
 }
 
-/**
- * Hint above the card — matches active step copy.
- * key={step.id} on the caller remounts so animations never linger across steps.
- */
 function ClusterHint({ step }: { step: HomeTourStep }) {
   switch (step.hint) {
     case "swipe_ltr":
@@ -185,6 +184,59 @@ function ClusterHint({ step }: { step: HomeTourStep }) {
   }
 }
 
+/** Minimal horizontal swipe on the card — RN responders only (no RNGH / PanResponder). */
+function SwipeCard({
+  onNext,
+  onBack,
+  accessibilityLabel,
+  children,
+}: {
+  onNext: () => void;
+  onBack: () => void;
+  accessibilityLabel: string;
+  children: ReactNode;
+}) {
+  const origin = useRef<{ x: number; y: number } | null>(null);
+
+  const onGrant = (e: GestureResponderEvent) => {
+    origin.current = {
+      x: e.nativeEvent.pageX,
+      y: e.nativeEvent.pageY,
+    };
+  };
+
+  const onRelease = (e: GestureResponderEvent) => {
+    const start = origin.current;
+    origin.current = null;
+    if (!start) return;
+    const dx = e.nativeEvent.pageX - start.x;
+    const dy = e.nativeEvent.pageY - start.y;
+    if (Math.abs(dx) < SWIPE_THRESHOLD) return;
+    if (Math.abs(dx) < Math.abs(dy) * 1.15) return;
+    if (dx < 0) onNext();
+    else onBack();
+  };
+
+  return (
+    <View
+      style={styles.card}
+      accessible
+      accessibilityRole="summary"
+      accessibilityLabel={accessibilityLabel}
+      collapsable={false}
+      onStartShouldSetResponder={() => true}
+      onMoveShouldSetResponder={() => true}
+      onResponderGrant={onGrant}
+      onResponderRelease={onRelease}
+      onResponderTerminate={() => {
+        origin.current = null;
+      }}
+    >
+      {children}
+    </View>
+  );
+}
+
 function TourBody({
   stepIndex,
   onSkip,
@@ -200,54 +252,11 @@ function TourBody({
   const step = HOME_TOUR_STEPS[Math.max(0, Math.min(stepIndex, STEP_COUNT - 1))]!;
   const isLast = step.n >= STEP_COUNT;
 
-  // Freeze window size on mount — do not reflow when Home rates/footer appear.
-  const windowH = useMemo(() => Dimensions.get("window").height, []);
-  const clusterBottom = Math.round(windowH * CLUSTER_BOTTOM_FRAC);
-
-  const dragX = useSharedValue(0);
-  const onNextRef = useRef(onNext);
-  const onBackRef = useRef(onBack);
-  onNextRef.current = onNext;
-  onBackRef.current = onBack;
-
-  const goNext = useCallback(() => {
-    onNextRef.current();
+  // Freeze once — never recompute when Home rates/footer appear under the dim.
+  const clusterTop = useMemo(() => {
+    const windowH = Dimensions.get("window").height;
+    return Math.round(windowH * CLUSTER_TOP_FRAC);
   }, []);
-  const goBack = useCallback(() => {
-    onBackRef.current();
-  }, []);
-
-  // RNGH Pan on the card only (GH root owns the Modal window on Samsung).
-  const cardSwipe = useMemo(
-    () =>
-      Gesture.Pan()
-        .activeOffsetX([-20, 20])
-        .failOffsetY([-48, 48])
-        .onUpdate((e) => {
-          "worklet";
-          dragX.value = e.translationX;
-        })
-        .onEnd((e) => {
-          "worklet";
-          const dx = e.translationX;
-          dragX.value = withTiming(0, { duration: 120 });
-          // ← Next · → Back (threshold ~48px)
-          if (dx < -SWIPE_THRESHOLD) {
-            runOnJS(goNext)();
-          } else if (dx > SWIPE_THRESHOLD) {
-            runOnJS(goBack)();
-          }
-        })
-        .onFinalize(() => {
-          "worklet";
-          dragX.value = withTiming(0, { duration: 120 });
-        }),
-    [dragX, goBack, goNext],
-  );
-
-  const cardDragStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: dragX.value * 0.35 }],
-  }));
 
   return (
     <View style={styles.portalRoot}>
@@ -260,25 +269,21 @@ function TourBody({
 
       <View style={styles.stage} pointerEvents="box-none">
         <View
-          style={[styles.cluster, { bottom: clusterBottom }]}
+          style={[styles.cluster, { top: clusterTop }]}
           collapsable={false}
           pointerEvents="box-none"
         >
           <ClusterHint key={step.id} step={step} />
 
-          {/* Swipe target = card body only; nav buttons stay outside. */}
-          <GestureDetector gesture={cardSwipe}>
-            <Animated.View
-              style={[styles.card, cardDragStyle]}
-              accessible
-              accessibilityRole="summary"
-              accessibilityLabel={`${step.n}. ${t(step.titleKey)}`}
-            >
-              <Text style={styles.stepNum}>{step.n}</Text>
-              <Text style={styles.title}>{t(step.titleKey)}</Text>
-              <Text style={styles.body}>{t(step.bodyKey)}</Text>
-            </Animated.View>
-          </GestureDetector>
+          <SwipeCard
+            onNext={onNext}
+            onBack={onBack}
+            accessibilityLabel={`${step.n}. ${t(step.titleKey)}`}
+          >
+            <Text style={styles.stepNum}>{step.n}</Text>
+            <Text style={styles.title}>{t(step.titleKey)}</Text>
+            <Text style={styles.body}>{t(step.bodyKey)}</Text>
+          </SwipeCard>
 
           <View style={styles.dotsRow} pointerEvents="none">
             {HOME_TOUR_STEPS.map((s) => (
@@ -335,15 +340,14 @@ export function HomeTourOverlay({
       presentationStyle="overFullScreen"
       onRequestClose={onSkip}
     >
+      {/* No GestureHandlerRootView — keep Modal on the RN touch system only. */}
       <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-        <GestureHandlerRootView style={styles.portalRoot}>
-          <TourBody
-            stepIndex={stepIndex}
-            onSkip={onSkip}
-            onNext={onNext}
-            onBack={onBack}
-          />
-        </GestureHandlerRootView>
+        <TourBody
+          stepIndex={stepIndex}
+          onSkip={onSkip}
+          onNext={onNext}
+          onBack={onBack}
+        />
       </SafeAreaProvider>
     </Modal>
   );

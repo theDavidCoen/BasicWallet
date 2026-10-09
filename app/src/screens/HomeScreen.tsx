@@ -168,20 +168,25 @@ export function HomeScreen() {
     tourLockedSv.value = tourLocksHome ? 1 : 0;
   }, [tourLocksHome, tourLockedSv]);
 
-  // If a side sheet somehow opened under the tour, force-dismiss it.
-  useEffect(() => {
-    if (!tourLocksHome) return;
-    if (posOpen) dismissPosSheet();
-    if (scanOpen) dismissScanSheet();
-    if (activityOpen) dismissActivity();
+  /** Fully release tour locks (sync worklets before Modal teardown). */
+  const releaseTourLocks = useCallback(() => {
+    tourLockedSv.value = 0;
+    sideDir.value = 0;
+    // Do not leave sidesLocked stuck after tour — only keep it if a sheet is truly open.
+    if (!posOpen && !scanOpen && !activityOpen && !homeDragging) {
+      sidesLocked.value = 0;
+    }
+    setTourOpen(false);
+    setTourBlocking(false);
+    setHomeTourUiOpen(false);
   }, [
     activityOpen,
-    dismissActivity,
-    dismissPosSheet,
-    dismissScanSheet,
+    homeDragging,
     posOpen,
     scanOpen,
-    tourLocksHome,
+    sideDir,
+    sidesLocked,
+    tourLockedSv,
   ]);
 
   const refreshChatUnread = useCallback(() => {
@@ -241,24 +246,20 @@ export function HomeScreen() {
   }, [tourOpen]);
 
   const dismissTour = useCallback(() => {
-    setTourOpen(false);
-    setTourBlocking(false);
-    setHomeTourUiOpen(false);
+    releaseTourLocks();
     void markHomeTourDone();
-  }, []);
+  }, [releaseTourLocks]);
 
   const advanceTour = useCallback(() => {
     setTourStep((prev) => {
       if (prev >= HOME_TOUR_STEPS.length - 1) {
-        setTourOpen(false);
-        setTourBlocking(false);
-        setHomeTourUiOpen(false);
+        releaseTourLocks();
         void markHomeTourDone();
         return prev;
       }
       return prev + 1;
     });
-  }, []);
+  }, [releaseTourLocks]);
 
   const retreatTour = useCallback(() => {
     setTourStep((prev) => Math.max(0, prev - 1));
@@ -799,12 +800,6 @@ export function HomeScreen() {
   return (
     <GestureDetector gesture={homeSwipe}>
       <View style={styles.full} collapsable={false}>
-        <View
-          style={styles.full}
-          // Full-screen Modal still leaks pans on some Samsung builds — inert Home chrome.
-          pointerEvents={tourLocksHome ? "none" : "auto"}
-          collapsable={false}
-        >
         <SyncProgressBar active={balanceStatus === "loading"} />
         <ScreenChrome
           logoScale={1}
@@ -1064,7 +1059,6 @@ export function HomeScreen() {
             )}
           </View>
         </ScreenChrome>
-        </View>
         <HomeTourOverlay
           visible={tourOpen}
           stepIndex={tourStep}
