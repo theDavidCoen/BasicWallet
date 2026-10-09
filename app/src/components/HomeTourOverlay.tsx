@@ -1,12 +1,12 @@
 /**
  * Spotlight D Home onboarding tour overlay.
  *
- * Architecture (rc.20):
- * - Step state local; TourHintsLayer memo + hintSv (no Soft* reconcile on step).
- * - HomeTourOverlay memo + stable skip/done callbacks (blocks Home ticks).
- * - NEVER arePropsEqual→true on TourBody (rc.19 broke / flaked hit delivery).
- * - host pointerEvents=auto; nav armed immediately; only dim delayed (bleed).
- * - Nav: Pressable onPressIn like Home Receive/Send.
+ * Architecture (rc.21 — structural lag fix):
+ * - UX frozen: in-card Back/Next, Skip under, chrome hints, no card swipe.
+ * - Static chrome hints (no Soft* withRepeat) — UI-thread animation was the
+ *   lag source given commit≈7ms (rc.18) while taps still felt slow.
+ * - hintSv opacity only; HomeTourOverlay memo + stable skip/done.
+ * - host pointerEvents=auto; nav armed immediately; dim arm delay only.
  */
 
 import {
@@ -26,19 +26,14 @@ import {
   View,
 } from "react-native";
 import Animated, {
-  Easing,
-  cancelAnimation,
   useAnimatedStyle,
   useSharedValue,
-  withDelay,
-  withRepeat,
-  withSequence,
-  withTiming,
   type SharedValue,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Svg, { Path } from "react-native-svg";
+import Svg, { Circle, Path } from "react-native-svg";
 import { HOME_TOUR_STEPS } from "../home/homeTour";
+import { logTourTap } from "../home/homeTourPerf";
 import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 
@@ -63,48 +58,14 @@ type Props = {
   onDone: () => void;
 };
 
-function SoftSwipeHint({ direction }: { direction: "ltr" | "rtl" }) {
-  const x = useSharedValue(direction === "ltr" ? -28 : 28);
-  const opacity = useSharedValue(0.35);
-
-  useEffect(() => {
-    const from = direction === "ltr" ? -28 : 28;
-    const to = direction === "ltr" ? 28 : -28;
-    x.value = from;
-    x.value = withRepeat(
-      withSequence(
-        withTiming(to, { duration: 1100, easing: Easing.inOut(Easing.quad) }),
-        withTiming(from, { duration: 0 }),
-      ),
-      -1,
-      false,
-    );
-    opacity.value = withRepeat(
-      withSequence(
-        withTiming(0.7, { duration: 550 }),
-        withTiming(0.25, { duration: 550 }),
-      ),
-      -1,
-      false,
-    );
-    return () => {
-      cancelAnimation(x);
-      cancelAnimation(opacity);
-    };
-  }, [direction, opacity, x]);
-
-  const style = useAnimatedStyle(() => ({
-    transform: [{ translateX: x.value }],
-    opacity: opacity.value,
-  }));
-
+/** Static chevron — same chrome affordance, zero continuous Reanimated work. */
+function StaticSwipeHint({ direction }: { direction: "ltr" | "rtl" }) {
   const d =
     direction === "ltr"
       ? "M4 12 H20 M14 6 L20 12 L14 18"
       : "M20 12 H4 M10 6 L4 12 L10 18";
-
   return (
-    <Animated.View style={[styles.hintAnim, style]} pointerEvents="none">
+    <View style={styles.hintAnim} pointerEvents="none">
       <Svg width={36} height={24} viewBox="0 0 24 24">
         <Path
           d={d}
@@ -115,44 +76,25 @@ function SoftSwipeHint({ direction }: { direction: "ltr" | "rtl" }) {
           strokeLinejoin="round"
         />
       </Svg>
-    </Animated.View>
+    </View>
   );
 }
 
-function SoftPulseHint() {
-  const scale = useSharedValue(1);
-  const opacity = useSharedValue(0.45);
-
-  useEffect(() => {
-    scale.value = withRepeat(
-      withSequence(
-        withTiming(1.35, { duration: 800, easing: Easing.out(Easing.quad) }),
-        withTiming(1, { duration: 0 }),
-      ),
-      -1,
-      false,
-    );
-    opacity.value = withRepeat(
-      withSequence(
-        withTiming(0, { duration: 800, easing: Easing.out(Easing.quad) }),
-        withDelay(120, withTiming(0.45, { duration: 0 })),
-      ),
-      -1,
-      false,
-    );
-    return () => {
-      cancelAnimation(scale);
-      cancelAnimation(opacity);
-    };
-  }, [opacity, scale]);
-
-  const style = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-    opacity: opacity.value,
-  }));
-
+/** Static ring — replaces SoftPulse withRepeat (UI-thread thrash). */
+function StaticPulseHint() {
   return (
-    <Animated.View style={[styles.pulseRing, style]} pointerEvents="none" />
+    <View style={styles.pulseRing} pointerEvents="none">
+      <Svg width={40} height={40} viewBox="0 0 40 40">
+        <Circle
+          cx={20}
+          cy={20}
+          r={18}
+          fill="none"
+          stroke={colors.fg}
+          strokeWidth={1.25}
+        />
+      </Svg>
+    </View>
   );
 }
 
@@ -193,19 +135,19 @@ const TourHintsLayer = memo(function TourHintsLayer({
         style={[styles.swipeBand, { top: swipeTop }, ltrStyle]}
         pointerEvents="none"
       >
-        <SoftSwipeHint direction="ltr" />
+        <StaticSwipeHint direction="ltr" />
       </Animated.View>
       <Animated.View
         style={[styles.swipeBand, { top: swipeTop }, rtlStyle]}
         pointerEvents="none"
       >
-        <SoftSwipeHint direction="rtl" />
+        <StaticSwipeHint direction="rtl" />
       </Animated.View>
       <Animated.View
         style={[styles.pulseCenterRow, { top: logoPulseTop }, settingsStyle]}
         pointerEvents="none"
       >
-        <SoftPulseHint />
+        <StaticPulseHint />
       </Animated.View>
       <Animated.View
         style={[
@@ -215,7 +157,7 @@ const TourHintsLayer = memo(function TourHintsLayer({
         ]}
         pointerEvents="none"
       >
-        <SoftPulseHint />
+        <StaticPulseHint />
       </Animated.View>
       <Animated.View
         style={[
@@ -225,7 +167,7 @@ const TourHintsLayer = memo(function TourHintsLayer({
         ]}
         pointerEvents="none"
       >
-        <SoftPulseHint />
+        <StaticPulseHint />
       </Animated.View>
     </>
   );
@@ -239,6 +181,7 @@ function TourHit({
   style,
   textStyle,
   children,
+  probeDir,
 }: {
   onPress: () => void;
   armed: boolean;
@@ -246,10 +189,13 @@ function TourHit({
   style?: object;
   textStyle: object | Array<object | null | false | undefined>;
   children: string;
+  probeDir: string;
 }) {
   return (
     <Pressable
       onPressIn={() => {
+        const t0 = Date.now();
+        logTourTap("touch", probeDir, t0);
         if (!armed) return;
         onPress();
       }}
@@ -357,11 +303,14 @@ const TourBody = memo(function TourBody({
   useLayoutEffect(() => {
     const probe = tapProbe.current;
     if (!probe) return;
-    const layoutDtMs = Date.now() - probe.t0;
-    console.log(
-      `[HomeTour] ${probe.dir} layoutDtMs=${layoutDtMs} step=${stepIndex}`,
-    );
+    logTourTap("commit", probe.dir, probe.t0, `step=${stepIndex}`);
+    const t0 = probe.t0;
+    const dir = probe.dir;
     tapProbe.current = null;
+    requestAnimationFrame(() => {
+      logTourTap("raf1", dir, t0);
+      requestAnimationFrame(() => logTourTap("raf2", dir, t0));
+    });
   }, [stepIndex]);
 
   const clusterTop = useMemo(() => {
@@ -370,8 +319,8 @@ const TourBody = memo(function TourBody({
   }, []);
 
   const applyStep = useCallback(
-    (next: number, dir: "back" | "next") => {
-      const t0 = Date.now();
+    (next: number, dir: "back" | "next", t0: number) => {
+      logTourTap("setState", dir, t0);
       const clamped = Math.max(0, Math.min(STEP_COUNT - 1, next));
       stepRef.current = clamped;
       hintSv.value = HINT_CODE[HOME_TOUR_STEPS[clamped]!.hint];
@@ -382,25 +331,28 @@ const TourBody = memo(function TourBody({
   );
 
   const goNext = useCallback(() => {
-    console.log("[HomeTour] press next");
+    const t0 = Date.now();
+    logTourTap("handler", "next", t0);
     const prev = stepRef.current;
     if (prev >= STEP_COUNT - 1) {
       queueMicrotask(() => onDoneRef.current());
       return;
     }
-    applyStep(prev + 1, "next");
+    applyStep(prev + 1, "next", t0);
   }, [applyStep]);
 
   const goBack = useCallback(() => {
-    console.log("[HomeTour] press back");
+    const t0 = Date.now();
+    logTourTap("handler", "back", t0);
     const prev = stepRef.current;
     if (prev <= 0) return;
-    applyStep(prev - 1, "back");
+    applyStep(prev - 1, "back", t0);
   }, [applyStep]);
 
   const goSkip = useCallback(() => {
-    console.log("[HomeTour] press skip");
-    tapProbe.current = { dir: "skip", t0: Date.now() };
+    const t0 = Date.now();
+    logTourTap("handler", "skip", t0);
+    tapProbe.current = { dir: "skip", t0 };
     queueMicrotask(() => onSkipRef.current());
   }, []);
 
@@ -434,6 +386,7 @@ const TourBody = memo(function TourBody({
             <View style={styles.cardFooter} collapsable={false}>
               <TourHit
                 armed
+                probeDir="back"
                 onPress={goBack}
                 label={backLabel}
                 style={styles.cardNavBtn}
@@ -443,6 +396,7 @@ const TourBody = memo(function TourBody({
               </TourHit>
               <TourHit
                 armed
+                probeDir="next"
                 onPress={goNext}
                 label={nextLabel}
                 style={styles.cardNavBtnEnd}
@@ -469,6 +423,7 @@ const TourBody = memo(function TourBody({
           >
             <TourHit
               armed
+              probeDir="skip"
               onPress={goSkip}
               label={skipLabel}
               style={styles.skipHit}
@@ -654,9 +609,8 @@ const styles = StyleSheet.create({
   pulseRing: {
     width: 40,
     height: 40,
-    borderRadius: 20,
-    borderWidth: 1.25,
-    borderColor: colors.fg,
+    alignItems: "center",
+    justifyContent: "center",
   },
   pulseCenterRow: {
     position: "absolute",

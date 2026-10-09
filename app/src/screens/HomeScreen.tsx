@@ -56,11 +56,17 @@ import {
 import { useI18n } from "../i18n";
 import { HomeTourOverlay } from "../components/HomeTourOverlay";
 import {
+  consumeForceHomeTourForQa,
   isHomeTourPending,
   isHomeTourPendingSync,
   markHomeTourDone,
   setHomeTourUiOpen,
 } from "../home/homeTour";
+import {
+  noteHomeScreenRender,
+  startTourJsFpsProbe,
+  stopTourJsFpsProbe,
+} from "../home/homeTourPerf";
 
 const MUTINYNET_OK = "#7DCEA0";
 const MUTINYNET_DOWN = "#E07070";
@@ -149,6 +155,9 @@ export function HomeScreen() {
   const [tourOpen, setTourOpen] = useState(() => isHomeTourPendingSync());
   const [tourBlocking, setTourBlocking] = useState(() => isHomeTourPendingSync());
   const tourLocksHome = tourOpen || tourBlocking;
+  const tourOpenRef = useRef(tourOpen);
+  tourOpenRef.current = tourOpen;
+  noteHomeScreenRender(tourOpen);
   const handleRef = useRef<View>(null);
   /** 0 undecided · 1 POS (LTR) · -1 scan (RTL) */
   const sideDir = useSharedValue(0);
@@ -188,6 +197,8 @@ export function HomeScreen() {
   ]);
 
   const refreshChatUnread = useCallback(() => {
+    // Skip while tour open — Home setState under AbsoluteFill steals JS from taps.
+    if (tourOpenRef.current) return;
     try {
       const total = listUnreadChatThreads().reduce(
         (sum, t) => sum + t.unreadCount,
@@ -240,6 +251,23 @@ export function HomeScreen() {
   useEffect(() => {
     setHomeTourUiOpen(tourOpen);
   }, [tourOpen]);
+
+  // Perf probe: JS rAF fps while tour is open (proves Soft*/Home contention).
+  useEffect(() => {
+    if (tourOpen) startTourJsFpsProbe();
+    else stopTourJsFpsProbe();
+    return () => stopTourJsFpsProbe();
+  }, [tourOpen]);
+
+  // QA: About long-press Version → requestForceHomeTourForQa → reopen overlay.
+  useFocusEffect(
+    useCallback(() => {
+      if (!consumeForceHomeTourForQa()) return;
+      setTourOpen(true);
+      setTourBlocking(true);
+      setHomeTourUiOpen(true);
+    }, []),
+  );
 
   const dismissTour = useCallback(() => {
     // UI unlock first; persist off the critical press path.
@@ -376,7 +404,9 @@ export function HomeScreen() {
 
       const pull = async (codes: DisplayCurrencyCode[]) => {
         if (codes.length === 0 || cancelled) return;
+        if (tourOpenRef.current) return;
         const rates = await fetchSpotRates(codes);
+        if (tourOpenRef.current) return;
         if (!cancelled && Object.keys(rates).length > 0) setFiatRates(rates);
       };
 
@@ -408,14 +438,14 @@ export function HomeScreen() {
       const url = network.arkServerUrl;
 
       const probe = async () => {
-        if (cancelled || inFlight) return;
+        if (cancelled || inFlight || tourOpenRef.current) return;
         inFlight = true;
         try {
           const provider = new RestArkProvider(url);
           await withTimeout(provider.getInfo(), ASP_PROBE_MS, "getInfo");
-          if (!cancelled) setMutinynetOnline(true);
+          if (!cancelled && !tourOpenRef.current) setMutinynetOnline(true);
         } catch {
-          if (!cancelled) setMutinynetOnline(false);
+          if (!cancelled && !tourOpenRef.current) setMutinynetOnline(false);
         } finally {
           inFlight = false;
         }

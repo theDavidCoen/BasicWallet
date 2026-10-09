@@ -145,6 +145,32 @@ export async function clearHomeTourFlagsForQa(): Promise<void> {
   }
 }
 
+/**
+ * QA: force tour on next Home focus (About long-press Version).
+ * Does not change product UX — measurement / re-test only.
+ */
+let forceTourRequest = false;
+
+export async function requestForceHomeTourForQa(): Promise<void> {
+  await clearHomeTourFlagsForQa();
+  pendingLatch = true;
+  doneLatch = false;
+  forceTourRequest = true;
+  setHomeTourUiOpen(true);
+  try {
+    await AsyncStorage.setItem(HOME_TOUR_PENDING_KEY, "1");
+  } catch {
+    /* latch is enough for sync open */
+  }
+}
+
+export function consumeForceHomeTourForQa(): boolean {
+  if (!forceTourRequest && !pendingLatch) return false;
+  const forced = forceTourRequest;
+  forceTourRequest = false;
+  return forced || pendingLatch;
+}
+
 export type HomeTourStepId = "pos" | "qr" | "settings" | "add_wallet" | "fiat";
 
 export type HomeTourStep = {
