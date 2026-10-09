@@ -246,15 +246,20 @@ export function HomeScreen() {
   }, [tourOpen]);
 
   const dismissTour = useCallback(() => {
+    // UI unlock first; persist off the critical press path.
     releaseTourLocks();
-    void markHomeTourDone();
+    queueMicrotask(() => {
+      void markHomeTourDone();
+    });
   }, [releaseTourLocks]);
 
   const advanceTour = useCallback(() => {
     setTourStep((prev) => {
       if (prev >= HOME_TOUR_STEPS.length - 1) {
         releaseTourLocks();
-        void markHomeTourDone();
+        queueMicrotask(() => {
+          void markHomeTourDone();
+        });
         return prev;
       }
       return prev + 1;
@@ -797,9 +802,9 @@ export function HomeScreen() {
     return null;
   })();
 
-  return (
-    <View style={styles.full} collapsable={false}>
-    <GestureDetector gesture={homeSwipe}>
+  // While the tour is open, do not mount homeSwipe GestureDetector at all —
+  // a disabled RNGH parent still steals the first tap on Samsung (laggy Skip/Next).
+  const homeTree = (
       <View style={styles.full} collapsable={false}>
         <SyncProgressBar active={balanceStatus === "loading"} />
         <ScreenChrome
@@ -1061,15 +1066,23 @@ export function HomeScreen() {
           </View>
         </ScreenChrome>
       </View>
-    </GestureDetector>
-    {/* Sibling of homeSwipe — same App GH root as POS/QR; not nested under that pan. */}
-    <HomeTourOverlay
-      visible={tourOpen}
-      stepIndex={tourStep}
-      onSkip={dismissTour}
-      onNext={advanceTour}
-      onBack={retreatTour}
-    />
+  );
+
+  return (
+    <View style={styles.full} collapsable={false}>
+      {tourLocksHome ? (
+        homeTree
+      ) : (
+        <GestureDetector gesture={homeSwipe}>{homeTree}</GestureDetector>
+      )}
+      {/* Sibling overlay — not under homeSwipe. */}
+      <HomeTourOverlay
+        visible={tourOpen}
+        stepIndex={tourStep}
+        onSkip={dismissTour}
+        onNext={advanceTour}
+        onBack={retreatTour}
+      />
     </View>
   );
 }

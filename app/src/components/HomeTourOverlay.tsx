@@ -1,9 +1,9 @@
 /**
  * Spotlight D Home onboarding tour overlay.
  *
- * AbsoluteFill sibling of homeSwipe (App GH root). No card pan — Back / Skip /
- * Next under the card. Gesture hints sit on Home chrome (edges / header), not
- * on the card. Cluster pinned with frozen window top %. Instant step changes.
+ * AbsoluteFill sibling of homeSwipe. No card pan — Back / Skip / Next.
+ * Chrome hints on Home (edges / header). Instant step changes via onPressIn
+ * (no TouchableOpacity delay, no gesture-arena first-touch steal).
  */
 
 import { useEffect, useMemo } from "react";
@@ -12,7 +12,6 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from "react-native";
 import Animated, {
@@ -36,7 +35,6 @@ import { colors } from "../theme/colors";
 
 const CARD_WIDTH = 300;
 const STEP_COUNT = HOME_TOUR_STEPS.length;
-/** Top of card cluster — frozen window fraction (under Chat & Pay void). */
 const CLUSTER_TOP_FRAC = 0.52;
 
 type Props = {
@@ -140,7 +138,6 @@ function SoftPulseHint() {
   );
 }
 
-/** Hints on Home chrome — not on the card cluster. */
 function ChromeHints({
   step,
   insetsTop,
@@ -149,27 +146,19 @@ function ChromeHints({
   insetsTop: number;
 }) {
   const headerY = Math.max(insetsTop, 12) + 8;
-  /** Center under Basic logo (avatar/logo/R$ row). */
   const logoPulseTop = headerY + 4;
-  /** Soft swipe band in upper Home (balance / edge-swipe zone), above card. */
   const swipeTop = headerY + 96;
 
   switch (step.hint) {
     case "swipe_ltr":
       return (
-        <View
-          style={[styles.swipeBand, { top: swipeTop }]}
-          pointerEvents="none"
-        >
+        <View style={[styles.swipeBand, { top: swipeTop }]} pointerEvents="none">
           <SoftSwipeHint direction="ltr" />
         </View>
       );
     case "swipe_rtl":
       return (
-        <View
-          style={[styles.swipeBand, { top: swipeTop }]}
-          pointerEvents="none"
-        >
+        <View style={[styles.swipeBand, { top: swipeTop }]} pointerEvents="none">
           <SoftSwipeHint direction="rtl" />
         </View>
       );
@@ -202,6 +191,36 @@ function ChromeHints({
   }
 }
 
+/** Instant press — fires on touch down, no opacity animation work. */
+function TourPress({
+  onPress,
+  label,
+  style,
+  textStyle,
+  children,
+}: {
+  onPress: () => void;
+  label: string;
+  style?: object;
+  textStyle: object;
+  children: string;
+}) {
+  return (
+    <Pressable
+      onPressIn={onPress}
+      hitSlop={{ top: 16, bottom: 16, left: 12, right: 12 }}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={style}
+      // Avoid Android ripple / press delay fighting the first tap.
+      android_disableSound
+      unstable_pressDelay={0}
+    >
+      <Text style={textStyle}>{children}</Text>
+    </Pressable>
+  );
+}
+
 function TourBody({
   stepIndex,
   onSkip,
@@ -228,12 +247,15 @@ function TourBody({
     <View style={styles.portalRoot} pointerEvents="box-none">
       <Pressable
         style={styles.dim}
-        onPress={onSkip}
+        onPressIn={onSkip}
         accessibilityRole="button"
         accessibilityLabel={t("home.tourSkip")}
+        android_disableSound
+        unstable_pressDelay={0}
       />
 
-      <ChromeHints key={step.id} step={step} insetsTop={insets.top} />
+      {/* No remount key — avoid Reanimated restart hitch on each Next. */}
+      <ChromeHints step={step} insetsTop={insets.top} />
 
       <View style={styles.stage} pointerEvents="box-none">
         <View
@@ -243,6 +265,7 @@ function TourBody({
         >
           <View
             style={styles.card}
+            pointerEvents="none"
             accessible
             accessibilityRole="summary"
             accessibilityLabel={`${step.n}. ${t(step.titleKey)}`}
@@ -261,43 +284,36 @@ function TourBody({
             ))}
           </View>
 
-          <View style={styles.navRow}>
+          {/* Claim the nav strip so taps never fall through to dim. */}
+          <View style={styles.navRow} pointerEvents="auto" collapsable={false}>
             {isFirst ? (
               <View style={styles.navBtn} />
             ) : (
-              <TouchableOpacity
+              <TourPress
                 onPress={onBack}
-                hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
-                accessibilityRole="button"
-                accessibilityLabel={t("home.tourBack")}
-                activeOpacity={0.6}
+                label={t("home.tourBack")}
                 style={styles.navBtn}
+                textStyle={styles.navBack}
               >
-                <Text style={styles.navBack}>{t("home.tourBack")}</Text>
-              </TouchableOpacity>
+                {t("home.tourBack")}
+              </TourPress>
             )}
-            <TouchableOpacity
+            <TourPress
               onPress={onSkip}
-              hitSlop={{ top: 16, bottom: 16, left: 12, right: 12 }}
-              accessibilityRole="button"
-              accessibilityLabel={t("home.tourSkip")}
-              activeOpacity={0.6}
+              label={t("home.tourSkip")}
               style={styles.navBtnCenter}
+              textStyle={styles.navSkip}
             >
-              <Text style={styles.navSkip}>{t("home.tourSkip")}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
+              {t("home.tourSkip")}
+            </TourPress>
+            <TourPress
               onPress={onNext}
-              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
-              accessibilityRole="button"
-              accessibilityLabel={isLast ? t("home.tourDone") : t("home.tourNext")}
-              activeOpacity={0.6}
+              label={isLast ? t("home.tourDone") : t("home.tourNext")}
               style={styles.navBtnEnd}
+              textStyle={styles.navNext}
             >
-              <Text style={styles.navNext}>
-                {isLast ? t("home.tourDone") : t("home.tourNext")}
-              </Text>
-            </TouchableOpacity>
+              {isLast ? t("home.tourDone") : t("home.tourNext")}
+            </TourPress>
           </View>
         </View>
       </View>
@@ -314,7 +330,7 @@ export function HomeTourOverlay({
 }: Props) {
   if (!visible) return null;
   return (
-    <View style={styles.host} pointerEvents="box-none">
+    <View style={styles.host} pointerEvents="box-none" collapsable={false}>
       <TourBody
         stepIndex={stepIndex}
         onSkip={onSkip}
@@ -413,20 +429,20 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   navBtn: {
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingRight: 8,
-    minWidth: 64,
+    minWidth: 72,
   },
   navBtnCenter: {
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingHorizontal: 8,
-    minWidth: 64,
+    minWidth: 72,
     alignItems: "center",
   },
   navBtnEnd: {
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingLeft: 8,
-    minWidth: 64,
+    minWidth: 72,
     alignItems: "flex-end",
   },
   navBack: {
