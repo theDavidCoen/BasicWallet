@@ -28,5 +28,19 @@
   "fiatPending": "+ %{amount} in sospeso",
   "pendingConvertBelowMin": "+ %{sats} sats da convertire al raggiungimento del minimo",
   "pendingConvert": "+ %{sats} sats da convertire",
-  "pendingConvertStableBelowMin": "+ %{qty} %{ticker} da convertire al raggiungimento del minimo"
+  "pendingConvertStableBelowMin": "+ %{qty} %{ticker} da convertire al raggiungimento del minimo",
+  "tourBack": "Indietro",
+  "tourSkip": "Salta",
+  "tourNext": "Avanti",
+  "tourDone": "Fine",
+  "tourPosTitle": "Apri POS",
+  "tourPosBody": "Scorri da sinistra a destra sulla Home per aprire la pagina di richiesta del punto vendita.",
+  "tourQrTitle": "Scansiona QR",
+  "tourQrBody": "Scorri da destra a sinistra per aprire il lettore QR.",
+  "tourSettingsTitle": "Impostazioni",
+  "tourSettingsBody": "Tieni premuto uno spazio vuoto (oppure tocca il footer dei tassi) per le Impostazioni.",
+  "tourAddWalletTitle": "Aggiungi wallet",
+  "tourAddWalletBody": "Tocca l’avatar in alto a sinistra per cambiare wallet o aggiungerne uno nuovo.",
+  "tourFiatTitle": "Modalità Fiat",
+  "tourFiatBody": "Tocca R$ in alto a destra per attivare la modalità Fiat su questo wallet Arkade."
 }

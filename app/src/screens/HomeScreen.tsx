@@ -54,6 +54,19 @@ import {
   subscribeChatStore,
 } from "../chat/chatStore";
 import { useI18n } from "../i18n";
+import { HomeTourOverlay } from "../components/HomeTourOverlay";
+import {
+  consumeForceHomeTourForQa,
+  isHomeTourPending,
+  isHomeTourPendingSync,
+  markHomeTourDone,
+  setHomeTourUiOpen,
+} from "../home/homeTour";
+import {
+  noteHomeScreenRender,
+  startTourJsFpsProbe,
+  stopTourJsFpsProbe,
+} from "../home/homeTourPerf";
 
 const MUTINYNET_OK = "#7DCEA0";
 const MUTINYNET_DOWN = "#E07070";
@@ -134,18 +147,109 @@ export function HomeScreen() {
   /** Home primary unit: sats or one of the enabled display fiats. */
   const [balanceUnit, setBalanceUnit] = useState<"sats" | DisplayCurrencyCode>("sats");
   const [chatUnreadTotal, setChatUnreadTotal] = useState(0);
+  /**
+   * Spotlight D tour — open immediately when Ready/pair armed the sync latch
+   * (no AsyncStorage wait that leaves POS/QR free). tourBlocking gates gestures
+   * until we know the tour is not pending.
+   */
+  const [tourOpen, setTourOpen] = useState(() => isHomeTourPendingSync());
+  const [tourBlocking, setTourBlocking] = useState(() => isHomeTourPendingSync());
+  const tourLocksHome = tourOpen || tourBlocking;
+  const tourOpenRef = useRef(tourOpen);
+  tourOpenRef.current = tourOpen;
+  noteHomeScreenRender(tourOpen);
   const handleRef = useRef<View>(null);
   /** 0 undecided · 1 POS (LTR) · -1 scan (RTL) */
   const sideDir = useSharedValue(0);
   /** 1 = Activity/POS/Scan open or Activity dragging — block competing Home pans. */
   const sidesLocked = useSharedValue(activityOpen || posOpen || scanOpen ? 1 : 0);
+  /** Worklet-visible tour latch — `.enabled(false)` alone still leaked pans under Modal on Samsung. */
+  const tourLockedSv = useSharedValue(tourLocksHome ? 1 : 0);
 
   useEffect(() => {
     sidesLocked.value =
       activityOpen || homeDragging || posOpen || scanOpen ? 1 : 0;
   }, [activityOpen, homeDragging, posOpen, scanOpen, sidesLocked]);
 
+  useEffect(() => {
+    tourLockedSv.value = tourLocksHome ? 1 : 0;
+  }, [tourLocksHome, tourLockedSv]);
+
+  /** Fully release tour locks (sync worklets before Modal teardown). */
+  const releaseTourLocks = useCallback(() => {
+    tourLockedSv.value = 0;
+    sideDir.value = 0;
+    // Do not leave sidesLocked stuck after tour — only keep it if a sheet is truly open.
+    if (!posOpen && !scanOpen && !activityOpen && !homeDragging) {
+      sidesLocked.value = 0;
+    }
+    // Sync clear before any immediate post-dismiss fetch (poll guards read the ref).
+    tourOpenRef.current = false;
+    setTourOpen(false);
+    setTourBlocking(false);
+    setHomeTourUiOpen(false);
+  }, [
+    activityOpen,
+    homeDragging,
+    posOpen,
+    scanOpen,
+    sideDir,
+    sidesLocked,
+    tourLockedSv,
+  ]);
+
+  /** One-shot spot rates after tour dismiss (bypass TTL cache; always apply). */
+  const refreshHomeSpotRatesNow = useCallback(async (reason: string) => {
+    console.log(
+      `[HomeTourRates] refresh start reason=${reason} tourOpenRef=${tourOpenRef.current ? 1 : 0}`,
+    );
+    try {
+      const s = await readDisplayCurrencies();
+      setFiatCodes(s.enabled);
+      console.log(
+        `[HomeTourRates] codes=${s.enabled.join(",") || "(none)"}`,
+      );
+      if (s.enabled.length === 0) {
+        console.log("[HomeTourRates] abort empty codes");
+        return;
+      }
+      const rates = await fetchSpotRates(s.enabled, { force: true });
+      const keys = Object.keys(rates);
+      console.log(
+        `[HomeTourRates] fetch ok n=${keys.length} sample=${keys
+          .slice(0, 2)
+          .map((k) => `${k}:${rates[k as DisplayCurrencyCode]}`)
+          .join(",")}`,
+      );
+      // Always apply — do not re-check tourOpenRef (dismiss must paint footer).
+      if (keys.length > 0) {
+        setFiatRates(rates);
+        console.log("[HomeTourRates] setFiatRates applied");
+      } else {
+        console.log("[HomeTourRates] fetch empty — no setState");
+      }
+    } catch (e) {
+      console.log(
+        `[HomeTourRates] refresh error ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }, []);
+
+  /** One-shot ASP probe after tour dismiss (mutinynet only). */
+  const refreshAspProbeNow = useCallback(async () => {
+    if (network.id !== "mutinynet") return;
+    try {
+      const provider = new RestArkProvider(network.arkServerUrl);
+      await withTimeout(provider.getInfo(), ASP_PROBE_MS, "getInfo");
+      setMutinynetOnline(true);
+    } catch {
+      setMutinynetOnline(false);
+    }
+  }, [network.id, network.arkServerUrl]);
+
   const refreshChatUnread = useCallback(() => {
+    // Skip while tour open — Home setState under AbsoluteFill steals JS from taps.
+    if (tourOpenRef.current) return;
     try {
       const total = listUnreadChatThreads().reduce(
         (sum, t) => sum + t.unreadCount,
@@ -167,6 +271,76 @@ export function HomeScreen() {
       refreshChatUnread();
     }, [refreshChatUnread]),
   );
+
+  // Sync latch → Modal on first paint. Storage confirm only for cold paths.
+  useEffect(() => {
+    if (isHomeTourPendingSync()) {
+      setTourOpen(true);
+      setTourBlocking(true);
+      setHomeTourUiOpen(true);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const pending = await isHomeTourPending();
+      if (cancelled) return;
+      if (pending) {
+        setTourOpen(true);
+        setTourBlocking(true);
+        setHomeTourUiOpen(true);
+      } else {
+        setTourBlocking(false);
+        setHomeTourUiOpen(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Keep UI-open latch in sync (banners subscribe).
+  useEffect(() => {
+    setHomeTourUiOpen(tourOpen);
+  }, [tourOpen]);
+
+  // Perf probe: JS rAF fps while tour is open (proves Soft*/Home contention).
+  useEffect(() => {
+    if (tourOpen) startTourJsFpsProbe();
+    else stopTourJsFpsProbe();
+    return () => stopTourJsFpsProbe();
+  }, [tourOpen]);
+
+  // QA: About long-press Version → requestForceHomeTourForQa → reopen overlay.
+  useFocusEffect(
+    useCallback(() => {
+      if (!consumeForceHomeTourForQa()) return;
+      setTourOpen(true);
+      setTourBlocking(true);
+      setHomeTourUiOpen(true);
+    }, []),
+  );
+
+  const dismissTour = useCallback(() => {
+    console.log("[HomeTourRates] dismissTour");
+    // Clear pending/done latches synchronously (async fn runs to first await)
+    // BEFORE unlock — avoids focus/QA consume reopening tour mid-fetch.
+    void markHomeTourDone();
+    releaseTourLocks();
+    // Tour freeze skipped rate/ASP setState — pull immediately (force, no TTL).
+    void refreshHomeSpotRatesNow("dismiss");
+    void refreshAspProbeNow();
+  }, [releaseTourLocks, refreshAspProbeNow, refreshHomeSpotRatesNow]);
+
+  // Belt: whenever tour closes, force rates (covers Skip/Done/outside + any path).
+  const wasTourOpenRef = useRef(tourOpen);
+  useEffect(() => {
+    const was = wasTourOpenRef.current;
+    wasTourOpenRef.current = tourOpen;
+    if (was && !tourOpen) {
+      console.log("[HomeTourRates] tourOpen false → refresh");
+      void refreshHomeSpotRatesNow("tourOpen→false");
+    }
+  }, [tourOpen, refreshHomeSpotRatesNow]);
 
   const openSettings = useCallback(() => {
     navigation.navigate("Settings");
@@ -295,8 +469,21 @@ export function HomeScreen() {
 
       const pull = async (codes: DisplayCurrencyCode[]) => {
         if (codes.length === 0 || cancelled) return;
+        // Skip starting a new pull while tour is open (JS contention).
+        // If a pull is already in flight, still apply when it returns.
+        const blockedStart = tourOpenRef.current;
+        if (blockedStart) {
+          console.log("[HomeTourRates] poll skip start (tour open)");
+          return;
+        }
         const rates = await fetchSpotRates(codes);
-        if (!cancelled && Object.keys(rates).length > 0) setFiatRates(rates);
+        if (cancelled) return;
+        if (Object.keys(rates).length > 0) {
+          setFiatRates(rates);
+          console.log(
+            `[HomeTourRates] poll setFiatRates n=${Object.keys(rates).length}`,
+          );
+        }
       };
 
       void (async () => {
@@ -327,14 +514,14 @@ export function HomeScreen() {
       const url = network.arkServerUrl;
 
       const probe = async () => {
-        if (cancelled || inFlight) return;
+        if (cancelled || inFlight || tourOpenRef.current) return;
         inFlight = true;
         try {
           const provider = new RestArkProvider(url);
           await withTimeout(provider.getInfo(), ASP_PROBE_MS, "getInfo");
-          if (!cancelled) setMutinynetOnline(true);
+          if (!cancelled && !tourOpenRef.current) setMutinynetOnline(true);
         } catch {
-          if (!cancelled) setMutinynetOnline(false);
+          if (!cancelled && !tourOpenRef.current) setMutinynetOnline(false);
         } finally {
           inFlight = false;
         }
@@ -451,11 +638,18 @@ export function HomeScreen() {
   const { pan, homeSwipe, pullResync } = useMemo(() => {
     /** Swipe down from below the logo → force balance + activity resync (α95/α96). */
     const pullDown = Gesture.Pan()
-      .enabled(!activityOpen && !posOpen && !scanOpen && !fiatModeSheetOpen)
+      .enabled(
+        !activityOpen &&
+          !posOpen &&
+          !scanOpen &&
+          !fiatModeSheetOpen &&
+          !tourLocksHome,
+      )
       .activeOffsetY(28)
       .failOffsetX([-36, 36])
       .onUpdate((e) => {
         "worklet";
+        if (tourLockedSv.value) return;
         pullY.value = Math.max(0, e.translationY);
       })
       .onEnd((e) => {
@@ -474,10 +668,12 @@ export function HomeScreen() {
       });
 
     const activityPan = Gesture.Pan()
+      .enabled(!tourLocksHome)
       .activeOffsetY([-4, 4])
       .failOffsetX([-40, 40])
       .onBegin(() => {
         "worklet";
+        if (tourLockedSv.value) return;
         // Lock sides immediately — before JS sets activityOpen (prevents POS/Scan flash).
         sidesLocked.value = 1;
         cancelAnimation(translateY);
@@ -528,11 +724,12 @@ export function HomeScreen() {
     const sidesSettled =
       (posOpen && !posSkipEnter) || (scanOpen && !scanSkipEnter);
     const swipe = Gesture.Pan()
-      .enabled(!activityOpen && !sidesSettled)
+      .enabled(!activityOpen && !sidesSettled && !tourLocksHome)
       .activeOffsetX([-12, 12])
       .failOffsetY([-56, 56])
       .onBegin(() => {
         "worklet";
+        if (tourLockedSv.value) return;
         if (sidesLocked.value) return;
         if (Math.abs(posX.value - posOpenX.value) < 48) return;
         if (Math.abs(scanX.value - scanOpenX.value) < 48) return;
@@ -543,6 +740,10 @@ export function HomeScreen() {
       })
       .onUpdate((e) => {
         "worklet";
+        if (tourLockedSv.value) {
+          sideDir.value = 0;
+          return;
+        }
         // In-progress POS/Scan drag continues even after we lock sides.
         if (sideDir.value === 0) {
           if (sidesLocked.value) return;
@@ -633,6 +834,8 @@ export function HomeScreen() {
     clearHomeDragJS,
     dragStartY,
     fiatModeSheetOpen,
+    tourLocksHome,
+    tourLockedSv,
     finishDismissJS,
     finishPosDismissJS,
     finishScanDismissJS,
@@ -684,21 +887,31 @@ export function HomeScreen() {
     return null;
   })();
 
-  return (
-    <GestureDetector gesture={homeSwipe}>
+  // While the tour is open, do not mount homeSwipe GestureDetector at all —
+  // a disabled RNGH parent still steals the first tap on Samsung (laggy Skip/Next).
+  const homeTree = (
       <View style={styles.full} collapsable={false}>
         <SyncProgressBar active={balanceStatus === "loading"} />
         <ScreenChrome
           logoScale={1}
           avatar={
-            <WalletAvatar label={avatarLabel} onPress={openWalletSwitcher} />
+            <WalletAvatar
+              label={avatarLabel}
+              onPress={tourLocksHome ? undefined : openWalletSwitcher}
+            />
           }
           headerRight={
             <View style={styles.headerRightStack}>
               {selectedWallet?.kind === "arkade" ? (
                 <Pressable
                   // InteractiveBottomSheet via SheetHost (same pattern as Wallets).
-                  onPress={fiatMode ? openFiatModeExit : openFiatModeEnter}
+                  onPress={
+                    tourLocksHome
+                      ? undefined
+                      : fiatMode
+                        ? openFiatModeExit
+                        : openFiatModeEnter
+                  }
                   hitSlop={8}
                   accessibilityRole="button"
                   accessibilityLabel={
@@ -762,7 +975,7 @@ export function HomeScreen() {
               ) : null}
             </View>
           }
-          onLongPressEmpty={openSettings}
+          onLongPressEmpty={tourLocksHome ? undefined : openSettings}
         >
           <View style={styles.flex}>
             <GestureDetector gesture={pullResync}>
@@ -926,7 +1139,10 @@ export function HomeScreen() {
             </GestureDetector>
 
             {rateFooter ? (
-              <Pressable onPress={openSettings} hitSlop={12}>
+              <Pressable
+                onPress={tourLocksHome ? undefined : openSettings}
+                hitSlop={12}
+              >
                 <Text style={styles.rateFooter}>{rateFooter}</Text>
               </Pressable>
             ) : (
@@ -935,7 +1151,22 @@ export function HomeScreen() {
           </View>
         </ScreenChrome>
       </View>
-    </GestureDetector>
+  );
+
+  return (
+    <View style={styles.full} collapsable={false}>
+      {tourLocksHome ? (
+        homeTree
+      ) : (
+        <GestureDetector gesture={homeSwipe}>{homeTree}</GestureDetector>
+      )}
+      {/* Sibling overlay — not under homeSwipe. */}
+      <HomeTourOverlay
+        visible={tourOpen}
+        onSkip={dismissTour}
+        onDone={dismissTour}
+      />
+    </View>
   );
 }
 

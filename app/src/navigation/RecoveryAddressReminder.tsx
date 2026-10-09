@@ -21,6 +21,7 @@ import {
   dismissRecoveryReminder,
   shouldShowRecoveryReminder,
 } from "../exit/recoveryReminder";
+import { useHomeTourUiOpen } from "../home/useHomeTourUiOpen";
 import { useWallet } from "../wallet/WalletProvider";
 import { useSheets } from "./SheetHost";
 import { colors } from "../theme/colors";
@@ -45,6 +46,7 @@ export function RecoveryAddressReminder({
   const [visible, setVisible] = useState(false);
   const [routeName, setRouteName] = useState<string | undefined>();
   const translateY = useRef(new Animated.Value(0)).current;
+  const homeTourOpen = useHomeTourUiOpen();
 
   const sheetOpen =
     activityOpen ||
@@ -128,6 +130,7 @@ export function RecoveryAddressReminder({
 
   const hidden =
     sheetOpen ||
+    homeTourOpen ||
     !visible ||
     !hasWallet ||
     routeName !== "Home" ||

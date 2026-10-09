@@ -13,7 +13,8 @@ import {
   Text,
   View,
 } from "react-native";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import type { RootNav } from "../navigation/types";
 import * as Clipboard from "expo-clipboard";
 import { RestArkProvider } from "@arkade-os/sdk";
 import { ScreenChrome } from "../components/ScreenChrome";
@@ -27,6 +28,7 @@ import {
 import { getNetworkConfig } from "../config/network";
 import { prettyDelta } from "../lib/prettyDelta";
 import { midEllipsis } from "../nostr/keys";
+import { requestForceHomeTourForQa } from "../home/homeTour";
 import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
@@ -135,6 +137,7 @@ function staticFallbackRows(serverUrl: string, networkId: string): AspRow[] {
 
 export function AboutScreen() {
   const { t } = useI18n();
+  const navigation = useNavigation<RootNav>();
   const [asp, setAsp] = useState<AspState>({ status: "loading" });
   const [copiedLabel, setCopiedLabel] = useState<string | null>(null);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -248,7 +251,19 @@ export function AboutScreen() {
           <Text style={styles.errDetail}>{asp.message}</Text>
         ) : null}
 
-        <Text style={styles.footerLine}>Version  {APP_VERSION}</Text>
+        <Pressable
+          onLongPress={() => {
+            void (async () => {
+              await requestForceHomeTourForQa();
+              navigation.navigate("Home");
+            })();
+          }}
+          delayLongPress={600}
+          accessibilityRole="text"
+          accessibilityLabel={`Version ${APP_VERSION}`}
+        >
+          <Text style={styles.footerLine}>Version  {APP_VERSION}</Text>
+        </Pressable>
         <Pressable
           onPress={openLicense}
           accessibilityRole="link"

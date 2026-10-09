@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { Text, View } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { useI18n } from "../i18n";
+import { armHomeTourIfNeeded } from "../home/homeTour";
 import { markWarmupSeen } from "../wallet/warmupSeen";
 import { ui } from "../theme/ui";
 
@@ -13,10 +14,19 @@ export function ReadyScreen() {
   useEffect(() => {
     // Next cold start should say WELCOME BACK, not SETTING UP.
     void markWarmupSeen();
-    const timer = setTimeout(() => {
+    let cancelled = false;
+    void (async () => {
+      // Arm sync latch BEFORE Home mounts — no window where POS/QR are free.
+      await armHomeTourIfNeeded();
+      if (cancelled) return;
+      // Brief Ready beat, then Home (tour Modal opens on first paint via latch).
+      await new Promise((r) => setTimeout(r, 200));
+      if (cancelled) return;
       navigation.reset({ index: 0, routes: [{ name: "Home" }] });
-    }, 600);
-    return () => clearTimeout(timer);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [navigation]);
 
   return (

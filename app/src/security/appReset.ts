@@ -161,6 +161,13 @@ export async function factoryResetWipeDevice(): Promise<void> {
   await clearSecureSlots(ids);
   wipeAccountTables(networkId);
   await clearAsyncPreservingLabels();
+  // Tour must not reappear after Reset app (only after true uninstall / fresh install).
+  try {
+    const { markHomeTourDoneForFactoryReset } = await import("../home/homeTour");
+    await markHomeTourDoneForFactoryReset();
+  } catch {
+    /* optional */
+  }
 }
 
 /** @deprecated Use factoryResetWipeDevice */

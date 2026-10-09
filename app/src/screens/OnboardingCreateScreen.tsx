@@ -28,6 +28,7 @@ import {
   type PairEphemeralKeypair,
 } from "../pair/pairProtocol";
 import { useI18n } from "../i18n";
+import { armHomeTourIfNeeded } from "../home/homeTour";
 import { useWallet } from "../wallet/WalletProvider";
 
 /**
@@ -114,6 +115,9 @@ export function OnboardingCreateScreen() {
               : "Nostr backup is active on this phone.",
           );
         }
+        // Await arm so Home mounts with pending latch already set.
+        await armHomeTourIfNeeded();
+        if (cancelled || ac.signal.aborted) return;
         navigation.reset({ index: 0, routes: [{ name: "Home" }] });
       } catch (e) {
         if (cancelled || ac.signal.aborted) return;

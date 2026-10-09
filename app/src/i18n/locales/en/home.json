@@ -28,5 +28,19 @@
   "fiatPending": "+ %{amount} pending",
   "pendingConvertBelowMin": "+ %{sats} sats to be converted after minimum is reached",
   "pendingConvert": "+ %{sats} sats to be converted",
-  "pendingConvertStableBelowMin": "+ %{qty} %{ticker} to be converted after minimum is reached"
+  "pendingConvertStableBelowMin": "+ %{qty} %{ticker} to be converted after minimum is reached",
+  "tourBack": "Back",
+  "tourSkip": "Skip",
+  "tourNext": "Next",
+  "tourDone": "Done",
+  "tourPosTitle": "Open POS",
+  "tourPosBody": "Swipe left → right on Home to open the point-of-sale request page.",
+  "tourQrTitle": "Scan QR",
+  "tourQrBody": "Swipe right → left to open the QR reader.",
+  "tourSettingsTitle": "Settings",
+  "tourSettingsBody": "Long-press empty space (or tap the rate footer) for Settings.",
+  "tourAddWalletTitle": "Add Wallet",
+  "tourAddWalletBody": "Tap the avatar (top left) to switch wallets or add a new one.",
+  "tourFiatTitle": "Fiat mode",
+  "tourFiatBody": "Tap R$ (top right) to enter Fiat Mode on this Arkade wallet."
 }
