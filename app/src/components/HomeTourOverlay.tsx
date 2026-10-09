@@ -1,17 +1,17 @@
 /**
  * Spotlight D Home onboarding tour overlay.
  *
- * Transparent Modal + GestureHandlerRootView (captures the Android window so
- * Home RNGH under the Modal cannot steal pans). Card cluster sits in the lower
- * Home void (below Chat & Pay). Horizontal swipe on the card uses RN
- * PanResponder (← Next / → Back) — RNGH Pan inside Modal conflicted with
- * TouchableOpacity on Samsung. Skip / Next / outside-tap = Skip remain.
+ * Transparent Modal + GestureHandlerRootView (rc.5 pattern — taps work on
+ * Samsung). Do NOT claim responder on the portal root (rc.7 dead controls).
+ *
+ * Cluster is absolutely positioned from the window bottom (fixed % of screen
+ * height): hint → card → dots → Skip/Next. Rate-footer / Chat&Pay layout
+ * changes cannot shift it. PanResponder on the card only (not Skip/Next).
  */
 
 import { useEffect, useMemo, useRef } from "react";
 import {
-  Animated,
-  Easing,
+  Dimensions,
   Modal,
   PanResponder,
   Pressable,
@@ -19,13 +19,21 @@ import {
   Text,
   TouchableOpacity,
   View,
-  useWindowDimensions,
 } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import Animated, {
+  Easing,
+  cancelAnimation,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from "react-native-reanimated";
 import {
   SafeAreaProvider,
   initialWindowMetrics,
-  useSafeAreaInsets,
 } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
 import {
@@ -38,6 +46,8 @@ import { colors } from "../theme/colors";
 const CARD_WIDTH = 300;
 const STEP_COUNT = HOME_TOUR_STEPS.length;
 const SWIPE_THRESHOLD = 48;
+/** Cluster bottom edge as a fraction of window height (under Chat & Pay). */
+const CLUSTER_BOTTOM_FRAC = 0.14;
 
 type Props = {
   visible: boolean;
@@ -49,49 +59,39 @@ type Props = {
 
 /** Soft drifting arrow — no boxes, no chrome-sized chevrons. */
 function SoftSwipeHint({ direction }: { direction: "ltr" | "rtl" }) {
-  const x = useRef(new Animated.Value(direction === "ltr" ? -28 : 28)).current;
-  const opacity = useRef(new Animated.Value(0.35)).current;
+  const x = useSharedValue(direction === "ltr" ? -28 : 28);
+  const opacity = useSharedValue(0.35);
 
   useEffect(() => {
     const from = direction === "ltr" ? -28 : 28;
     const to = direction === "ltr" ? 28 : -28;
-    x.setValue(from);
-    const drift = Animated.loop(
-      Animated.sequence([
-        Animated.timing(x, {
-          toValue: to,
-          duration: 1100,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
-        }),
-        Animated.timing(x, {
-          toValue: from,
-          duration: 0,
-          useNativeDriver: true,
-        }),
-      ]),
+    x.value = from;
+    x.value = withRepeat(
+      withSequence(
+        withTiming(to, { duration: 1100, easing: Easing.inOut(Easing.quad) }),
+        withTiming(from, { duration: 0 }),
+      ),
+      -1,
+      false,
     );
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(opacity, {
-          toValue: 0.7,
-          duration: 550,
-          useNativeDriver: true,
-        }),
-        Animated.timing(opacity, {
-          toValue: 0.25,
-          duration: 550,
-          useNativeDriver: true,
-        }),
-      ]),
+    opacity.value = withRepeat(
+      withSequence(
+        withTiming(0.7, { duration: 550 }),
+        withTiming(0.25, { duration: 550 }),
+      ),
+      -1,
+      false,
     );
-    drift.start();
-    pulse.start();
     return () => {
-      drift.stop();
-      pulse.stop();
+      cancelAnimation(x);
+      cancelAnimation(opacity);
     };
   }, [direction, opacity, x]);
+
+  const style = useAnimatedStyle(() => ({
+    transform: [{ translateX: x.value }],
+    opacity: opacity.value,
+  }));
 
   const d =
     direction === "ltr"
@@ -99,10 +99,7 @@ function SoftSwipeHint({ direction }: { direction: "ltr" | "rtl" }) {
       : "M20 12 H4 M10 6 L4 12 L10 18";
 
   return (
-    <Animated.View
-      style={[styles.swipeHint, { transform: [{ translateX: x }], opacity }]}
-      pointerEvents="none"
-    >
+    <Animated.View style={[styles.hintAnim, style]} pointerEvents="none">
       <Svg width={36} height={24} viewBox="0 0 24 24">
         <Path
           d={d}
@@ -117,107 +114,68 @@ function SoftSwipeHint({ direction }: { direction: "ltr" | "rtl" }) {
   );
 }
 
-function SoftPulse({
-  top,
-  left,
-  right,
-  center,
-}: {
-  top: number;
-  left?: number;
-  right?: number;
-  center?: boolean;
-}) {
-  const scale = useRef(new Animated.Value(1)).current;
-  const opacity = useRef(new Animated.Value(0.45)).current;
+function SoftPulseHint() {
+  const scale = useSharedValue(1);
+  const opacity = useSharedValue(0.45);
 
   useEffect(() => {
-    const anim = Animated.loop(
-      Animated.parallel([
-        Animated.sequence([
-          Animated.timing(scale, {
-            toValue: 1.35,
-            duration: 800,
-            easing: Easing.out(Easing.quad),
-            useNativeDriver: true,
-          }),
-          Animated.timing(scale, {
-            toValue: 1,
-            duration: 0,
-            useNativeDriver: true,
-          }),
-        ]),
-        Animated.sequence([
-          Animated.timing(opacity, {
-            toValue: 0,
-            duration: 800,
-            easing: Easing.out(Easing.quad),
-            useNativeDriver: true,
-          }),
-          Animated.delay(120),
-          Animated.timing(opacity, {
-            toValue: 0.45,
-            duration: 0,
-            useNativeDriver: true,
-          }),
-        ]),
-      ]),
+    scale.value = withRepeat(
+      withSequence(
+        withTiming(1.35, { duration: 800, easing: Easing.out(Easing.quad) }),
+        withTiming(1, { duration: 0 }),
+      ),
+      -1,
+      false,
     );
-    anim.start();
-    return () => anim.stop();
+    opacity.value = withRepeat(
+      withSequence(
+        withTiming(0, { duration: 800, easing: Easing.out(Easing.quad) }),
+        withDelay(120, withTiming(0.45, { duration: 0 })),
+      ),
+      -1,
+      false,
+    );
+    return () => {
+      cancelAnimation(scale);
+      cancelAnimation(opacity);
+    };
   }, [opacity, scale]);
 
-  const ringStyle = {
-    transform: [{ scale }],
-    opacity,
-  };
+  const style = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+    opacity: opacity.value,
+  }));
 
-  if (center) {
-    return (
-      <View style={[styles.pulseCenterRow, { top }]} pointerEvents="none">
-        <Animated.View style={[styles.pulseRing, ringStyle]} />
-      </View>
-    );
-  }
   return (
-    <Animated.View
-      pointerEvents="none"
-      style={[
-        styles.pulseRingAbs,
-        { top },
-        left != null ? { left } : null,
-        right != null ? { right } : null,
-        ringStyle,
-      ]}
-    />
+    <Animated.View style={[styles.pulseRing, style]} pointerEvents="none" />
   );
 }
 
-function StepHints({ step, insetsTop }: { step: HomeTourStep; insetsTop: number }) {
-  const headerY = Math.max(insetsTop, 12) + 8 + 10;
-  const swipeTop = headerY + 72;
-
+/** Gesture hint sits just above the card (same absolute cluster). */
+function ClusterHint({ step }: { step: HomeTourStep }) {
   switch (step.hint) {
     case "swipe_ltr":
       return (
-        <View style={[styles.swipeBand, { top: swipeTop }]} pointerEvents="none">
+        <View style={styles.hintSlot} pointerEvents="none">
           <SoftSwipeHint direction="ltr" />
         </View>
       );
     case "swipe_rtl":
       return (
-        <View style={[styles.swipeBand, { top: swipeTop }]} pointerEvents="none">
+        <View style={styles.hintSlot} pointerEvents="none">
           <SoftSwipeHint direction="rtl" />
         </View>
       );
     case "pulse_settings":
-      return <SoftPulse top={headerY} center />;
     case "pulse_avatar":
-      return <SoftPulse top={headerY} left={28} />;
     case "pulse_fiat":
-      return <SoftPulse top={headerY} right={28} />;
+      return (
+        <View style={styles.hintSlot} pointerEvents="none">
+          <SoftPulseHint />
+        </View>
+      );
     default:
-      return null;
+      return <View style={styles.hintSlot} pointerEvents="none" />;
   }
 }
 
@@ -233,11 +191,14 @@ function TourBody({
   onBack: () => void;
 }) {
   const { t } = useI18n();
-  const insets = useSafeAreaInsets();
-  const { height: windowH } = useWindowDimensions();
   const step = HOME_TOUR_STEPS[Math.max(0, Math.min(stepIndex, STEP_COUNT - 1))]!;
   const isLast = step.n >= STEP_COUNT;
-  const dragX = useRef(new Animated.Value(0)).current;
+
+  // Freeze window size on mount — do not reflow when Home rates/footer appear.
+  const windowH = useMemo(() => Dimensions.get("window").height, []);
+  const clusterBottom = Math.round(windowH * CLUSTER_BOTTOM_FRAC);
+
+  const dragX = useSharedValue(0);
   const onNextRef = useRef(onNext);
   const onBackRef = useRef(onBack);
   onNextRef.current = onNext;
@@ -246,54 +207,35 @@ function TourBody({
   const cardPan = useMemo(
     () =>
       PanResponder.create({
+        // Never capture — let Skip/Next TouchableOpacity win taps.
         onStartShouldSetPanResponder: () => false,
-        onStartShouldSetPanResponderCapture: () => false,
         onMoveShouldSetPanResponder: (_, g) =>
-          Math.abs(g.dx) > 12 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2,
-        onMoveShouldSetPanResponderCapture: (_, g) =>
-          Math.abs(g.dx) > 12 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2,
+          Math.abs(g.dx) > 16 && Math.abs(g.dx) > Math.abs(g.dy) * 1.25,
         onPanResponderGrant: () => {
-          dragX.stopAnimation();
+          dragX.value = 0;
         },
         onPanResponderMove: (_, g) => {
-          dragX.setValue(g.dx);
+          dragX.value = g.dx;
         },
         onPanResponderRelease: (_, g) => {
           const dx = g.dx;
-          Animated.timing(dragX, {
-            toValue: 0,
-            duration: 120,
-            useNativeDriver: true,
-          }).start();
-          // Swipe left (←) → Next · swipe right (→) → Back
-          if (dx < -SWIPE_THRESHOLD) {
-            onNextRef.current();
-          } else if (dx > SWIPE_THRESHOLD) {
-            onBackRef.current();
-          }
+          dragX.value = withTiming(0, { duration: 120 });
+          if (dx < -SWIPE_THRESHOLD) onNextRef.current();
+          else if (dx > SWIPE_THRESHOLD) onBackRef.current();
         },
         onPanResponderTerminate: () => {
-          Animated.timing(dragX, {
-            toValue: 0,
-            duration: 120,
-            useNativeDriver: true,
-          }).start();
+          dragX.value = withTiming(0, { duration: 120 });
         },
       }),
     [dragX],
   );
 
-  // Sit in the lower void under Chat & Pay (not vertically centered).
-  const stagePadBottom = Math.max(insets.bottom, 16) + 72;
-  const stagePadTop = Math.round(windowH * 0.42);
+  const cardDragStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: dragX.value * 0.35 }],
+  }));
 
   return (
-    <View
-      style={styles.portalRoot}
-      // Claim the full Modal window so underlying Home never sees the touch.
-      onStartShouldSetResponder={() => true}
-      onMoveShouldSetResponder={() => true}
-    >
+    <View style={styles.portalRoot}>
       <Pressable
         style={styles.dim}
         onPress={onSkip}
@@ -301,28 +243,25 @@ function TourBody({
         accessibilityLabel={t("home.tourSkip")}
       />
 
-      <StepHints step={step} insetsTop={insets.top} />
-
-      <View
-        style={[
-          styles.centerStage,
-          { paddingTop: stagePadTop, paddingBottom: stagePadBottom },
-        ]}
-        pointerEvents="box-none"
-      >
+      {/* Absolute stage — position from screen, not Home content height. */}
+      <View style={styles.stage} pointerEvents="box-none">
         <Animated.View
           style={[
             styles.cluster,
-            { transform: [{ translateX: Animated.multiply(dragX, 0.35) }] },
+            { bottom: clusterBottom },
+            cardDragStyle,
           ]}
           collapsable={false}
-          {...cardPan.panHandlers}
         >
+          <ClusterHint step={step} />
+
+          {/* Pan on card only — nav buttons stay outside panHandlers. */}
           <View
             style={styles.card}
             accessible
             accessibilityRole="summary"
             accessibilityLabel={`${step.n}. ${t(step.titleKey)}`}
+            {...cardPan.panHandlers}
           >
             <Text style={styles.stepNum}>{step.n}</Text>
             <Text style={styles.title}>{t(step.titleKey)}</Text>
@@ -407,23 +346,43 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.45)",
     zIndex: 0,
   },
-  centerStage: {
+  stage: {
     ...StyleSheet.absoluteFill,
-    justifyContent: "flex-end",
-    alignItems: "center",
-    paddingHorizontal: 24,
     zIndex: 2,
     elevation: 4,
   },
   cluster: {
-    width: CARD_WIDTH,
-    maxWidth: "100%",
-    flexGrow: 0,
-    flexShrink: 0,
+    position: "absolute",
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    paddingHorizontal: 24,
+    width: "100%",
     zIndex: 3,
     elevation: 6,
   },
+  hintSlot: {
+    width: CARD_WIDTH,
+    maxWidth: "100%",
+    height: 40,
+    marginBottom: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  hintAnim: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pulseRing: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1.25,
+    borderColor: colors.fg,
+  },
   card: {
+    width: CARD_WIDTH,
+    maxWidth: "100%",
     backgroundColor: colors.card,
     borderRadius: 12,
     borderWidth: 1,
@@ -451,6 +410,8 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   dotsRow: {
+    width: CARD_WIDTH,
+    maxWidth: "100%",
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
@@ -470,6 +431,8 @@ const styles = StyleSheet.create({
     borderColor: colors.fg,
   },
   navRow: {
+    width: CARD_WIDTH,
+    maxWidth: "100%",
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -495,43 +458,5 @@ const styles = StyleSheet.create({
     fontFamily: "JetBrainsMono_700Bold",
     fontSize: 14,
     color: colors.fg,
-  },
-  swipeBand: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    height: 40,
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 1,
-  },
-  swipeHint: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  pulseRing: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 1.25,
-    borderColor: colors.fg,
-  },
-  pulseRingAbs: {
-    position: "absolute",
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 1.25,
-    borderColor: colors.fg,
-    zIndex: 1,
-  },
-  pulseCenterRow: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    height: 40,
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 1,
   },
 });
