@@ -183,6 +183,8 @@ export function HomeScreen() {
     if (!posOpen && !scanOpen && !activityOpen && !homeDragging) {
       sidesLocked.value = 0;
     }
+    // Sync clear before any immediate post-dismiss fetch (poll guards read the ref).
+    tourOpenRef.current = false;
     setTourOpen(false);
     setTourBlocking(false);
     setHomeTourUiOpen(false);
@@ -195,6 +197,31 @@ export function HomeScreen() {
     sidesLocked,
     tourLockedSv,
   ]);
+
+  /** One-shot spot rates after tour dismiss (interval may be mid-TTL). */
+  const refreshHomeSpotRatesNow = useCallback(async () => {
+    try {
+      const s = await readDisplayCurrencies();
+      setFiatCodes(s.enabled);
+      if (s.enabled.length === 0) return;
+      const rates = await fetchSpotRates(s.enabled);
+      if (Object.keys(rates).length > 0) setFiatRates(rates);
+    } catch {
+      /* ignore — footer stays empty until next interval */
+    }
+  }, []);
+
+  /** One-shot ASP probe after tour dismiss (mutinynet only). */
+  const refreshAspProbeNow = useCallback(async () => {
+    if (network.id !== "mutinynet") return;
+    try {
+      const provider = new RestArkProvider(network.arkServerUrl);
+      await withTimeout(provider.getInfo(), ASP_PROBE_MS, "getInfo");
+      setMutinynetOnline(true);
+    } catch {
+      setMutinynetOnline(false);
+    }
+  }, [network.id, network.arkServerUrl]);
 
   const refreshChatUnread = useCallback(() => {
     // Skip while tour open — Home setState under AbsoluteFill steals JS from taps.
