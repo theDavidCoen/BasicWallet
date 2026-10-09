@@ -1,10 +1,11 @@
 /**
  * Spotlight D Home onboarding tour overlay.
  *
- * Architecture (rc.23):
+ * Architecture (rc.24):
  * - UX frozen: in-card Back/Next, Skip under, chrome hints, no card swipe.
- * - Unified long high-contrast arrows for swipe + tap targets (no circle pulses).
- * - Soft nudge on active step only (one withRepeat).
+ * - Unified long high-contrast arrows (no circle pulses).
+ * - Add Wallet / Fiat: ↑ arrows, tip on command circles; Settings: → under logo,
+ *   opacity pulse only (no translate). Soft* on active step only.
  * - Home poll setState paused while tour open; host pointerEvents=auto.
  */
 
@@ -52,12 +53,20 @@ const HEADER_ROW_H = 48;
 /** Unified tour arrow — longer + high-contrast white. */
 const ARROW_W = 64;
 const ARROW_H = 32;
+/** Vertical ↑ glyph (tip at top of viewBox) — layout-stable vs rotate. */
+const ARROW_UP_W = 32;
+const ARROW_UP_H = 64;
+/** ScreenChrome paddingHorizontal + WalletAvatar / fiatModeBtn size. */
+const CHROME_PAD_X = 28;
+const CMD_CIRCLE = 28;
 const ARROW_STROKE = "rgba(255,255,255,0.92)";
-/** Shaft + head in viewBox 0 0 48 24 (points right; rotate for other dirs). */
-const ARROW_PATH = "M2 12 H34 M26 4 L42 12 L26 20";
+/** Shaft + head in viewBox 0 0 48 24 (points right; flip for left). */
+const ARROW_RIGHT_PATH = "M2 12 H34 M26 4 L42 12 L26 20";
+/** Tip near y=2 — place container so tip kisses circle bottom. */
+const ARROW_UP_PATH = "M12 46 V10 M5 17 L12 2 L19 17";
 
 type HintKind = (typeof HOME_TOUR_STEPS)[number]["hint"];
-type ArrowDir = "left" | "right" | "up" | "down";
+type SwipeDir = "left" | "right";
 
 type Props = {
   visible: boolean;
@@ -65,20 +74,12 @@ type Props = {
   onDone: () => void;
 };
 
-function ArrowGlyph({ pointing }: { pointing: ArrowDir }) {
-  const rotate =
-    pointing === "right"
-      ? "0deg"
-      : pointing === "left"
-        ? "180deg"
-        : pointing === "up"
-          ? "-90deg"
-          : "90deg";
+function ArrowRightGlyph({ flip }: { flip?: boolean }) {
   return (
-    <View style={{ transform: [{ rotate }] }}>
+    <View style={flip ? { transform: [{ scaleX: -1 }] } : undefined}>
       <Svg width={ARROW_W} height={ARROW_H} viewBox="0 0 48 24">
         <Path
-          d={ARROW_PATH}
+          d={ARROW_RIGHT_PATH}
           fill="none"
           stroke={ARROW_STROKE}
           strokeWidth={2.2}
@@ -90,39 +91,39 @@ function ArrowGlyph({ pointing }: { pointing: ArrowDir }) {
   );
 }
 
-/** Soft nudge along the arrow axis (swipe or tap). One withRepeat when mounted. */
-function SoftArrowHint({ pointing }: { pointing: ArrowDir }) {
-  const axis = pointing === "left" || pointing === "right" ? "x" : "y";
-  const sign =
-    pointing === "right" || pointing === "down" ? 1 : -1;
+function ArrowUpGlyph() {
+  return (
+    <Svg width={ARROW_UP_W} height={ARROW_UP_H} viewBox="0 0 24 48">
+      <Path
+        d={ARROW_UP_PATH}
+        fill="none"
+        stroke={ARROW_STROKE}
+        strokeWidth={2.2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
+/** POS / QR swipe — soft nudge along axis. */
+function SoftSwipeArrowHint({ pointing }: { pointing: SwipeDir }) {
+  const sign = pointing === "right" ? 1 : -1;
   const from = -14 * sign;
   const to = 14 * sign;
-  const tx = useSharedValue(axis === "x" ? from : 0);
-  const ty = useSharedValue(axis === "y" ? from : 0);
+  const tx = useSharedValue(from);
   const opacity = useSharedValue(0.55);
 
   useEffect(() => {
-    if (axis === "x") {
-      tx.value = from;
-      tx.value = withRepeat(
-        withSequence(
-          withTiming(to, { duration: 1000, easing: Easing.inOut(Easing.quad) }),
-          withTiming(from, { duration: 0 }),
-        ),
-        -1,
-        false,
-      );
-    } else {
-      ty.value = from;
-      ty.value = withRepeat(
-        withSequence(
-          withTiming(to, { duration: 900, easing: Easing.inOut(Easing.quad) }),
-          withTiming(from, { duration: 0 }),
-        ),
-        -1,
-        false,
-      );
-    }
+    tx.value = from;
+    tx.value = withRepeat(
+      withSequence(
+        withTiming(to, { duration: 1000, easing: Easing.inOut(Easing.quad) }),
+        withTiming(from, { duration: 0 }),
+      ),
+      -1,
+      false,
+    );
     opacity.value = withRepeat(
       withSequence(
         withTiming(1, { duration: 500 }),
@@ -133,19 +134,93 @@ function SoftArrowHint({ pointing }: { pointing: ArrowDir }) {
     );
     return () => {
       cancelAnimation(tx);
-      cancelAnimation(ty);
       cancelAnimation(opacity);
     };
-  }, [axis, from, opacity, to, tx, ty]);
+  }, [from, opacity, to, tx]);
 
   const style = useAnimatedStyle(() => ({
-    transform: [{ translateX: tx.value }, { translateY: ty.value }],
+    transform: [{ translateX: tx.value }],
     opacity: opacity.value,
   }));
 
   return (
     <Animated.View style={[styles.hintAnim, style]} pointerEvents="none">
-      <ArrowGlyph pointing={pointing} />
+      <ArrowRightGlyph flip={pointing === "left"} />
+    </Animated.View>
+  );
+}
+
+/**
+ * Add Wallet / Fiat — ↑ arrow; tip aimed at command circle.
+ * Small nudge toward the circle (tip stays near it).
+ */
+function SoftTapUpArrowHint() {
+  const ty = useSharedValue(6);
+  const opacity = useSharedValue(0.6);
+
+  useEffect(() => {
+    ty.value = 6;
+    ty.value = withRepeat(
+      withSequence(
+        withTiming(0, { duration: 850, easing: Easing.inOut(Easing.quad) }),
+        withTiming(6, { duration: 850, easing: Easing.inOut(Easing.quad) }),
+      ),
+      -1,
+      false,
+    );
+    opacity.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 500 }),
+        withTiming(0.55, { duration: 500 }),
+      ),
+      -1,
+      false,
+    );
+    return () => {
+      cancelAnimation(ty);
+      cancelAnimation(opacity);
+    };
+  }, [opacity, ty]);
+
+  const style = useAnimatedStyle(() => ({
+    transform: [{ translateY: ty.value }],
+    opacity: opacity.value,
+  }));
+
+  return (
+    <Animated.View style={[styles.hintAnim, style]} pointerEvents="none">
+      <ArrowUpGlyph />
+    </Animated.View>
+  );
+}
+
+/**
+ * Settings — → under logo, centered. No translation; whitening pulse only.
+ */
+function SoftSettingsArrowHint() {
+  const opacity = useSharedValue(0.4);
+
+  useEffect(() => {
+    opacity.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 750, easing: Easing.inOut(Easing.quad) }),
+        withTiming(0.38, { duration: 750, easing: Easing.inOut(Easing.quad) }),
+      ),
+      -1,
+      false,
+    );
+    return () => {
+      cancelAnimation(opacity);
+    };
+  }, [opacity]);
+
+  const style = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+  }));
+
+  return (
+    <Animated.View style={[styles.hintAnim, style]} pointerEvents="none">
+      <ArrowRightGlyph />
     </Animated.View>
   );
 }
@@ -163,12 +238,17 @@ const TourHintsLayer = memo(function TourHintsLayer({
   insetsTop: number;
 }) {
   const headerY = Math.max(insetsTop, 12) + 8;
+  /** Avatar / R$ are 28px, vertically centered in the 48px header row. */
+  const circleTop = headerY + (HEADER_ROW_H - CMD_CIRCLE) / 2;
+  const circleBottom = circleTop + CMD_CIRCLE;
   /**
-   * Add Wallet / Fiat: arrow sits above the header circles and points down.
+   * ↑ arrow tip at top of glyph — place so tip kisses circle bottom.
+   * SoftTapUp starts with ty=6 so rest pose tip is slightly below, then nudges up.
    */
-  const cornerArrowTop = Math.max(insetsTop, headerY - ARROW_H - 4);
+  const cornerArrowTop = circleBottom - 2;
+  const cornerArrowLeft = CHROME_PAD_X + CMD_CIRCLE / 2 - ARROW_UP_W / 2;
   /**
-   * Settings: under the Basic wordmark, centered — arrow points up at the logo.
+   * Settings: under the Basic wordmark, centered — points right; opacity only.
    */
   const logoTop = headerY + (HEADER_ROW_H - HOME_LOGO_H) / 2;
   const settingsArrowTop = logoTop + HOME_LOGO_H + 10;
@@ -178,12 +258,12 @@ const TourHintsLayer = memo(function TourHintsLayer({
     <>
       {activeHint === "swipe_ltr" ? (
         <View style={[styles.swipeBand, { top: swipeTop }]} pointerEvents="none">
-          <SoftArrowHint pointing="right" />
+          <SoftSwipeArrowHint pointing="right" />
         </View>
       ) : null}
       {activeHint === "swipe_rtl" ? (
         <View style={[styles.swipeBand, { top: swipeTop }]} pointerEvents="none">
-          <SoftArrowHint pointing="left" />
+          <SoftSwipeArrowHint pointing="left" />
         </View>
       ) : null}
       {activeHint === "pulse_settings" ? (
@@ -191,23 +271,23 @@ const TourHintsLayer = memo(function TourHintsLayer({
           style={[styles.pulseCenterRow, { top: settingsArrowTop }]}
           pointerEvents="none"
         >
-          <SoftArrowHint pointing="up" />
+          <SoftSettingsArrowHint />
         </View>
       ) : null}
       {activeHint === "pulse_avatar" ? (
         <View
-          style={[styles.cornerArrow, { top: cornerArrowTop, left: 8 }]}
+          style={[styles.cornerArrow, { top: cornerArrowTop, left: cornerArrowLeft }]}
           pointerEvents="none"
         >
-          <SoftArrowHint pointing="down" />
+          <SoftTapUpArrowHint />
         </View>
       ) : null}
       {activeHint === "pulse_fiat" ? (
         <View
-          style={[styles.cornerArrow, { top: cornerArrowTop, right: 8 }]}
+          style={[styles.cornerArrow, { top: cornerArrowTop, right: cornerArrowLeft }]}
           pointerEvents="none"
         >
-          <SoftArrowHint pointing="down" />
+          <SoftTapUpArrowHint />
         </View>
       ) : null}
     </>
@@ -653,10 +733,10 @@ const styles = StyleSheet.create({
   },
   cornerArrow: {
     position: "absolute",
-    width: ARROW_W + 8,
-    height: ARROW_H + 12,
+    width: ARROW_UP_W,
+    height: ARROW_UP_H + 8,
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "flex-start",
     zIndex: 1,
   },
 });
