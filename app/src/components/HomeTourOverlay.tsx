@@ -1,29 +1,32 @@
 /**
  * Spotlight D Home onboarding tour overlay.
  *
- * Transparent Modal + GestureHandlerRootView (rc.5 pattern — taps work on
- * Samsung). Do NOT claim responder on the portal root (rc.7 dead controls).
+ * Transparent Modal + GestureHandlerRootView (rc.5 — Skip/Next taps work on
+ * Samsung). Never claim responder on the portal root (rc.7 dead controls).
  *
- * Cluster is absolutely positioned from the window bottom (fixed % of screen
- * height): hint → card → dots → Skip/Next. Rate-footer / Chat&Pay layout
- * changes cannot shift it. PanResponder on the card only (not Skip/Next).
+ * Card swipe uses RNGH Gesture.Pan on the card body only — PanResponder does
+ * not receive moves inside GestureHandlerRootView on Samsung (rc.8). Skip/Next
+ * stay TouchableOpacity outside the GestureDetector.
+ *
+ * Absolute cluster from window bottom: hint → card → dots → Skip/Next.
+ * Hint is keyed by step so swipe/pulse swaps immediately with the copy.
  */
 
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   Dimensions,
   Modal,
-  PanResponder,
   Pressable,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import Animated, {
   Easing,
   cancelAnimation,
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withDelay,
@@ -151,7 +154,10 @@ function SoftPulseHint() {
   );
 }
 
-/** Gesture hint sits just above the card (same absolute cluster). */
+/**
+ * Hint above the card — matches active step copy.
+ * key={step.id} on the caller remounts so animations never linger across steps.
+ */
 function ClusterHint({ step }: { step: HomeTourStep }) {
   switch (step.hint) {
     case "swipe_ltr":
@@ -204,30 +210,39 @@ function TourBody({
   onNextRef.current = onNext;
   onBackRef.current = onBack;
 
-  const cardPan = useMemo(
+  const goNext = useCallback(() => {
+    onNextRef.current();
+  }, []);
+  const goBack = useCallback(() => {
+    onBackRef.current();
+  }, []);
+
+  // RNGH Pan on the card only (GH root owns the Modal window on Samsung).
+  const cardSwipe = useMemo(
     () =>
-      PanResponder.create({
-        // Never capture — let Skip/Next TouchableOpacity win taps.
-        onStartShouldSetPanResponder: () => false,
-        onMoveShouldSetPanResponder: (_, g) =>
-          Math.abs(g.dx) > 16 && Math.abs(g.dx) > Math.abs(g.dy) * 1.25,
-        onPanResponderGrant: () => {
-          dragX.value = 0;
-        },
-        onPanResponderMove: (_, g) => {
-          dragX.value = g.dx;
-        },
-        onPanResponderRelease: (_, g) => {
-          const dx = g.dx;
+      Gesture.Pan()
+        .activeOffsetX([-20, 20])
+        .failOffsetY([-48, 48])
+        .onUpdate((e) => {
+          "worklet";
+          dragX.value = e.translationX;
+        })
+        .onEnd((e) => {
+          "worklet";
+          const dx = e.translationX;
           dragX.value = withTiming(0, { duration: 120 });
-          if (dx < -SWIPE_THRESHOLD) onNextRef.current();
-          else if (dx > SWIPE_THRESHOLD) onBackRef.current();
-        },
-        onPanResponderTerminate: () => {
+          // ← Next · → Back (threshold ~48px)
+          if (dx < -SWIPE_THRESHOLD) {
+            runOnJS(goNext)();
+          } else if (dx > SWIPE_THRESHOLD) {
+            runOnJS(goBack)();
+          }
+        })
+        .onFinalize(() => {
+          "worklet";
           dragX.value = withTiming(0, { duration: 120 });
-        },
-      }),
-    [dragX],
+        }),
+    [dragX, goBack, goNext],
   );
 
   const cardDragStyle = useAnimatedStyle(() => ({
@@ -243,30 +258,27 @@ function TourBody({
         accessibilityLabel={t("home.tourSkip")}
       />
 
-      {/* Absolute stage — position from screen, not Home content height. */}
       <View style={styles.stage} pointerEvents="box-none">
-        <Animated.View
-          style={[
-            styles.cluster,
-            { bottom: clusterBottom },
-            cardDragStyle,
-          ]}
+        <View
+          style={[styles.cluster, { bottom: clusterBottom }]}
           collapsable={false}
+          pointerEvents="box-none"
         >
-          <ClusterHint step={step} />
+          <ClusterHint key={step.id} step={step} />
 
-          {/* Pan on card only — nav buttons stay outside panHandlers. */}
-          <View
-            style={styles.card}
-            accessible
-            accessibilityRole="summary"
-            accessibilityLabel={`${step.n}. ${t(step.titleKey)}`}
-            {...cardPan.panHandlers}
-          >
-            <Text style={styles.stepNum}>{step.n}</Text>
-            <Text style={styles.title}>{t(step.titleKey)}</Text>
-            <Text style={styles.body}>{t(step.bodyKey)}</Text>
-          </View>
+          {/* Swipe target = card body only; nav buttons stay outside. */}
+          <GestureDetector gesture={cardSwipe}>
+            <Animated.View
+              style={[styles.card, cardDragStyle]}
+              accessible
+              accessibilityRole="summary"
+              accessibilityLabel={`${step.n}. ${t(step.titleKey)}`}
+            >
+              <Text style={styles.stepNum}>{step.n}</Text>
+              <Text style={styles.title}>{t(step.titleKey)}</Text>
+              <Text style={styles.body}>{t(step.bodyKey)}</Text>
+            </Animated.View>
+          </GestureDetector>
 
           <View style={styles.dotsRow} pointerEvents="none">
             {HOME_TOUR_STEPS.map((s) => (
@@ -301,7 +313,7 @@ function TourBody({
               </Text>
             </TouchableOpacity>
           </View>
-        </Animated.View>
+        </View>
       </View>
     </View>
   );
