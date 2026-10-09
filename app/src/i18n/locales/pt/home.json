@@ -38,7 +38,7 @@
   "tourQrTitle": "Escanear QR",
   "tourQrBody": "Deslize da direita para a esquerda para abrir o leitor de QR.",
   "tourSettingsTitle": "Configurações",
-  "tourSettingsBody": "Pressione longamente o espaço vazio no cabeçalho (ou toque no rodapé da cotação) para Configurações.",
+  "tourSettingsBody": "Pressione longamente um espaço vazio (ou toque no rodapé das cotações) para Configurações.",
   "tourAddWalletTitle": "Adicionar carteira",
   "tourAddWalletBody": "Toque no avatar (canto superior esquerdo) para trocar de carteira ou adicionar uma nova.",
   "tourFiatTitle": "Modo Fiat",

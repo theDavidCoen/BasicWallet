@@ -38,7 +38,7 @@
   "tourQrTitle": "Scansiona QR",
   "tourQrBody": "Scorri da destra a sinistra per aprire il lettore QR.",
   "tourSettingsTitle": "Impostazioni",
-  "tourSettingsBody": "Tieni premuto lo spazio vuoto nell’header (oppure tocca il footer del tasso) per le Impostazioni.",
+  "tourSettingsBody": "Tieni premuto uno spazio vuoto (oppure tocca il footer dei tassi) per le Impostazioni.",
   "tourAddWalletTitle": "Aggiungi wallet",
   "tourAddWalletBody": "Tocca l’avatar in alto a sinistra per cambiare wallet o aggiungerne uno nuovo.",
   "tourFiatTitle": "Modalità Fiat",

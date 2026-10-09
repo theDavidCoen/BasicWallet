@@ -38,7 +38,7 @@
   "tourQrTitle": "Scan QR",
   "tourQrBody": "Swipe right → left to open the QR reader.",
   "tourSettingsTitle": "Settings",
-  "tourSettingsBody": "Long-press empty header space (or tap the rate footer) for Settings.",
+  "tourSettingsBody": "Long-press empty space (or tap the rate footer) for Settings.",
   "tourAddWalletTitle": "Add Wallet",
   "tourAddWalletBody": "Tap the avatar (top left) to switch wallets or add a new one.",
   "tourFiatTitle": "Fiat mode",
