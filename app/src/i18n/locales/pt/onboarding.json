@@ -53,6 +53,8 @@
   "passkeyCreateNew": "Criar nova passkey",
   "passkeyCreateFailedTitle": "Não foi possível criar a passkey",
   "passkeyCreateFailedBody": "Não foi possível criar uma passkey. Ative um provedor de passkey e tente de novo.",
+  "passkeyNoManagerTitle": "NENHUM GERENCIADOR DE PASSKEY",
+  "passkeyNoManagerCaption": "Nenhum gerenciador de passkey foi detectado neste dispositivo. Você pode continuar sem passkey, ou abrir as configurações do sistema para ativar um (por exemplo, o Google Password Manager).",
   "passkeyOpenFailedTitle": "Não foi possível abrir a carteira",
   "readyTitle": "VOCÊ ESTÁ PRONTO",
   "readyCaption": "A carteira está pronta para uso.",

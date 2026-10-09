@@ -53,6 +53,8 @@
   "passkeyCreateNew": "Crea nuova passkey",
   "passkeyCreateFailedTitle": "Impossibile creare la passkey",
   "passkeyCreateFailedBody": "Impossibile creare una passkey. Abilita un provider di passkey e riprova.",
+  "passkeyNoManagerTitle": "NESSUN GESTORE PASSKEY",
+  "passkeyNoManagerCaption": "Nessun gestore di passkey rilevato su questo dispositivo. Puoi continuare senza passkey, oppure aprire le impostazioni di sistema per abilitarne uno (ad esempio Google Password Manager).",
   "passkeyOpenFailedTitle": "Impossibile aprire il wallet",
   "readyTitle": "SEI PRONTO",
   "readyCaption": "Il wallet è pronto all’uso.",

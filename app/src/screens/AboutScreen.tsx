@@ -149,7 +149,7 @@ export function AboutScreen() {
 
   const openLicense = useCallback(() => {
     // Placeholder until LICENSE exists on GitHub (Mind: basic-wallet).
-    if (!APP_LICENSE_URL || APP_LICENSE_URL === "#") return;
+    if (!APP_LICENSE_URL) return;
     void Linking.openURL(APP_LICENSE_URL);
   }, []);
 

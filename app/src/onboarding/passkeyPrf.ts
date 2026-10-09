@@ -114,6 +114,20 @@ export function isNoCreateOptionError(e: unknown): boolean {
   return /NoCreateOption|no create options available/i.test(t);
 }
 
+/**
+ * Credential Manager / provider missing or misconfigured — same class of failure
+ * as NoCreateOption (no viable passkey manager on device).
+ * Avoid matching WebAuthn DomError names that merely contain "NotSupported".
+ */
+export function isPasskeyManagerUnavailableError(e: unknown): boolean {
+  if (isNoCreateOptionError(e)) return true;
+  const t = errorText(e);
+  if (/NotConfigured|ProviderConfiguration/i.test(t)) return true;
+  // react-native-passkeys maps CreateCredentialUnsupportedException → "NotSupported"
+  if (/\bNotSupported\b/.test(t) && !/DomError/i.test(t)) return true;
+  return false;
+}
+
 function isUserCancelledError(e: unknown): boolean {
   return /UserCancelled|cancel/i.test(errorText(e));
 }
@@ -134,26 +148,16 @@ export function mapPasskeyCreateError(e: unknown): Error {
   ) {
     return e;
   }
-  if (isNoCreateOptionError(e)) {
+  if (isPasskeyManagerUnavailableError(e)) {
     return new PasskeyNoCreateOptionError(
       "No passkey provider is available on this device.\n\n" +
         "Enable Google Password Manager (or another passkey provider) in system settings, " +
-        "sign in to a Google account if needed, then try again.",
+        "sign in to a Google account if needed, then try again.\n\n" +
+        "Or continue without passkey.",
     );
   }
   if (isUserCancelledError(e)) {
     return new PasskeyPrfUnavailableError("Passkey creation was cancelled.");
-  }
-  if (/NotConfigured|ProviderConfiguration/i.test(errorText(e))) {
-    return new PasskeyPrfUnavailableError(
-      "Passkey provider is not configured on this device. " +
-        "Open passkey settings and enable Google Password Manager, then try again.",
-    );
-  }
-  if (/NotSupported/i.test(errorText(e))) {
-    return new PasskeyPrfUnavailableError(
-      "This device cannot create passkeys. Use Continue without passkey, or Restore.",
-    );
   }
   if (e instanceof Error && !/androidx\.credentials|CreateCredential/i.test(e.message)) {
     return e;
@@ -198,6 +202,11 @@ export async function getExistingPrfEntropy(): Promise<Uint8Array> {
     const entropy = await getPrfFromAssertion();
     if (entropy) return entropy;
   } catch (e) {
+    // Surface missing-provider failures immediately — do not fall through to a
+    // create attempt that will also fail with NoCreateOption.
+    if (isPasskeyManagerUnavailableError(e)) {
+      throw mapPasskeyCreateError(e);
+    }
     console.warn("[basic] discoverable passkey get failed", e);
   }
 
@@ -207,6 +216,9 @@ export async function getExistingPrfEntropy(): Promise<Uint8Array> {
       const entropy = await getPrfFromAssertion([{ id: credentialId, type: "public-key" }]);
       if (entropy) return entropy;
     } catch (e) {
+      if (isPasskeyManagerUnavailableError(e)) {
+        throw mapPasskeyCreateError(e);
+      }
       console.warn("[basic] passkey get with stored id failed", e);
     }
   }
