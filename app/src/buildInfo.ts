@@ -3,7 +3,7 @@
  * Bump with package.json / app.json on release.
  */
 
-export const APP_VERSION = "0.9.6-rc.18";
+export const APP_VERSION = "0.9.6-rc.19";
 
 /**
  * Short commit for Settings → About.

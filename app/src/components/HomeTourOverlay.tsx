@@ -1,15 +1,27 @@
 /**
  * Spotlight D Home onboarding tour overlay.
  *
- * AbsoluteFill sibling of homeSwipe. No card pan.
- * Back / Next inside the card; Skip + dots under it.
- * Step index is owned here so Next/Back do not re-render HomeScreen.
- * Chrome hints stay mounted (opacity toggle) to avoid Reanimated remount hitch.
+ * Architecture (rc.19 — evidence-based):
+ * - Step state lives here; HomeScreen must not re-render this tree on rate/ASP ticks.
+ * - TourBody is memo-frozen from parent (`arePropsEqual` → true).
+ * - Hint layer is a separate memo child driven by a Reanimated shared value so
+ *   SoftSwipe/SoftPulse are not reconciled on each step tap.
+ * - Nav uses Pressable `onPressIn` — same pattern as Home Receive/Send.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+} from "react";
 import {
   Dimensions,
+  Pressable,
   StyleSheet,
   Text,
   View,
@@ -23,29 +35,32 @@ import Animated, {
   withRepeat,
   withSequence,
   withTiming,
+  type SharedValue,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
-import {
-  HOME_TOUR_STEPS,
-  type HomeTourStep,
-} from "../home/homeTour";
+import { HOME_TOUR_STEPS } from "../home/homeTour";
 import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 
 const CARD_WIDTH = 300;
 const STEP_COUNT = HOME_TOUR_STEPS.length;
 const CLUSTER_TOP_FRAC = 0.52;
-
-/** Ignore presses for this long after mount (touch bleed from prior screen). */
 const TOUR_ARM_MS = 480;
-/** Dim dismiss only if finger moves less than this (swipe ≠ Skip). */
 const DIM_TAP_SLOP_PX = 12;
+
+/** Hint id → shared-value code (UI-thread opacity, no React prop churn). */
+const HINT_CODE: Record<(typeof HOME_TOUR_STEPS)[number]["hint"], number> = {
+  swipe_ltr: 0,
+  swipe_rtl: 1,
+  pulse_settings: 2,
+  pulse_avatar: 3,
+  pulse_fiat: 4,
+};
 
 type Props = {
   visible: boolean;
   onSkip: () => void;
-  /** Last-step Next / Done — parent releases locks + marks done. */
   onDone: () => void;
 };
 
@@ -142,84 +157,82 @@ function SoftPulseHint() {
   );
 }
 
-/** All hint trees stay mounted; only opacity flips per step (no Reanimated remount). */
-function ChromeHints({
-  hint,
+/**
+ * Mounts once. Visibility via hintSv on the UI thread — not reconciled on step taps
+ * when parent passes a stable SharedValue + stable insetsTop.
+ */
+const TourHintsLayer = memo(function TourHintsLayer({
+  hintSv,
   insetsTop,
 }: {
-  hint: HomeTourStep["hint"];
+  hintSv: SharedValue<number>;
   insetsTop: number;
 }) {
   const headerY = Math.max(insetsTop, 12) + 8;
   const logoPulseTop = headerY + 4;
   const swipeTop = headerY + 96;
 
+  const ltrStyle = useAnimatedStyle(() => ({
+    opacity: hintSv.value === 0 ? 1 : 0,
+  }));
+  const rtlStyle = useAnimatedStyle(() => ({
+    opacity: hintSv.value === 1 ? 1 : 0,
+  }));
+  const settingsStyle = useAnimatedStyle(() => ({
+    opacity: hintSv.value === 2 ? 1 : 0,
+  }));
+  const avatarStyle = useAnimatedStyle(() => ({
+    opacity: hintSv.value === 3 ? 1 : 0,
+  }));
+  const fiatStyle = useAnimatedStyle(() => ({
+    opacity: hintSv.value === 4 ? 1 : 0,
+  }));
+
   return (
     <>
-      <View
-        style={[
-          styles.swipeBand,
-          { top: swipeTop, opacity: hint === "swipe_ltr" ? 1 : 0 },
-        ]}
+      <Animated.View
+        style={[styles.swipeBand, { top: swipeTop }, ltrStyle]}
         pointerEvents="none"
       >
         <SoftSwipeHint direction="ltr" />
-      </View>
-      <View
-        style={[
-          styles.swipeBand,
-          { top: swipeTop, opacity: hint === "swipe_rtl" ? 1 : 0 },
-        ]}
+      </Animated.View>
+      <Animated.View
+        style={[styles.swipeBand, { top: swipeTop }, rtlStyle]}
         pointerEvents="none"
       >
         <SoftSwipeHint direction="rtl" />
-      </View>
-      <View
-        style={[
-          styles.pulseCenterRow,
-          { top: logoPulseTop, opacity: hint === "pulse_settings" ? 1 : 0 },
-        ]}
+      </Animated.View>
+      <Animated.View
+        style={[styles.pulseCenterRow, { top: logoPulseTop }, settingsStyle]}
         pointerEvents="none"
       >
         <SoftPulseHint />
-      </View>
-      <View
+      </Animated.View>
+      <Animated.View
         style={[
           styles.pulseAbs,
-          {
-            top: logoPulseTop,
-            left: 20,
-            opacity: hint === "pulse_avatar" ? 1 : 0,
-          },
+          { top: logoPulseTop, left: 20 },
+          avatarStyle,
         ]}
         pointerEvents="none"
       >
         <SoftPulseHint />
-      </View>
-      <View
+      </Animated.View>
+      <Animated.View
         style={[
           styles.pulseAbs,
-          {
-            top: logoPulseTop,
-            right: 20,
-            opacity: hint === "pulse_fiat" ? 1 : 0,
-          },
+          { top: logoPulseTop, right: 20 },
+          fiatStyle,
         ]}
         pointerEvents="none"
       >
         <SoftPulseHint />
-      </View>
+      </Animated.View>
     </>
   );
-}
+});
 
-/**
- * Minimal hit target — native responder grant, no Pressable state machine.
- * Always claims responder when `armed` (same path for Back and Next).
- * Callers no-op in onPress when at bounds — never gate the hit on step index
- * (rc.17: Back used enabled=!isFirst so taps right after Next were dropped
- * until re-render flipped the flag).
- */
+/** Same hit pattern as Home Receive/Send (`onPressIn`). */
 function TourHit({
   onPress,
   armed,
@@ -232,37 +245,26 @@ function TourHit({
   armed: boolean;
   label: string;
   style?: object;
-  textStyle: object | object[];
+  textStyle: object | Array<object | null | false | undefined>;
   children: string;
 }) {
-  const onPressRef = useRef(onPress);
-  const armedRef = useRef(armed);
-  onPressRef.current = onPress;
-  armedRef.current = armed;
-
   return (
-    <View
+    <Pressable
+      onPressIn={() => {
+        if (!armed) return;
+        onPress();
+      }}
       accessibilityRole="button"
       accessibilityLabel={label}
       style={style}
-      collapsable={false}
-      // Always take the gesture when armed — identical Back/Next hit path.
-      onStartShouldSetResponder={() => armedRef.current}
-      onMoveShouldSetResponder={() => false}
-      onResponderTerminationRequest={() => false}
-      onResponderGrant={() => {
-        if (armedRef.current) onPressRef.current();
-      }}
+      android_disableSound
+      unstable_pressDelay={0}
     >
       <Text style={textStyle}>{children}</Text>
-    </View>
+    </Pressable>
   );
 }
 
-/**
- * Outside dismiss: only a deliberate tap. Swipes / pans / cancelled touches
- * must never Skip (rc.15: card pan fell through pointerEvents=none → dim onPress).
- */
 function DimTapSkip({
   armed,
   onSkip,
@@ -312,156 +314,176 @@ function DimTapSkip({
   );
 }
 
-function TourBody({
-  onSkip,
-  onDone,
-}: {
-  onSkip: () => void;
-  onDone: () => void;
-}) {
-  const { t } = useI18n();
-  const insets = useSafeAreaInsets();
-  const [stepIndex, setStepIndex] = useState(0);
-  const [armed, setArmed] = useState(false);
-  /** Sync source of truth for nav — updated before setState so Back never waits on paint. */
-  const stepRef = useRef(0);
-  const onSkipRef = useRef(onSkip);
-  const onDoneRef = useRef(onDone);
-  const backPressT0 = useRef(0);
-  onSkipRef.current = onSkip;
-  onDoneRef.current = onDone;
+type TapProbe = { dir: "back" | "next"; t0: number };
 
-  useEffect(() => {
-    setArmed(false);
-    const id = setTimeout(() => setArmed(true), TOUR_ARM_MS);
-    return () => clearTimeout(id);
-  }, []);
+/**
+ * Owns step state. Frozen from HomeTourOverlay parent re-renders
+ * (rate/ASP/chat ticks on HomeScreen must not reconcile this tree).
+ */
+const TourBody = memo(
+  function TourBody({
+    skipRef,
+    doneRef,
+  }: {
+    skipRef: MutableRefObject<() => void>;
+    doneRef: MutableRefObject<() => void>;
+  }) {
+    const { t } = useI18n();
+    const insets = useSafeAreaInsets();
+    const [stepIndex, setStepIndex] = useState(0);
+    const [armed, setArmed] = useState(false);
+    const stepRef = useRef(0);
+    const hintSv = useSharedValue(HINT_CODE[HOME_TOUR_STEPS[0]!.hint]);
+    const tapProbe = useRef<TapProbe | null>(null);
 
-  const step =
-    HOME_TOUR_STEPS[Math.max(0, Math.min(stepIndex, STEP_COUNT - 1))]!;
-  const isFirst = step.n <= 1;
-  const isLast = step.n >= STEP_COUNT;
+    useEffect(() => {
+      setArmed(false);
+      const id = setTimeout(() => setArmed(true), TOUR_ARM_MS);
+      return () => clearTimeout(id);
+    }, []);
 
-  useEffect(() => {
-    if (!backPressT0.current) return;
-    const dt = Date.now() - backPressT0.current;
-    console.log(`[HomeTour] back paintDtMs=${dt} step=${stepIndex}`);
-    backPressT0.current = 0;
-  }, [stepIndex]);
+    const step =
+      HOME_TOUR_STEPS[Math.max(0, Math.min(stepIndex, STEP_COUNT - 1))]!;
+    const isFirst = step.n <= 1;
+    const isLast = step.n >= STEP_COUNT;
 
-  const clusterTop = useMemo(() => {
-    const windowH = Dimensions.get("window").height;
-    return Math.round(windowH * CLUSTER_TOP_FRAC);
-  }, []);
+    useLayoutEffect(() => {
+      const probe = tapProbe.current;
+      if (!probe) return;
+      const layoutDtMs = Date.now() - probe.t0;
+      console.log(
+        `[HomeTour] ${probe.dir} layoutDtMs=${layoutDtMs} step=${stepIndex}`,
+      );
+      tapProbe.current = null;
+    }, [stepIndex]);
 
-  const goNext = () => {
-    const prev = stepRef.current;
-    if (prev >= STEP_COUNT - 1) {
-      queueMicrotask(() => onDoneRef.current());
-      return;
-    }
-    const next = prev + 1;
-    stepRef.current = next;
-    setStepIndex(next);
-  };
+    const clusterTop = useMemo(() => {
+      const windowH = Dimensions.get("window").height;
+      return Math.round(windowH * CLUSTER_TOP_FRAC);
+    }, []);
 
-  const goBack = () => {
-    // Same hit path as Next: always invoked when armed; no-op at 0 without
-    // disabling the responder (that was the Back-only lag on rc.17).
-    const prev = stepRef.current;
-    if (prev <= 0) return;
-    backPressT0.current = Date.now();
-    const next = prev - 1;
-    stepRef.current = next;
-    setStepIndex(next);
-  };
+    const applyStep = useCallback((next: number, dir: "back" | "next") => {
+      const t0 = Date.now();
+      const clamped = Math.max(0, Math.min(STEP_COUNT - 1, next));
+      stepRef.current = clamped;
+      const hint = HOME_TOUR_STEPS[clamped]!.hint;
+      // UI-thread hint flip — no React props into TourHintsLayer.
+      hintSv.value = HINT_CODE[hint];
+      tapProbe.current = { dir, t0 };
+      setStepIndex(clamped);
+    }, [hintSv]);
 
-  const goSkip = () => {
-    queueMicrotask(() => onSkipRef.current());
-  };
+    const goNext = useCallback(() => {
+      const prev = stepRef.current;
+      if (prev >= STEP_COUNT - 1) {
+        queueMicrotask(() => doneRef.current());
+        return;
+      }
+      applyStep(prev + 1, "next");
+    }, [applyStep, doneRef]);
 
-  const backLabel = t("home.tourBack");
-  const skipLabel = t("home.tourSkip");
-  const nextLabel = isLast ? t("home.tourDone") : t("home.tourNext");
+    const goBack = useCallback(() => {
+      const prev = stepRef.current;
+      if (prev <= 0) return;
+      applyStep(prev - 1, "back");
+    }, [applyStep]);
 
-  return (
-    <View style={styles.portalRoot} pointerEvents="box-none">
-      <DimTapSkip armed={armed} onSkip={goSkip} label={skipLabel} />
+    const goSkip = useCallback(() => {
+      queueMicrotask(() => skipRef.current());
+    }, [skipRef]);
 
-      <ChromeHints hint={step.hint} insetsTop={insets.top} />
+    const backLabel = t("home.tourBack");
+    const skipLabel = t("home.tourSkip");
+    const nextLabel = isLast ? t("home.tourDone") : t("home.tourNext");
 
-      <View style={styles.stage} pointerEvents="box-none">
-        <View
-          style={[styles.cluster, { top: clusterTop }]}
-          collapsable={false}
-          pointerEvents="box-none"
-        >
-          <View style={styles.card} pointerEvents="auto" collapsable={false}>
-            <Text style={styles.stepNum} pointerEvents="none">
-              {step.n}
-            </Text>
-            <Text style={styles.title} pointerEvents="none">
-              {t(step.titleKey)}
-            </Text>
-            <Text style={styles.body} pointerEvents="none">
-              {t(step.bodyKey)}
-            </Text>
+    return (
+      <View style={styles.portalRoot} pointerEvents="box-none">
+        <DimTapSkip armed={armed} onSkip={goSkip} label={skipLabel} />
 
-            {/* Back / Next — identical armed hit path; equal flex hit boxes. */}
-            <View style={styles.cardFooter} collapsable={false}>
+        <TourHintsLayer hintSv={hintSv} insetsTop={insets.top} />
+
+        <View style={styles.stage} pointerEvents="box-none">
+          <View
+            style={[styles.cluster, { top: clusterTop }]}
+            collapsable={false}
+            pointerEvents="box-none"
+          >
+            <View style={styles.card} pointerEvents="auto" collapsable={false}>
+              <Text style={styles.stepNum} pointerEvents="none">
+                {step.n}
+              </Text>
+              <Text style={styles.title} pointerEvents="none">
+                {t(step.titleKey)}
+              </Text>
+              <Text style={styles.body} pointerEvents="none">
+                {t(step.bodyKey)}
+              </Text>
+
+              <View style={styles.cardFooter} collapsable={false}>
+                <TourHit
+                  armed={armed}
+                  onPress={goBack}
+                  label={backLabel}
+                  style={styles.cardNavBtn}
+                  textStyle={[styles.navBack, isFirst && styles.navBackMuted]}
+                >
+                  {backLabel}
+                </TourHit>
+                <TourHit
+                  armed={armed}
+                  onPress={goNext}
+                  label={nextLabel}
+                  style={styles.cardNavBtnEnd}
+                  textStyle={styles.navNext}
+                >
+                  {nextLabel}
+                </TourHit>
+              </View>
+            </View>
+
+            <View style={styles.dotsRow} pointerEvents="none">
+              {HOME_TOUR_STEPS.map((s) => (
+                <View
+                  key={s.id}
+                  style={[styles.dot, s.n === step.n ? styles.dotActive : null]}
+                />
+              ))}
+            </View>
+
+            <View
+              style={styles.skipRow}
+              pointerEvents="box-none"
+              collapsable={false}
+            >
               <TourHit
                 armed={armed}
-                onPress={goBack}
-                label={backLabel}
-                style={styles.cardNavBtn}
-                textStyle={[styles.navBack, isFirst ? styles.navBackMuted : null]}
+                onPress={goSkip}
+                label={skipLabel}
+                style={styles.skipHit}
+                textStyle={styles.navSkip}
               >
-                {backLabel}
-              </TourHit>
-              <TourHit
-                armed={armed}
-                onPress={goNext}
-                label={nextLabel}
-                style={styles.cardNavBtnEnd}
-                textStyle={styles.navNext}
-              >
-                {nextLabel}
+                {skipLabel}
               </TourHit>
             </View>
           </View>
-
-          <View style={styles.dotsRow} pointerEvents="none">
-            {HOME_TOUR_STEPS.map((s) => (
-              <View
-                key={s.id}
-                style={[styles.dot, s.n === step.n ? styles.dotActive : null]}
-              />
-            ))}
-          </View>
-
-          <View style={styles.skipRow} pointerEvents="box-none" collapsable={false}>
-            <TourHit
-              armed={armed}
-              onPress={goSkip}
-              label={skipLabel}
-              style={styles.skipHit}
-              textStyle={styles.navSkip}
-            >
-              {skipLabel}
-            </TourHit>
-          </View>
         </View>
       </View>
-    </View>
-  );
-}
+    );
+  },
+  /** Ignore parent prop identity — only internal setState may re-render. */
+  () => true,
+);
 
 export function HomeTourOverlay({ visible, onSkip, onDone }: Props) {
+  const skipRef = useRef(onSkip);
+  const doneRef = useRef(onDone);
+  skipRef.current = onSkip;
+  doneRef.current = onDone;
+
   if (!visible) return null;
   return (
     <View style={styles.host} pointerEvents="box-none" collapsable={false}>
-      {/* key resets local step when tour re-opens after a rare remount. */}
-      <TourBody key="tour-body" onSkip={onSkip} onDone={onDone} />
+      <TourBody skipRef={skipRef} doneRef={doneRef} />
     </View>
   );
 }
