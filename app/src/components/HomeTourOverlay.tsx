@@ -1,42 +1,38 @@
 /**
  * Spotlight D Home onboarding tour overlay.
  *
- * No GestureHandlerRootView in this Modal — a second GH root on Samsung fought
- * Home's RNGH (dead card swipe in rc.8–rc.9, freeze after dismiss on POS swipe).
- * Skip/Next/dim use RN Pressable/TouchableOpacity (rc.5 pattern without GH).
+ * AbsoluteFill in Home’s tree (same App GestureHandlerRootView as POS/QR
+ * sheets) — not a Modal nested GH root. Card pan = RNGH Gesture.Pan +
+ * Reanimated follow-finger + spring snap (same stack / SHEET_SPRING as Home).
  *
- * Card swipe: RN responder on the card body only (pageX delta, ~48px). No
- * PanResponder, no RNGH Pan. Buttons stay outside the swipe target.
- *
- * Cluster pinned with frozen window metrics (top = % of window height) so
- * rates/footer/Chat&Pay cannot shift it: hint → card → dots → Skip/Next.
+ * Cluster pinned with frozen window top %: hint → card → dots → Skip/Next.
  */
 
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   Dimensions,
-  Modal,
   Pressable,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
-  type GestureResponderEvent,
 } from "react-native";
+import {
+  Gesture,
+  GestureDetector,
+  TouchableOpacity,
+} from "react-native-gesture-handler";
 import Animated, {
   Easing,
   cancelAnimation,
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
-  withDelay,
   withRepeat,
   withSequence,
+  withSpring,
   withTiming,
+  withDelay,
 } from "react-native-reanimated";
-import {
-  SafeAreaProvider,
-  initialWindowMetrics,
-} from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
 import {
   HOME_TOUR_STEPS,
@@ -44,15 +40,14 @@ import {
 } from "../home/homeTour";
 import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
+import { SHEET_SPRING } from "./sheet/sheetMotion";
 
 const CARD_WIDTH = 300;
 const STEP_COUNT = HOME_TOUR_STEPS.length;
 const SWIPE_THRESHOLD = 48;
-/**
- * Top edge of the cluster as a fraction of window height.
- * Frozen at mount — independent of Home content / rates / safe-area settle.
- * ~0.52 keeps hint+card in the lower void under Chat & Pay on phones.
- */
+const FLING_VX = 600;
+/** Exit slide distance before step change. */
+const EXIT_X = 340;
 const CLUSTER_TOP_FRAC = 0.52;
 
 type Props = {
@@ -63,7 +58,6 @@ type Props = {
   onBack: () => void;
 };
 
-/** Soft drifting arrow — no boxes, no chrome-sized chevrons. */
 function SoftSwipeHint({ direction }: { direction: "ltr" | "rtl" }) {
   const x = useSharedValue(direction === "ltr" ? -28 : 28);
   const opacity = useSharedValue(0.35);
@@ -184,59 +178,6 @@ function ClusterHint({ step }: { step: HomeTourStep }) {
   }
 }
 
-/** Minimal horizontal swipe on the card — RN responders only (no RNGH / PanResponder). */
-function SwipeCard({
-  onNext,
-  onBack,
-  accessibilityLabel,
-  children,
-}: {
-  onNext: () => void;
-  onBack: () => void;
-  accessibilityLabel: string;
-  children: ReactNode;
-}) {
-  const origin = useRef<{ x: number; y: number } | null>(null);
-
-  const onGrant = (e: GestureResponderEvent) => {
-    origin.current = {
-      x: e.nativeEvent.pageX,
-      y: e.nativeEvent.pageY,
-    };
-  };
-
-  const onRelease = (e: GestureResponderEvent) => {
-    const start = origin.current;
-    origin.current = null;
-    if (!start) return;
-    const dx = e.nativeEvent.pageX - start.x;
-    const dy = e.nativeEvent.pageY - start.y;
-    if (Math.abs(dx) < SWIPE_THRESHOLD) return;
-    if (Math.abs(dx) < Math.abs(dy) * 1.15) return;
-    if (dx < 0) onNext();
-    else onBack();
-  };
-
-  return (
-    <View
-      style={styles.card}
-      accessible
-      accessibilityRole="summary"
-      accessibilityLabel={accessibilityLabel}
-      collapsable={false}
-      onStartShouldSetResponder={() => true}
-      onMoveShouldSetResponder={() => true}
-      onResponderGrant={onGrant}
-      onResponderRelease={onRelease}
-      onResponderTerminate={() => {
-        origin.current = null;
-      }}
-    >
-      {children}
-    </View>
-  );
-}
-
 function TourBody({
   stepIndex,
   onSkip,
@@ -252,14 +193,86 @@ function TourBody({
   const step = HOME_TOUR_STEPS[Math.max(0, Math.min(stepIndex, STEP_COUNT - 1))]!;
   const isLast = step.n >= STEP_COUNT;
 
-  // Freeze once — never recompute when Home rates/footer appear under the dim.
   const clusterTop = useMemo(() => {
     const windowH = Dimensions.get("window").height;
     return Math.round(windowH * CLUSTER_TOP_FRAC);
   }, []);
 
+  const dragX = useSharedValue(0);
+  const animating = useSharedValue(0);
+  const onNextRef = useRef(onNext);
+  const onBackRef = useRef(onBack);
+  onNextRef.current = onNext;
+  onBackRef.current = onBack;
+
+  // Reset drag when step changes (after exit animation clears).
+  useEffect(() => {
+    dragX.value = 0;
+    animating.value = 0;
+  }, [stepIndex, dragX, animating]);
+
+  const finishNext = useCallback(() => {
+    dragX.value = 0;
+    animating.value = 0;
+    onNextRef.current();
+  }, [animating, dragX]);
+
+  const finishBack = useCallback(() => {
+    dragX.value = 0;
+    animating.value = 0;
+    onBackRef.current();
+  }, [animating, dragX]);
+
+  const cardSwipe = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(true)
+        .activeOffsetX([-10, 10])
+        .failOffsetY([-56, 56])
+        .onBegin(() => {
+          "worklet";
+          if (animating.value) return;
+          cancelAnimation(dragX);
+        })
+        .onUpdate((e) => {
+          "worklet";
+          if (animating.value) return;
+          // Light resistance — same 1:1 feel as Home side pans, slightly soft.
+          dragX.value = e.translationX * 0.92;
+        })
+        .onEnd((e) => {
+          "worklet";
+          if (animating.value) return;
+          const dx = e.translationX;
+          const vx = e.velocityX;
+          const toNext = dx < -SWIPE_THRESHOLD || vx < -FLING_VX;
+          const toBack = dx > SWIPE_THRESHOLD || vx > FLING_VX;
+          if (toNext) {
+            animating.value = 1;
+            dragX.value = withTiming(-EXIT_X, { duration: 180 }, (finished) => {
+              if (finished) runOnJS(finishNext)();
+            });
+            return;
+          }
+          if (toBack) {
+            animating.value = 1;
+            dragX.value = withTiming(EXIT_X, { duration: 180 }, (finished) => {
+              if (finished) runOnJS(finishBack)();
+            });
+            return;
+          }
+          dragX.value = withSpring(0, SHEET_SPRING);
+        }),
+    [animating, dragX, finishBack, finishNext],
+  );
+
+  // Transform a non-gesture child so the hit target stays stable (sheet pattern).
+  const cardMotionStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: dragX.value }],
+  }));
+
   return (
-    <View style={styles.portalRoot}>
+    <View style={styles.portalRoot} pointerEvents="box-none">
       <Pressable
         style={styles.dim}
         onPress={onSkip}
@@ -275,15 +288,20 @@ function TourBody({
         >
           <ClusterHint key={step.id} step={step} />
 
-          <SwipeCard
-            onNext={onNext}
-            onBack={onBack}
-            accessibilityLabel={`${step.n}. ${t(step.titleKey)}`}
-          >
-            <Text style={styles.stepNum}>{step.n}</Text>
-            <Text style={styles.title}>{t(step.titleKey)}</Text>
-            <Text style={styles.body}>{t(step.bodyKey)}</Text>
-          </SwipeCard>
+          <GestureDetector gesture={cardSwipe}>
+            <View style={styles.cardHit} collapsable={false}>
+              <Animated.View
+                style={[styles.card, cardMotionStyle]}
+                accessible
+                accessibilityRole="summary"
+                accessibilityLabel={`${step.n}. ${t(step.titleKey)}`}
+              >
+                <Text style={styles.stepNum}>{step.n}</Text>
+                <Text style={styles.title}>{t(step.titleKey)}</Text>
+                <Text style={styles.body}>{t(step.bodyKey)}</Text>
+              </Animated.View>
+            </View>
+          </GestureDetector>
 
           <View style={styles.dotsRow} pointerEvents="none">
             {HOME_TOUR_STEPS.map((s) => (
@@ -324,6 +342,10 @@ function TourBody({
   );
 }
 
+/**
+ * AbsoluteFill overlay — render as sibling of Home chrome (not inside
+ * homeSwipe GestureDetector). Shares App GH root with POS/QR.
+ */
 export function HomeTourOverlay({
   visible,
   stepIndex,
@@ -331,29 +353,25 @@ export function HomeTourOverlay({
   onNext,
   onBack,
 }: Props) {
+  if (!visible) return null;
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="none"
-      statusBarTranslucent
-      presentationStyle="overFullScreen"
-      onRequestClose={onSkip}
-    >
-      {/* No GestureHandlerRootView — keep Modal on the RN touch system only. */}
-      <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-        <TourBody
-          stepIndex={stepIndex}
-          onSkip={onSkip}
-          onNext={onNext}
-          onBack={onBack}
-        />
-      </SafeAreaProvider>
-    </Modal>
+    <View style={styles.host} pointerEvents="box-none">
+      <TourBody
+        stepIndex={stepIndex}
+        onSkip={onSkip}
+        onNext={onNext}
+        onBack={onBack}
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  host: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 500,
+    elevation: 500,
+  },
   portalRoot: {
     flex: 1,
   },
@@ -396,9 +414,13 @@ const styles = StyleSheet.create({
     borderWidth: 1.25,
     borderColor: colors.fg,
   },
-  card: {
+  /** Stable hit target — motion applied to inner card (sheet pattern). */
+  cardHit: {
     width: CARD_WIDTH,
     maxWidth: "100%",
+  },
+  card: {
+    width: "100%",
     backgroundColor: colors.card,
     borderRadius: 12,
     borderWidth: 1,

@@ -798,6 +798,7 @@ export function HomeScreen() {
   })();
 
   return (
+    <View style={styles.full} collapsable={false}>
     <GestureDetector gesture={homeSwipe}>
       <View style={styles.full} collapsable={false}>
         <SyncProgressBar active={balanceStatus === "loading"} />
@@ -1059,15 +1060,17 @@ export function HomeScreen() {
             )}
           </View>
         </ScreenChrome>
-        <HomeTourOverlay
-          visible={tourOpen}
-          stepIndex={tourStep}
-          onSkip={dismissTour}
-          onNext={advanceTour}
-          onBack={retreatTour}
-        />
       </View>
     </GestureDetector>
+    {/* Sibling of homeSwipe — same App GH root as POS/QR; not nested under that pan. */}
+    <HomeTourOverlay
+      visible={tourOpen}
+      stepIndex={tourStep}
+      onSkip={dismissTour}
+      onNext={advanceTour}
+      onBack={retreatTour}
+    />
+    </View>
   );
 }
 
