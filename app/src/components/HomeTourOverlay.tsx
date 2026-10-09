@@ -1,15 +1,23 @@
 /**
  * Spotlight D Home onboarding tour overlay.
  *
- * Transparent Modal (new RN root) — must NOT be an AbsoluteFill sibling of
- * Home ScreenChrome (that crushed layout on Samsung in 0.9.6-rc.3).
+ * Transparent Modal + GestureHandlerRootView (same portal pattern as
+ * InteractiveBottomSheet). Full-screen dim Pressable without GH root was
+ * dead on Samsung rc.4 — taps never reached Skip/Next.
  *
- * Card cluster is a fixed-width column (card → dots → Skip/Next). Nav sits
- * immediately under the card edges — never a full-screen footer.
+ * Card cluster is a fixed-width column (card → dots → Skip/Next).
  */
 
 import { useEffect } from "react";
-import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import Animated, {
   Easing,
   cancelAnimation,
@@ -79,7 +87,6 @@ function SoftSwipeHint({ direction }: { direction: "ltr" | "rtl" }) {
     opacity: opacity.value,
   }));
 
-  // Simple arrow path; flipped for RTL.
   const d =
     direction === "ltr"
       ? "M4 12 H20 M14 6 L20 12 L14 18"
@@ -169,7 +176,6 @@ function SoftPulse({
 
 function StepHints({ step, insetsTop }: { step: HomeTourStep; insetsTop: number }) {
   const headerY = Math.max(insetsTop, 12) + 8 + 10;
-  // Keep swipe hint in the upper band (above the centered card), not over mid chrome.
   const swipeTop = headerY + 72;
 
   switch (step.hint) {
@@ -211,7 +217,8 @@ function TourBody({
   const isLast = step.n >= STEP_COUNT;
 
   return (
-    <View style={styles.portalRoot} pointerEvents="box-none">
+    <View style={styles.portalRoot}>
+      {/* Dim behind cluster — outside tap = Skip */}
       <Pressable
         style={styles.dim}
         onPress={onSkip}
@@ -221,9 +228,13 @@ function TourBody({
 
       <StepHints step={step} insetsTop={insets.top} />
 
-      {/* Fixed-width cluster: card + dots + nav — never stretches to screen height. */}
       <View style={styles.centerStage} pointerEvents="box-none">
-        <View style={styles.cluster} pointerEvents="box-none">
+        {/* Absorb touches on the card cluster so they do not fall through to dim. */}
+        <View
+          style={styles.cluster}
+          collapsable={false}
+          onStartShouldSetResponder={() => true}
+        >
           <View
             style={styles.card}
             accessible
@@ -245,26 +256,28 @@ function TourBody({
           </View>
 
           <View style={styles.navRow}>
-            <Pressable
+            <TouchableOpacity
               onPress={onSkip}
-              hitSlop={12}
+              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
               accessibilityRole="button"
               accessibilityLabel={t("home.tourSkip")}
+              activeOpacity={0.6}
               style={styles.navBtn}
             >
               <Text style={styles.navSkip}>{t("home.tourSkip")}</Text>
-            </Pressable>
-            <Pressable
+            </TouchableOpacity>
+            <TouchableOpacity
               onPress={onNext}
-              hitSlop={12}
+              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
               accessibilityRole="button"
               accessibilityLabel={isLast ? t("home.tourDone") : t("home.tourNext")}
+              activeOpacity={0.6}
               style={styles.navBtnEnd}
             >
               <Text style={styles.navNext}>
                 {isLast ? t("home.tourDone") : t("home.tourNext")}
               </Text>
-            </Pressable>
+            </TouchableOpacity>
           </View>
         </View>
       </View>
@@ -277,12 +290,14 @@ export function HomeTourOverlay({ visible, stepIndex, onSkip, onNext }: Props) {
     <Modal
       visible={visible}
       transparent
-      animationType="fade"
+      animationType="none"
       statusBarTranslucent
       onRequestClose={onSkip}
     >
       <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-        <TourBody stepIndex={stepIndex} onSkip={onSkip} onNext={onNext} />
+        <GestureHandlerRootView style={styles.portalRoot}>
+          <TourBody stepIndex={stepIndex} onSkip={onSkip} onNext={onNext} />
+        </GestureHandlerRootView>
       </SafeAreaProvider>
     </Modal>
   );
@@ -295,19 +310,23 @@ const styles = StyleSheet.create({
   dim: {
     ...StyleSheet.absoluteFill,
     backgroundColor: "rgba(0,0,0,0.45)",
+    zIndex: 0,
   },
   centerStage: {
     ...StyleSheet.absoluteFill,
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 24,
+    zIndex: 2,
+    elevation: 4,
   },
-  /** Intrinsic height only — critical so Skip/Next stay under the card. */
   cluster: {
     width: CARD_WIDTH,
     maxWidth: "100%",
     flexGrow: 0,
     flexShrink: 0,
+    zIndex: 3,
+    elevation: 6,
   },
   card: {
     backgroundColor: colors.card,
@@ -362,12 +381,15 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   navBtn: {
-    paddingVertical: 4,
-    paddingRight: 8,
+    paddingVertical: 8,
+    paddingRight: 12,
+    minWidth: 72,
   },
   navBtnEnd: {
-    paddingVertical: 4,
-    paddingLeft: 8,
+    paddingVertical: 8,
+    paddingLeft: 12,
+    minWidth: 72,
+    alignItems: "flex-end",
   },
   navSkip: {
     fontFamily: "JetBrainsMono_400Regular",
@@ -386,6 +408,7 @@ const styles = StyleSheet.create({
     height: 40,
     alignItems: "center",
     justifyContent: "center",
+    zIndex: 1,
   },
   swipeHint: {
     alignItems: "center",
@@ -405,6 +428,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1.25,
     borderColor: colors.fg,
+    zIndex: 1,
   },
   pulseCenterRow: {
     position: "absolute",
@@ -413,5 +437,6 @@ const styles = StyleSheet.create({
     height: 40,
     alignItems: "center",
     justifyContent: "center",
+    zIndex: 1,
   },
 });

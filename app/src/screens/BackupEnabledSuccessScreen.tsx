@@ -21,11 +21,17 @@ export function BackupEnabledSuccessScreen() {
 
   useEffect(() => {
     void markWarmupSeen();
-    void armHomeTourIfNeeded();
-    const timer = setTimeout(() => {
+    let cancelled = false;
+    void (async () => {
+      await armHomeTourIfNeeded();
+      if (cancelled) return;
+      await new Promise((r) => setTimeout(r, 2000));
+      if (cancelled) return;
       navigation.reset({ index: 0, routes: [{ name: "Home" }] });
-    }, 2000);
-    return () => clearTimeout(timer);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [navigation]);
 
   return (

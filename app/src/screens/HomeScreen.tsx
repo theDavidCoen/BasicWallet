@@ -58,6 +58,7 @@ import { HomeTourOverlay } from "../components/HomeTourOverlay";
 import {
   HOME_TOUR_STEPS,
   isHomeTourPending,
+  isHomeTourPendingSync,
   markHomeTourDone,
 } from "../home/homeTour";
 
@@ -140,9 +141,15 @@ export function HomeScreen() {
   /** Home primary unit: sats or one of the enabled display fiats. */
   const [balanceUnit, setBalanceUnit] = useState<"sats" | DisplayCurrencyCode>("sats");
   const [chatUnreadTotal, setChatUnreadTotal] = useState(0);
-  /** Spotlight D tour — armed only after fresh-install first wallet. */
-  const [tourOpen, setTourOpen] = useState(false);
+  /**
+   * Spotlight D tour — open immediately when Ready/pair armed the sync latch
+   * (no AsyncStorage wait that leaves POS/QR free). tourBlocking gates gestures
+   * until we know the tour is not pending.
+   */
+  const [tourOpen, setTourOpen] = useState(() => isHomeTourPendingSync());
+  const [tourBlocking, setTourBlocking] = useState(() => isHomeTourPendingSync());
   const [tourStep, setTourStep] = useState(0);
+  const tourLocksHome = tourOpen || tourBlocking;
   const handleRef = useRef<View>(null);
   /** 0 undecided · 1 POS (LTR) · -1 scan (RTL) */
   const sideDir = useSharedValue(0);
@@ -177,28 +184,34 @@ export function HomeScreen() {
     }, [refreshChatUnread]),
   );
 
-  useFocusEffect(
-    useCallback(() => {
-      let cancelled = false;
-      void (async () => {
-        const pending = await isHomeTourPending();
-        if (cancelled || !pending) return;
-        // Wait a beat so Home chrome is painted before the dim overlay.
-        requestAnimationFrame(() => {
-          if (!cancelled) {
-            setTourStep(0);
-            setTourOpen(true);
-          }
-        });
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }, []),
-  );
+  // Sync latch → Modal on first paint. Storage confirm only for cold paths.
+  useEffect(() => {
+    if (isHomeTourPendingSync()) {
+      setTourStep(0);
+      setTourOpen(true);
+      setTourBlocking(true);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const pending = await isHomeTourPending();
+      if (cancelled) return;
+      if (pending) {
+        setTourStep(0);
+        setTourOpen(true);
+        setTourBlocking(true);
+      } else {
+        setTourBlocking(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const dismissTour = useCallback(() => {
     setTourOpen(false);
+    setTourBlocking(false);
     void markHomeTourDone();
   }, []);
 
@@ -206,6 +219,7 @@ export function HomeScreen() {
     setTourStep((prev) => {
       if (prev >= HOME_TOUR_STEPS.length - 1) {
         setTourOpen(false);
+        setTourBlocking(false);
         void markHomeTourDone();
         return prev;
       }
@@ -496,7 +510,13 @@ export function HomeScreen() {
   const { pan, homeSwipe, pullResync } = useMemo(() => {
     /** Swipe down from below the logo → force balance + activity resync (α95/α96). */
     const pullDown = Gesture.Pan()
-      .enabled(!activityOpen && !posOpen && !scanOpen && !fiatModeSheetOpen && !tourOpen)
+      .enabled(
+        !activityOpen &&
+          !posOpen &&
+          !scanOpen &&
+          !fiatModeSheetOpen &&
+          !tourLocksHome,
+      )
       .activeOffsetY(28)
       .failOffsetX([-36, 36])
       .onUpdate((e) => {
@@ -519,6 +539,7 @@ export function HomeScreen() {
       });
 
     const activityPan = Gesture.Pan()
+      .enabled(!tourLocksHome)
       .activeOffsetY([-4, 4])
       .failOffsetX([-40, 40])
       .onBegin(() => {
@@ -573,7 +594,7 @@ export function HomeScreen() {
     const sidesSettled =
       (posOpen && !posSkipEnter) || (scanOpen && !scanSkipEnter);
     const swipe = Gesture.Pan()
-      .enabled(!activityOpen && !sidesSettled && !tourOpen)
+      .enabled(!activityOpen && !sidesSettled && !tourLocksHome)
       .activeOffsetX([-12, 12])
       .failOffsetY([-56, 56])
       .onBegin(() => {
@@ -678,7 +699,7 @@ export function HomeScreen() {
     clearHomeDragJS,
     dragStartY,
     fiatModeSheetOpen,
-    tourOpen,
+    tourLocksHome,
     finishDismissJS,
     finishPosDismissJS,
     finishScanDismissJS,
