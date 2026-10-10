@@ -267,12 +267,19 @@ export async function publishPaymentReceipt(opts: {
   txid?: string;
   rail: "arkade" | "lightning" | "onchain";
   relatedRequestId?: string;
+  /** Payer ark for the recipient to auto-store on the contact. */
+  payerArk?: string;
 }): Promise<void> {
   const contact = getContact(opts.contactId);
   if (!contact || !contactHasNostrId(contact)) return;
   if (!(await hasNostrIdentity())) return;
   const peer = await resolveContactPeerPubkey(contact);
   if (!peer.ok) return;
+
+  const payerArk =
+    typeof opts.payerArk === "string" && opts.payerArk.trim().startsWith("ark")
+      ? opts.payerArk.trim()
+      : undefined;
 
   const envelope: PaymentReceiptEnvelope = {
     v: 1,
@@ -284,6 +291,7 @@ export async function publishPaymentReceipt(opts: {
     txid: opts.txid,
     rail: opts.rail,
     relatedRequestId: opts.relatedRequestId,
+    payerArk,
     sentAt: Date.now(),
     threadContactHint: opts.contactId,
   };

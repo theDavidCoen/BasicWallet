@@ -16,6 +16,7 @@ import {
   noteChatInboundReceiptHint,
 } from "./chatInboundPrefer";
 import {
+  ensureInboundPeerContact,
   findContactIdByPeerPubkey,
   silentlyUpsertContactArkFromChat,
 } from "./contactPeer";
@@ -48,7 +49,14 @@ function resolveContactId(
     const hit = contacts.find((c) => c.id === hint);
     if (hit) return hit.id;
   }
-  return null;
+  // No mutual contact yet — create a provisional peer so inbound messages
+  // (and push deep-links) still land in a thread the recipient can open.
+  try {
+    return ensureInboundPeerContact(peerPubkey);
+  } catch (e) {
+    console.warn("[basic] chat ingest: ensure inbound peer failed", e);
+    return null;
+  }
 }
 
 /** Freeze Fiat caption at ingest (receive) time when viewer is in Fiat Mode. */
@@ -207,6 +215,14 @@ export async function ingestChatEnvelope(opts: {
     case "basic.wallet.chat.payment_receipt": {
       // Peer's "out" is our "in" and vice versa.
       const direction = envelope.direction === "out" ? "in" : "out";
+      // Auto-store / update the peer's ark when they paid us (or sent a receipt).
+      if (
+        direction === "in" &&
+        envelope.payerArk &&
+        envelope.payerArk.trim().startsWith("ark")
+      ) {
+        silentlyUpsertContactArkFromChat(contactId, envelope.payerArk);
+      }
       let fiatCaption: string | null = null;
       let status: "paid" | "arriving" | "converting" = "paid";
       if (direction === "in") {

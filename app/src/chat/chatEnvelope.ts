@@ -136,6 +136,10 @@ export function parseChatEnvelope(raw: string): ChatEnvelope | null {
         if (r.rail !== "arkade" && r.rail !== "lightning" && r.rail !== "onchain") {
           return null;
         }
+        const payerArk =
+          typeof r.payerArk === "string" && r.payerArk.trim().startsWith("ark")
+            ? r.payerArk.trim()
+            : undefined;
         return {
           v: 1,
           type: "basic.wallet.chat.payment_receipt",
@@ -147,6 +151,7 @@ export function parseChatEnvelope(raw: string): ChatEnvelope | null {
           rail: r.rail,
           relatedRequestId:
             typeof r.relatedRequestId === "string" ? r.relatedRequestId : undefined,
+          payerArk,
           sentAt,
           threadContactHint: hint,
         };

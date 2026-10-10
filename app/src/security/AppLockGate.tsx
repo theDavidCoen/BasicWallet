@@ -92,24 +92,30 @@ export function AppLockGate({ children }: { children: ReactNode }) {
     setBusy(true);
     setError(null);
     beginPresencePrompt();
+    // Warm PIN availability in parallel — never block the system bio sheet.
+    const pinPromise = refreshPinAvailable();
     try {
-      const pinSet = await refreshPinAvailable();
-      const bio = await getOsBiometricsStatus();
-      if (!bio.available) {
-        if (pinSet) {
-          setMode("pin");
-          return;
-        }
-        setError(t("privacy.bioOffNoPin"));
-        return;
-      }
-      // Always disable OS/Knox device-PIN fallback. App PIN is in-app only.
+      // Fire OS prompt immediately. Do not await hasHardware/isEnrolled first
+      // (those round-trips often delay the modal by seconds on cold tap).
       const result = await LocalAuthentication.authenticateAsync({
         promptMessage: t("privacy.unlockPrompt"),
         cancelLabel: t("common.cancel"),
+        // Always disable OS/Knox device-PIN fallback. App PIN is in-app only.
         disableDeviceFallback: true,
       });
+      const pinSet = await pinPromise;
       if (!result.success) {
+        // If biometrics are actually unavailable, prefer PIN / honest error.
+        const bio = await getOsBiometricsStatus();
+        if (!bio.available) {
+          if (pinSet) {
+            setMode("pin");
+            setError(null);
+            return;
+          }
+          setError(t("privacy.bioOffNoPin"));
+          return;
+        }
         setError(t("privacy.authFailed"));
         // After cancel/fail, offer our PIN pad when configured.
         if (pinSet) setMode("pin");
@@ -136,7 +142,8 @@ export function AppLockGate({ children }: { children: ReactNode }) {
     setUnlocked(false);
     setMode("bio");
     setError(null);
-    await refreshPinAvailable();
+    // Do not await pin refresh before the bio sheet — warm in background.
+    void refreshPinAvailable();
     if (!autoPromptedRef.current) {
       autoPromptedRef.current = true;
       await tryBiometrics();

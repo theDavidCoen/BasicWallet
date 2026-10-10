@@ -209,6 +209,8 @@ function finalizeChatPayPaid(opts: {
   walletId: string;
   skipLocalSpend?: boolean;
   skipReceipt?: boolean;
+  /** Resolved in background so receipt publish can attach payer ark. */
+  payerArkPromise?: Promise<string | null>;
 }): void {
   if (!opts.skipLocalSpend) {
     opts.applyLocalSpend?.(opts.amountSats);
@@ -281,15 +283,25 @@ function finalizeChatPayPaid(opts: {
   }
 
   if (!opts.skipReceipt) {
-    void publishPaymentReceipt({
-      contactId: opts.contactId,
-      paymentId: opts.paymentId,
-      amountSats: opts.amountSats,
-      memo: opts.memo,
-      txid: opts.txid.startsWith("pending:") ? undefined : opts.txid,
-      rail: "arkade",
-      relatedRequestId: opts.requestId ?? undefined,
-    });
+    void (async () => {
+      let payerArk: string | undefined;
+      try {
+        const a = opts.payerArkPromise ? await opts.payerArkPromise : null;
+        if (a && isValidArkAddress(a)) payerArk = a.trim();
+      } catch {
+        /* optional */
+      }
+      await publishPaymentReceipt({
+        contactId: opts.contactId,
+        paymentId: opts.paymentId,
+        amountSats: opts.amountSats,
+        memo: opts.memo,
+        txid: opts.txid.startsWith("pending:") ? undefined : opts.txid,
+        rail: "arkade",
+        relatedRequestId: opts.requestId ?? undefined,
+        payerArk,
+      });
+    })();
   }
 
   opts.bumpActivity?.();
@@ -349,6 +361,13 @@ export async function executeChatPay(opts: {
 
   const paymentId = opts.paymentId?.trim() || newChatId("pay");
 
+  // Warm payer ark in parallel with the spend so the receipt can auto-store it
+  // on the peer's contact (recipient learns the payer's current ark…).
+  const payerArkPromise = opts.hooks
+    .getFreshArkAddress()
+    .then((a) => (a && isValidArkAddress(a) ? a.trim() : null))
+    .catch(() => null);
+
   // Exclude the brand-new bubble — historical −amount Activity must not
   // false-skip a deliberate send (Xiaomi α92: chat paid, Home/Activity not).
   const already = findAlreadySettledOutbound({
@@ -382,6 +401,7 @@ export async function executeChatPay(opts: {
       networkId,
       walletId,
       skipLocalSpend: true,
+      payerArkPromise,
     });
     return {
       txid: already.txid,
@@ -478,6 +498,7 @@ export async function executeChatPay(opts: {
         networkId,
         walletId,
         skipReceipt,
+        payerArkPromise,
       });
     };
 
@@ -563,6 +584,7 @@ export async function executeChatPay(opts: {
         networkId,
         walletId,
         skipLocalSpend: !thisBubble,
+        payerArkPromise,
       });
       settledTxid = recovered.txid;
       return {
@@ -594,6 +616,7 @@ export async function executeChatPay(opts: {
         bumpActivity: opts.hooks.bumpActivity,
         networkId,
         walletId,
+        payerArkPromise,
       });
       settledTxid = txid;
       return { txid, paymentId, address: dest.address };
