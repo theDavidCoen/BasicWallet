@@ -4,13 +4,15 @@
  */
 
 import { useNavigation } from "@react-navigation/native";
-import { Pressable, ScrollView, StyleSheet, Text } from "react-native";
+import { ScrollView, StyleSheet } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import {
+  ScreenTitle,
+  SectionHeader,
+  SettingsRow,
+} from "../components/ui";
 import { useI18n } from "../i18n";
-import { colors } from "../theme/colors";
-
-const DANGER = "#E07070";
 
 type NavTarget =
   | "Language"
@@ -82,42 +84,34 @@ export function SettingsScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={styles.title}>{t("settings.title")}</Text>
+      <ScreenTitle style={styles.title}>{t("settings.title")}</ScreenTitle>
       <ScrollView style={styles.list} contentContainerStyle={{ paddingBottom: 40 }}>
         {BLOCKS.map((block, i) => {
           if (block.kind === "section") {
             const title = t(block.titleKey);
             return (
-              <Text
-                key={`sec-${block.titleKey}`}
-                style={[styles.section, i === 0 && styles.sectionFirst]}
-              >
+              <SectionHeader key={`sec-${block.titleKey}`} first={i === 0}>
                 {title}
-              </Text>
+              </SectionHeader>
             );
           }
           const { row } = block;
           const label = t(row.labelKey);
           return (
-            <Pressable
+            <SettingsRow
               key={row.labelKey}
-              style={styles.row}
-              onPress={() => {
-                if (!row.on) return;
-                navigation.navigate(row.on);
-              }}
-            >
-              <Text
-                style={[
-                  styles.rowLabel,
-                  row.danger && styles.dangerLabel
-                ]}>
-                {label}
-              </Text>
-              <Text style={[styles.chevron, row.danger && styles.dangerLabel]}>
-                {row.stub ? t("common.soon") : "›"}
-              </Text>
-            </Pressable>
+              label={label}
+              danger={row.danger}
+              stub={row.stub}
+              stubLabel={t("common.soon")}
+              onPress={
+                row.on
+                  ? () => {
+                      navigation.navigate(row.on!);
+                    }
+                  : undefined
+              }
+            />
           );
         })}
       </ScrollView>
@@ -127,43 +121,8 @@ export function SettingsScreen() {
 
 const styles = StyleSheet.create({
   title: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 20,
-    color: colors.fg,
-    textAlign: "center",
     marginVertical: 16,
+    marginBottom: 16,
   },
   list: { flex: 1 },
-  section: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 12,
-    color: colors.hint,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    marginTop: 28,
-    marginBottom: 8,
-    paddingHorizontal: 4,
-  },
-  sectionFirst: { marginTop: 8 },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  rowLabel: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 16,
-    color: colors.fg,
-    flex: 1,
-    paddingRight: 12,
-  },
-  chevron: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 16,
-    color: colors.caption,
-  },
-  dangerLabel: { color: DANGER },
 });

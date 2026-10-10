@@ -1,4 +1,6 @@
 import { colors } from "../theme/colors";
+import { radii } from "../theme/radii";
+import { fonts } from "../theme/typography";
 import { StyleSheet } from "react-native";
 
 export const ui = StyleSheet.create({
@@ -17,14 +19,14 @@ export const ui = StyleSheet.create({
     paddingHorizontal: 28,
   },
   title: {
-    fontFamily: "JetBrainsMono_700Bold",
+    fontFamily: fonts.bold,
     fontSize: 20,
     color: colors.fg,
     textAlign: "center",
     marginBottom: 12,
   },
   caption: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 14,
     color: colors.caption,
     textAlign: "center",
@@ -32,7 +34,7 @@ export const ui = StyleSheet.create({
     marginBottom: 8,
   },
   hint: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 12,
     color: colors.hint,
     textAlign: "center",
@@ -40,18 +42,18 @@ export const ui = StyleSheet.create({
   },
   primaryBtn: {
     backgroundColor: colors.fg,
-    borderRadius: 10,
+    borderRadius: radii.sm,
     paddingVertical: 16,
     alignItems: "center",
     marginTop: 12,
   },
   primaryBtnText: {
-    fontFamily: "JetBrainsMono_700Bold",
+    fontFamily: fonts.bold,
     fontSize: 15,
-    color: "#000000",
+    color: colors.onPrimary,
   },
   secondaryBtn: {
-    borderRadius: 10,
+    borderRadius: radii.sm,
     borderWidth: 1,
     borderColor: colors.border,
     paddingVertical: 16,
@@ -59,13 +61,13 @@ export const ui = StyleSheet.create({
     marginTop: 12,
   },
   secondaryBtnText: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 15,
     color: colors.fg,
   },
   card: {
     backgroundColor: colors.card,
-    borderRadius: 12,
+    borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.fg,
     padding: 16,
@@ -73,20 +75,20 @@ export const ui = StyleSheet.create({
   },
   cardMuted: {
     backgroundColor: colors.card,
-    borderRadius: 12,
+    borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.border,
     padding: 16,
     marginTop: 12,
   },
   cardTitle: {
-    fontFamily: "JetBrainsMono_700Bold",
+    fontFamily: fonts.bold,
     fontSize: 16,
     color: colors.fg,
     marginBottom: 8,
   },
   footerLink: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 14,
     color: colors.caption,
     textAlign: "center",

@@ -8,7 +8,6 @@ import * as ScreenCapture from "expo-screen-capture";
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   Alert,
   AppState,
   type AppStateStatus,
@@ -20,6 +19,7 @@ import {
 } from "react-native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, Caption, ScreenTitle } from "../components/ui";
 import { mnemonicFromEntropy, randomEntropy32 } from "../onboarding/mnemonicFromEntropy";
 import {
   enableEncryptedBackup,
@@ -39,7 +39,6 @@ import { uploadHomeBackupCipher } from "../nostr/homeServerWebdav";
 import { requireUserPresence } from "../security/userPresence";
 import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
-import { ui } from "../theme/ui";
 import { useWallet } from "../wallet/WalletProvider";
 import { listWallets } from "../account/walletRegistry";
 import { getNetworkConfig } from "../config/network";
@@ -236,8 +235,8 @@ export function BackupRecapScreen() {
         contentContainerStyle={{ paddingBottom: 40 }}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={ui.title}>{t("backup.recapTitle")}</Text>
-        <Text style={ui.caption}>{t("backup.recapCaption")}</Text>
+        <ScreenTitle>{t("backup.recapTitle")}</ScreenTitle>
+        <Caption>{t("backup.recapCaption")}</Caption>
 
         <Pressable
           style={styles.revealRow}
@@ -275,17 +274,13 @@ export function BackupRecapScreen() {
           </View>
         ) : null}
 
-        <Pressable
-          style={[ui.primaryBtn, { marginTop: 28 }, busy && { opacity: 0.6 }]}
-          disabled={busy}
+        <Button
+          style={{ marginTop: 28 }}
+          busy={busy}
           onPress={() => void onEnable()}
         >
-          {busy ? (
-            <ActivityIndicator color="#000" />
-          ) : (
-            <Text style={ui.primaryBtnText}>{enableLabel}</Text>
-          )}
-        </Pressable>
+          {enableLabel}
+        </Button>
       </ScrollView>
     </ScreenChrome>
   );
