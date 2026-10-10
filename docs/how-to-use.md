@@ -18,6 +18,7 @@ Settings → About shows version + git commit for the APK you installed.
 ## Basic features
 
 ### Home
+- After the first wallet on a fresh install, a short **onboarding tour** (Spotlight) introduces Home gestures; Skip or finish once (factory reset does not replay it).
 
 - **Balance** — tap the amount to hide/show; tap **⇅** (when not in Fiat Mode) to cycle sats / fiat display units.
 - **Receive / Send** — primary actions under the balance.
@@ -210,11 +211,9 @@ Both phones need Bluetooth (and nearby-devices) permission. Stay within range un
 - Share a contact over Nostr gift wraps when identity is set.
 
 ### Closed-app alerts (Android)
-
-- Settings → **Notifications** → **Closed-app alerts** (opt-in, off by default; needs a Nostr identity).
-- Opaque tray only (“New Pay message”) for Pay in Chat / contact share while Basic is closed — never amounts, memos, or addresses.
-- Tap the tray → unlock → Chat thread (or Chat & Pay hub if the contact is unknown). Classic Bitcoin receives still catch up when you open the app (no tray).
-- Prefer swipe-away over system **Force stop**; some OEMs block tray wake after force-stop.
+- Opt-in opaque tray wake for Pay in Chat / contact share while the app is closed (never amounts or memos).
+- First open of **Chat & Pay** may ask once to enable notifications; Enable or Not now is remembered. After Not now, a compact notif OFF badge opens Settings → Notifications.
+- Tapping a tray notification unlocks (if needed) and opens the chat thread for that sender.
 
 ### Lightning
 
@@ -268,7 +267,7 @@ Switching network can reset wallet engine state — backup first.
 
 ## Get the APK
 
-Latest: **[v0.9.5](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.9.5)** (arm64-v8a).
+Latest: **[v0.9.6](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.9.6)** (arm64-v8a).
 
 All releases: [theDavidCoen/BasicWallet/releases](https://github.com/theDavidCoen/BasicWallet/releases). Prefer arm64-v8a builds + verify SHA256 (and PGP on the checksum when present).
 
