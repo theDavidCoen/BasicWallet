@@ -23,7 +23,8 @@ import { notifyAppUnlocked } from "./appLockEvents";
 import {
   beginPresencePrompt,
   endPresencePrompt,
-  isPresencePromptActive,
+  isPresencePromptInFlight,
+  resetPresencePrompt,
   subscribeAppUnlockFromPresence,
 } from "./presencePrompt";
 import {
@@ -46,6 +47,8 @@ const BIO_AUTH_WATCHDOG_MS = 12_000;
  * Unlock reliability (Xiaomi): no auto-prompt (user taps the circle). While an
  * OS auth is in flight, extra taps queue at most one retry after settle — never
  * cancelAuthenticate mid-flight (that made rapid taps cancel each other).
+ * Warm resume: abort stale auth + clear latches on true background so the
+ * circle is interactive immediately when the app returns.
  */
 export function AppLockGate({ children }: { children: ReactNode }) {
   const insets = useSafeAreaInsets();
@@ -57,6 +60,8 @@ export function AppLockGate({ children }: { children: ReactNode }) {
   const [unlocked, setUnlocked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Remount bio touchable after resume — MIUI can leave a dead responder. */
+  const [lockEpoch, setLockEpoch] = useState(0);
   const unlockingRef = useRef(false);
   /** Sync unlock for AppState — setState alone races with presence end → second bio. */
   const unlockedRef = useRef(false);
@@ -119,6 +124,20 @@ export function AppLockGate({ children }: { children: ReactNode }) {
     },
     [clearBioWatchdog],
   );
+
+  /** True Home / recents background: kill hung authenticateAsync + all latches. */
+  const abortStaleBioAuth = useCallback(() => {
+    bioAttemptRef.current += 1;
+    pendingUserRetryRef.current = false;
+    clearBioWatchdog();
+    unlockingRef.current = false;
+    setBusy(false);
+    setError(null);
+    resetPresencePrompt();
+    void LocalAuthentication.cancelAuthenticate().catch(() => {
+      /* optional */
+    });
+  }, [clearBioWatchdog]);
 
   const runBiometrics = useCallback(async () => {
     if (unlockingRef.current || unlockedRef.current) return;
@@ -222,13 +241,16 @@ export function AppLockGate({ children }: { children: ReactNode }) {
   }, [runBiometrics]);
 
   const enterLocked = useCallback(() => {
-    if (unlockedRef.current) return;
+    // Always present a clean Unlock UI (warm resume may leave busy/latches).
+    unlockedRef.current = false;
+    pendingUserRetryRef.current = false;
+    unlockingRef.current = false;
     setUnlocked(false);
+    setBusy(false);
     setMode("bio");
     setError(null);
-    pendingUserRetryRef.current = false;
     void refreshPinAvailable();
-    // No auto-prompt: reliability over cleverness (Xiaomi OEM + tap races).
+    // No auto-prompt on cold start or resume — user taps the circle.
   }, [refreshPinAvailable]);
 
   // Cold start only (this gate mounts after wallet bootstrap). Mid-session
@@ -273,23 +295,35 @@ export function AppLockGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const onState = (next: AppStateStatus) => {
-      // Biometric system UI often backgrounds the app; ignore while our prompt is open.
-      if (isPresencePromptActive()) return;
+      // OS biometric chrome often goes active→inactive only. Do not cancel auth
+      // there (would dismiss the sheet). True Home/recents uses "background".
+      if (next === "inactive") {
+        return;
+      }
 
       if (next === "background") {
+        // Always abort — hung authenticateAsync + presence grace were leaving
+        // Unlock with unlockingRef/busy stuck after warm resume (Xiaomi).
+        abortStaleBioAuth();
         lockBackupPassphraseSession();
         if (lockEnabled && hasWallet) {
           unlockedRef.current = false;
-          pendingUserRetryRef.current = false;
           setUnlocked(false);
           setMode("bio");
+          setLockEpoch((n) => n + 1);
         }
         return;
       }
+
       if (next === "active") {
-        if (isPresencePromptActive()) return;
+        // Sheet still up: leave the in-flight auth alone.
+        if (isPresencePromptInFlight()) return;
+
+        // Fresh interactive Unlock after Home/recents (clear grace + latches).
+        abortStaleBioAuth();
         if (lockEnabled && hasWallet && !unlockedRef.current) {
           enterLocked();
+          setLockEpoch((n) => n + 1);
           return;
         }
         if (hasWallet && !lockEnabled) {
@@ -299,7 +333,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
     };
     const sub = AppState.addEventListener("change", onState);
     return () => sub.remove();
-  }, [hasWallet, lockEnabled, enterLocked]);
+  }, [hasWallet, lockEnabled, enterLocked, abortStaleBioAuth]);
 
   if (!ready) return <>{children}</>;
 
@@ -353,6 +387,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
                 touch target during auth.
               */}
               <TouchableOpacity
+                key={`bio-hit-${lockEpoch}`}
                 style={styles.bioHit}
                 activeOpacity={1}
                 delayPressIn={0}
