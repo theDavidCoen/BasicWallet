@@ -24,6 +24,7 @@ import {
   ensureAppLogsHydrated,
   getAppLogCount,
 } from "../diagnostics/appLog";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -31,6 +32,7 @@ const DANGER = "#E07070";
 
 export function LogsScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
   const [busy, setBusy] = useState<"save" | "share" | "clear" | null>(null);
 
   async function onSaveCsv() {
@@ -38,7 +40,7 @@ export function LogsScreen() {
     try {
       await ensureAppLogsHydrated();
       if (getAppLogCount() === 0) {
-        Alert.alert("No logs", "Nothing captured yet.");
+        Alert.alert(t("logs.noLogsTitle"), t("logs.noLogsBody"));
         return;
       }
       const csv = buildAppLogsCsv();
@@ -48,7 +50,7 @@ export function LogsScreen() {
         title: filename,
       });
     } catch (e) {
-      Alert.alert("Save failed", e instanceof Error ? e.message : String(e));
+      Alert.alert(t("logs.saveFailed"), e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
     }
@@ -59,7 +61,7 @@ export function LogsScreen() {
     try {
       await ensureAppLogsHydrated();
       if (getAppLogCount() === 0) {
-        Alert.alert("No logs", "Nothing captured yet.");
+        Alert.alert(t("logs.noLogsTitle"), t("logs.noLogsBody"));
         return;
       }
       const raw = buildAppLogsRaw();
@@ -69,17 +71,17 @@ export function LogsScreen() {
         title: filename,
       });
     } catch (e) {
-      Alert.alert("Share failed", e instanceof Error ? e.message : String(e));
+      Alert.alert(t("logs.shareFailed"), e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
     }
   }
 
   function onClear() {
-    Alert.alert("Clear logs?", "Remove all buffered lines from this device.", [
-      { text: "Cancel", style: "cancel" },
+    Alert.alert(t("logs.clearTitle"), t("logs.clearBody"), [
+      { text: t("common.cancel"), style: "cancel" },
       {
-        text: "Clear",
+        text: t("logs.clearAction"),
         style: "destructive",
         onPress: () => {
           void (async () => {
@@ -88,7 +90,10 @@ export function LogsScreen() {
               await clearAppLogs();
               navigation.goBack();
             } catch (e) {
-              Alert.alert("Clear failed", e instanceof Error ? e.message : String(e));
+              Alert.alert(
+                t("logs.clearFailed"),
+                e instanceof Error ? e.message : String(e),
+              );
               setBusy(null);
             }
           })();
@@ -99,12 +104,8 @@ export function LogsScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={ui.title}>LOGS</Text>
-      <Text style={ui.caption}>
-        Session diagnostics for the whole app (UI, Arkade, Lightning, network). Seeds,
-        private keys, nsec/npub, xpub/xprv and similar never enter the buffer. Don't
-        trust, verify.
-      </Text>
+      <Text style={ui.title}>{t("logs.title")}</Text>
+      <Text style={ui.caption}>{t("logs.caption")}</Text>
 
       <View style={styles.actions}>
         <Pressable
@@ -115,10 +116,10 @@ export function LogsScreen() {
           {busy === "save" ? (
             <ActivityIndicator color="#000" />
           ) : (
-            <Text style={styles.primaryText}>Save logs</Text>
+            <Text style={styles.primaryText}>{t("logs.save")}</Text>
           )}
         </Pressable>
-        <Text style={styles.actionHint}>CSV (timestamp, level, message)</Text>
+        <Text style={styles.actionHint}>{t("logs.saveHint")}</Text>
 
         <Pressable
           style={[styles.secondary, busy != null && styles.disabled]}
@@ -128,10 +129,10 @@ export function LogsScreen() {
           {busy === "share" ? (
             <ActivityIndicator color={colors.fg} />
           ) : (
-            <Text style={styles.secondaryText}>Share logs</Text>
+            <Text style={styles.secondaryText}>{t("logs.share")}</Text>
           )}
         </Pressable>
-        <Text style={styles.actionHint}>Raw text (one line per entry)</Text>
+        <Text style={styles.actionHint}>{t("logs.shareHint")}</Text>
 
         <Pressable
           style={[styles.dangerBtn, busy != null && styles.disabled]}
@@ -141,7 +142,7 @@ export function LogsScreen() {
           {busy === "clear" ? (
             <ActivityIndicator color={DANGER} />
           ) : (
-            <Text style={styles.dangerText}>Clear logs</Text>
+            <Text style={styles.dangerText}>{t("logs.clear")}</Text>
           )}
         </Pressable>
       </View>

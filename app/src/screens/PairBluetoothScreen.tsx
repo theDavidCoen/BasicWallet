@@ -42,6 +42,7 @@ import {
   endPresencePrompt,
 } from "../security/presencePrompt";
 import { requireUserPresence } from "../security/userPresence";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 import { useWallet } from "../wallet/WalletProvider";
@@ -62,6 +63,7 @@ type PendingHello = {
 
 export function PairBluetoothScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
   const { hasWallet } = useWallet();
   const [phase, setPhase] = useState<Phase>("idle");
   const [status, setStatus] = useState("");
@@ -79,7 +81,7 @@ export function PairBluetoothScreen() {
       abortRef.current?.abort();
       void pending?.session.cancel();
       void cancelPairBle();
-      passphraseWaitRef.current?.reject(new Error("Pairing cancelled"));
+      passphraseWaitRef.current?.reject(new Error(t("pair.cancelled")));
       passphraseWaitRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- unmount cleanup only
@@ -88,7 +90,7 @@ export function PairBluetoothScreen() {
   function promptBackupPassphraseForPair(): Promise<string> {
     setPassphraseSheetOpen(true);
     setPhase("passphrase");
-    setStatus("Enter your backup passphrase to continue pairing…");
+    setStatus(t("pair.statusPassphrase"));
     return new Promise((resolve, reject) => {
       passphraseWaitRef.current = { resolve, reject };
     });
@@ -106,12 +108,12 @@ export function PairBluetoothScreen() {
     const wait = passphraseWaitRef.current;
     if (!wait) return;
     passphraseWaitRef.current = null;
-    wait.reject(new Error("Pairing cancelled — backup passphrase was not entered."));
+    wait.reject(new Error(t("pair.cancelledPass")));
   }
 
   async function onStart() {
     if (!hasWallet) {
-      Alert.alert("No wallet", "Create or restore a wallet before pairing.");
+      Alert.alert(t("pair.noWalletTitle"), t("pair.noWalletBody"));
       return;
     }
     abortRef.current?.abort();
@@ -121,19 +123,19 @@ export function PairBluetoothScreen() {
     approveLock.current = false;
     setPending(null);
     setPhase("scanning");
-    setStatus("Requesting Bluetooth permission…");
+    setStatus(t("pair.statusBlePerm"));
     const permitted = await ensureBlePermissions();
     if (ac.signal.aborted) return;
     if (!permitted) {
       setPhase("idle");
       setStatus("");
       Alert.alert(
-        "Bluetooth permission required",
-        "Allow Bluetooth (and nearby devices) for Basic so it can scan and pair.",
+        t("pair.blePermTitle"),
+        t("pair.blePermBody"),
       );
       return;
     }
-    setStatus("Scanning for nearby Basic…");
+    setStatus(t("pair.statusScanning"));
     try {
       const session = await scanRequesterHello({
         onStatus: setStatus,
@@ -152,13 +154,13 @@ export function PairBluetoothScreen() {
 
       setPending({ session, lobbyId });
       setPhase("confirm");
-      setStatus("Compare this code with the new phone, then approve.");
+      setStatus(t("pair.statusCompare"));
     } catch (e) {
       if (ac.signal.aborted) return;
       setPhase("idle");
       setStatus("");
       setPending(null);
-      Alert.alert("Pairing failed", e instanceof Error ? e.message : "Unknown error");
+      Alert.alert(t("pair.failedTitle"), e instanceof Error ? e.message : t("common.unknownError"));
       await cancelPairBle();
     }
   }
@@ -168,7 +170,7 @@ export function PairBluetoothScreen() {
     if (phase !== "confirm") return;
     approveLock.current = true;
     setPhase("approving");
-    setStatus("Confirm with biometrics…");
+    setStatus(t("pair.statusBio"));
 
     const ac = abortRef.current ?? new AbortController();
     abortRef.current = ac;
@@ -176,17 +178,17 @@ export function PairBluetoothScreen() {
 
     try {
       const auth = await requireUserPresence(
-        `Approve pairing code ${lobbyId}? This unlocks your wallets on the other device.`,
+        t("pair.authApprove", { code: lobbyId }),
       );
       if (!auth.ok) {
         approveLock.current = false;
         setPhase("confirm");
-        setStatus("Compare this code with the new phone, then approve.");
+        setStatus(t("pair.statusCompare"));
         return;
       }
 
       setPhase("sending");
-      setStatus("Building encrypted login…");
+      setStatus(t("pair.statusBuilding"));
       // Keep AppLock from clearing the RAM session while we reload SecureStore
       // and pack (UV bio sheet often backgrounds the app on Xiaomi/Samsung).
       beginPresencePrompt();
@@ -200,10 +202,10 @@ export function PairBluetoothScreen() {
           console.warn(
             "[basic] pair: backup ON but SecureStore passphrase empty — prompting Device 1",
           );
-          setStatus("Enter your backup passphrase…");
+          setStatus(t("pair.statusEnterPass"));
           passphrase = await promptBackupPassphraseForPair();
           setPhase("sending");
-          setStatus("Building encrypted login…");
+          setStatus(t("pair.statusBuilding"));
         }
         void passphrase;
         pkg = await assemblePairLoginPackage();
@@ -221,9 +223,9 @@ export function PairBluetoothScreen() {
         signal: ac.signal,
       });
       setPhase("done");
-      setStatus("Paired. Opening Home…");
+      setStatus(t("pair.statusDone"));
       setPending(null);
-      Alert.alert("Paired", "The other phone confirmed login.");
+      Alert.alert(t("pair.pairedTitle"), t("pair.pairedBody"));
       navigation.navigate("Home");
     } catch (e) {
       if (ac.signal.aborted) return;
@@ -234,7 +236,7 @@ export function PairBluetoothScreen() {
       setStatus("");
       setPending(null);
       await session.cancel().catch(() => undefined);
-      Alert.alert("Pairing failed", e instanceof Error ? e.message : "Unknown error");
+      Alert.alert(t("pair.failedTitle"), e instanceof Error ? e.message : t("common.unknownError"));
       await cancelPairBle();
     }
   }
@@ -243,7 +245,7 @@ export function PairBluetoothScreen() {
     abortRef.current?.abort();
     approveLock.current = false;
     if (passphraseWaitRef.current) {
-      passphraseWaitRef.current.reject(new Error("Pairing cancelled"));
+      passphraseWaitRef.current.reject(new Error(t("pair.cancelled")));
       passphraseWaitRef.current = null;
     }
     setPassphraseSheetOpen(false);
@@ -264,22 +266,11 @@ export function PairBluetoothScreen() {
   return (
     <ScreenChrome logoScale={0.77}>
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
-        <Text style={ui.title}>PAIR WITH BLUETOOTH</Text>
-        <Text style={ui.caption}>
-          Move this account to a nearby phone on the Basic welcome screen.
-          {"\n"}Wallets, nsec, and the backup passphrase (if cloud backup is on)
-          transfer over encrypted Bluetooth. Passkeys are not transferred.
-          {"\n"}If this phone already has Nostr or Home backup, the new phone
-          gets backup fully active. If not, the new phone will remind you to
-          set one up.
-        </Text>
+        <Text style={ui.title}>{t("pair.title")}</Text>
+        <Text style={ui.caption}>{t("pair.caption")}</Text>
 
         <View style={ui.cardMuted}>
-          {[
-            "Open Basic on the new device and tap pair.",
-            "Grant Bluetooth, then match the code shown there.",
-            "Tap Start scan here, confirm the same code, then biometrics.",
-          ].map((line) => (
+          {[t("pair.step1"), t("pair.step2"), t("pair.step3")].map((line) => (
             <Text key={line} style={[ui.caption, { textAlign: "left", marginBottom: 10 }]}>
               · {line}
             </Text>
@@ -288,13 +279,11 @@ export function PairBluetoothScreen() {
 
         {pending && (confirming || approving || needingPassphrase) ? (
           <View style={styles.codeCard}>
-            <Text style={styles.codeLabel}>Pairing code</Text>
+            <Text style={styles.codeLabel}>{t("pair.codeLabel")}</Text>
             <Text style={styles.codeValue} selectable>
               {pending.lobbyId}
             </Text>
-            <Text style={styles.codeHint}>
-              Must match the code on the new phone before you approve.
-            </Text>
+            <Text style={styles.codeHint}>{t("pair.codeHint")}</Text>
           </View>
         ) : null}
 
@@ -314,7 +303,7 @@ export function PairBluetoothScreen() {
               {approving || needingPassphrase ? (
                 <ActivityIndicator color="#000" />
               ) : (
-                <Text style={ui.primaryBtnText}>Approve this code</Text>
+                <Text style={ui.primaryBtnText}>{t("pair.approve")}</Text>
               )}
             </Pressable>
             <Pressable
@@ -322,7 +311,7 @@ export function PairBluetoothScreen() {
               onPress={onCancel}
               disabled={sending && !needingPassphrase}
             >
-              <Text style={ui.secondaryBtnText}>Cancel</Text>
+              <Text style={ui.secondaryBtnText}>{t("common.cancel")}</Text>
             </Pressable>
           </>
         ) : (
@@ -335,13 +324,13 @@ export function PairBluetoothScreen() {
               {scanning || sending ? (
                 <ActivityIndicator color="#000" />
               ) : (
-                <Text style={ui.primaryBtnText}>Start scan</Text>
+                <Text style={ui.primaryBtnText}>{t("pair.startScan")}</Text>
               )}
             </Pressable>
 
             {scanning || sending ? (
               <Pressable style={ui.secondaryBtn} onPress={onCancel}>
-                <Text style={ui.secondaryBtnText}>Cancel</Text>
+                <Text style={ui.secondaryBtnText}>{t("common.cancel")}</Text>
               </Pressable>
             ) : null}
           </>

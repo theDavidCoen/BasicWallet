@@ -26,12 +26,14 @@ import {
 } from "../nostr/identityStore";
 import { saveAndPublishNostrProfile } from "../nostr/profileMetadata";
 import { midEllipsis } from "../nostr/keys";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
 /** Penpot 05d — Nostr identity hub. */
 export function NostrIdentityScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [identity, setIdentity] = useState<NostrPublicIdentity | null>(null);
   const [backup, setBackup] = useState<BackupPackageMeta | null>(null);
@@ -67,14 +69,14 @@ export function NostrIdentityScreen() {
       const result = await saveAndPublishNostrProfile(profile);
       const failN = result.failedRelays.length;
       Alert.alert(
-        "Saved",
+        t("nostr.savedTitle"),
         failN > 0
-          ? `Profile published to ${result.okRelays.length} relay(s); ${failN} failed. Contacts with your npub can refresh your public fields.`
-          : `Profile published to ${result.okRelays.length} relay(s). Contacts with your npub can refresh your public fields.`,
+          ? t("nostr.savedPartial", { ok: result.okRelays.length, fail: failN })
+          : t("nostr.savedOk", { ok: result.okRelays.length }),
       );
       await reload();
     } catch (e) {
-      Alert.alert("Could not save", e instanceof Error ? e.message : "Unknown error");
+      Alert.alert(t("nostr.saveFailed"), e instanceof Error ? e.message : t("common.unknownError"));
     } finally {
       setSaving(false);
     }
@@ -94,8 +96,8 @@ export function NostrIdentityScreen() {
       await Share.share({ message: identity.npub });
     } catch (e) {
       Alert.alert(
-        "Could not share",
-        e instanceof Error ? e.message : "Unknown error",
+        t("nostr.shareFailed"),
+        e instanceof Error ? e.message : t("common.unknownError"),
       );
     }
   }
@@ -112,22 +114,20 @@ export function NostrIdentityScreen() {
     return (
       <ScreenChrome logoScale={0.77}>
         <ScrollView contentContainerStyle={styles.scroll}>
-          <Text style={ui.title}>NOSTR</Text>
-          <Text style={ui.caption}>
-            Social identity, payments,{"\n"}and encrypted multi-wallet backup.
-          </Text>
-          <Text style={[ui.hint, { marginTop: 24 }]}>No identity on this device yet.</Text>
+          <Text style={ui.title}>{t("nostr.title")}</Text>
+          <Text style={ui.caption}>{t("nostr.caption")}</Text>
+          <Text style={[ui.hint, { marginTop: 24 }]}>{t("nostr.noIdentity")}</Text>
           <Pressable
             style={ui.primaryBtn}
             onPress={() => navigation.navigate("GenerateIdentityWarning")}
           >
-            <Text style={ui.primaryBtnText}>Generate new identity</Text>
+            <Text style={ui.primaryBtnText}>{t("nostr.generate")}</Text>
           </Pressable>
           <Pressable
             style={ui.secondaryBtn}
             onPress={() => navigation.navigate("ImportNsecWarning")}
           >
-            <Text style={ui.secondaryBtnText}>Import nsec</Text>
+            <Text style={ui.secondaryBtnText}>{t("nostr.importNsec")}</Text>
           </Pressable>
         </ScrollView>
       </ScreenChrome>
@@ -137,56 +137,56 @@ export function NostrIdentityScreen() {
   return (
     <ScreenChrome logoScale={0.77}>
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        <Text style={ui.title}>NOSTR</Text>
-        <Text style={ui.caption}>
-          Social identity, payments,{"\n"}and encrypted multi-wallet backup.
-        </Text>
+        <Text style={ui.title}>{t("nostr.title")}</Text>
+        <Text style={ui.caption}>{t("nostr.caption")}</Text>
 
         <Pressable
           style={styles.field}
           onPress={() => void onCopyNpub()}
           accessibilityRole="button"
-          accessibilityHint="Copies npub to clipboard"
+          accessibilityHint={t("nostr.copyNpubA11y")}
         >
-          <Text style={styles.label}>npub</Text>
+          <Text style={styles.label}>{t("nostr.npub")}</Text>
           <Text style={styles.value}>{midEllipsis(identity.npub, 12, 8)}</Text>
-          <Text style={styles.copyHint}>{npubCopied ? "Copied" : "Tap to copy"}</Text>
+          <Text style={styles.copyHint}>
+            {npubCopied ? t("common.copied") : t("common.tapToCopy")}
+          </Text>
         </Pressable>
         <Editable
-          label="NIP-05"
+          label={t("nostr.nip05")}
           value={profile.nip05}
           onChange={(nip05) => setProfile((p) => ({ ...p, nip05 }))}
-          placeholder="you@basic.wallet"
+          placeholder={t("nostr.phNip05")}
         />
         <Editable
-          label="Display name"
+          label={t("nostr.displayName")}
           value={profile.displayName}
           onChange={(displayName) => setProfile((p) => ({ ...p, displayName }))}
-          placeholder="Basic"
+          placeholder={t("nostr.phDisplayName")}
         />
         <Editable
-          label="Lightning address"
+          label={t("nostr.lightningAddress")}
           value={profile.lightningAddress}
           onChange={(lightningAddress) => setProfile((p) => ({ ...p, lightningAddress }))}
-          placeholder="you@basic.wallet"
+          placeholder={t("nostr.phLightning")}
         />
         <Editable
-          label="About"
+          label={t("nostr.about")}
           value={profile.about}
           onChange={(about) => setProfile((p) => ({ ...p, about }))}
-          placeholder="Payments over Nostr"
+          placeholder={t("nostr.phAbout")}
         />
         <Editable
-          label="Picture URL"
+          label={t("nostr.pictureUrl")}
           value={profile.picture}
           onChange={(picture) => setProfile((p) => ({ ...p, picture }))}
-          placeholder="https://…"
+          placeholder={t("nostr.phPicture")}
         />
         <Editable
-          label="Website"
+          label={t("nostr.website")}
           value={profile.website}
           onChange={(website) => setProfile((p) => ({ ...p, website }))}
-          placeholder="https://…"
+          placeholder={t("nostr.phWebsite")}
         />
 
         <Pressable
@@ -194,30 +194,35 @@ export function NostrIdentityScreen() {
           disabled={saving}
           onPress={() => void onSaveProfile()}
         >
-          <Text style={ui.secondaryBtnText}>{saving ? "Saving…" : "Save profile"}</Text>
+          <Text style={ui.secondaryBtnText}>
+            {saving ? t("nostr.saving") : t("nostr.saveProfile")}
+          </Text>
         </Pressable>
-        <Text style={[ui.hint, { marginTop: 8 }]}>
-          Save publishes your full public profile (kind 0) to Nostr relays. Private
-          contact notes on other people’s devices are never part of this.
-        </Text>
+        <Text style={[ui.hint, { marginTop: 8 }]}>{t("nostr.saveHint")}</Text>
 
-        <NavRow label="Export nsec" onPress={() => navigation.navigate("ExportNsecWarning")} />
-        <NavRow label="Import nsec" onPress={() => navigation.navigate("ImportNsecWarning")} />
         <NavRow
-          label="Encrypted backup"
-          value={backup?.enabled ? "On" : "Off"}
+          label={t("nostr.exportNsec")}
+          onPress={() => navigation.navigate("ExportNsecWarning")}
+        />
+        <NavRow
+          label={t("nostr.importNsec")}
+          onPress={() => navigation.navigate("ImportNsecWarning")}
+        />
+        <NavRow
+          label={t("nostr.encryptedBackup")}
+          value={backup?.enabled ? t("nostr.backupOn") : t("nostr.backupOff")}
           onPress={() => navigation.navigate("AdvancedBackup")}
         />
 
         <Pressable style={[ui.primaryBtn, { marginTop: 16 }]} onPress={() => void onShareNpub()}>
-          <Text style={ui.primaryBtnText}>Share npub</Text>
+          <Text style={ui.primaryBtnText}>{t("nostr.shareNpub")}</Text>
         </Pressable>
 
         <Text
           style={[ui.footerLink, { marginTop: 8 }]}
           onPress={() => navigation.navigate("GenerateIdentityWarning")}
         >
-          Generate new identity
+          {t("nostr.generate")}
         </Text>
       </ScrollView>
     </ScreenChrome>

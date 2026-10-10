@@ -13,6 +13,12 @@ export {
   type PushNotificationPrefs,
 } from "./prefs";
 export {
+  readChatHubNotifPrompt,
+  writeChatHubNotifPrompt,
+  type ChatHubNotifPrompt,
+  type ChatHubNotifPromptChoice,
+} from "./chatHubNotifPrompt";
+export {
   registerPushWithNotifier,
   unregisterPushFromNotifier,
   unregisterPushBestEffort,
@@ -23,4 +29,7 @@ export {
   getPermissionStatus,
   lastKnownFcmToken,
 } from "./token";
-export { bindPushNotificationListeners } from "./pushBootstrap";
+export {
+  bindPushNotificationListeners,
+  flushPendingPushWake,
+} from "./pushBootstrap";

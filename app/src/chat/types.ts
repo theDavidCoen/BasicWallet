@@ -71,6 +71,8 @@ export type PaymentReceiptEnvelope = ChatEnvelopeBase & {
   txid?: string;
   rail: "arkade" | "lightning" | "onchain";
   relatedRequestId?: string;
+  /** Payer's current ark address so the recipient can auto-store / update it. */
+  payerArk?: string;
 };
 
 export type ChatEnvelope =

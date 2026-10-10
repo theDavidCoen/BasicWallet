@@ -1,0 +1,11 @@
+{
+  "title": "ARCHIVED WALLETS",
+  "caption": "Passkey wallets you removed stay archived across fresh installs.\nRestore puts them back in your wallet list.",
+  "deviceOnlyNote": "Archive applies to passkey-derived wallets. Device-only wallets are removed permanently unless you have a backup.",
+  "empty": "No archived wallets.",
+  "index": "Index %{index}",
+  "restore": "Restore",
+  "restoreTitle": "Restore wallet?",
+  "restoreBody": "%{label} will return to your wallet list.",
+  "restoreFailed": "Could not restore"
+}

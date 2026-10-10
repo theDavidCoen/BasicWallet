@@ -12,6 +12,7 @@ import { ScreenChrome } from "../components/ScreenChrome";
 import { ContactPickList } from "../components/contacts/ContactPickList";
 import { filterContacts } from "../contacts/contactSearch";
 import { syncContactsDirectoryNow } from "../contacts/contactsNostrSync";
+import { isDirectoryContact } from "../chat/contactPeer";
 import { listContacts } from "../contacts/contactStore";
 import type { Contact } from "../contacts/types";
 import { useI18n } from "../i18n";
@@ -27,7 +28,8 @@ export function ContactsListScreen() {
   const [query, setQuery] = useState("");
 
   const reload = useCallback(() => {
-    setContacts(listContacts());
+    // Hide provisional inbound peers until Add (or forever after Deny).
+    setContacts(listContacts().filter(isDirectoryContact));
   }, []);
 
   useFocusEffect(

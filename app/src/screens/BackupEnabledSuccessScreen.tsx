@@ -7,6 +7,7 @@ import { useEffect } from "react";
 import { Text, View } from "react-native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { useI18n } from "../i18n";
+import { armHomeTourIfNeeded } from "../home/homeTour";
 import { markWarmupSeen } from "../wallet/warmupSeen";
 import { ui } from "../theme/ui";
 
@@ -20,10 +21,17 @@ export function BackupEnabledSuccessScreen() {
 
   useEffect(() => {
     void markWarmupSeen();
-    const timer = setTimeout(() => {
+    let cancelled = false;
+    void (async () => {
+      await armHomeTourIfNeeded();
+      if (cancelled) return;
+      await new Promise((r) => setTimeout(r, 2000));
+      if (cancelled) return;
       navigation.reset({ index: 0, routes: [{ name: "Home" }] });
-    }, 2000);
-    return () => clearTimeout(timer);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [navigation]);
 
   return (

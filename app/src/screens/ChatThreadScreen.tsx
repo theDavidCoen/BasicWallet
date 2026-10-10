@@ -31,6 +31,7 @@ import {
 } from "react-native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { ChatInviteCard } from "../components/chat/ChatInviteCard";
 import { ChatPaymentCard } from "../components/chat/ChatPaymentCard";
 import { ChatRequestCard } from "../components/chat/ChatRequestCard";
 import { ChatTextBubble } from "../components/chat/ChatTextBubble";
@@ -61,6 +62,8 @@ import {
   contactArkAddress,
   contactCanReceiveLn,
   contactHasNostrId,
+  isChatInvitePending,
+  setChatInviteState,
 } from "../chat/contactPeer";
 import {
   executeChatPay,
@@ -123,8 +126,10 @@ export function ChatThreadScreen() {
   const { height: windowHeight } = useWindowDimensions();
   const contactId = route.params.contactId;
   const seedDraft = route.params.seedDraft;
-  const contact = useMemo(() => getContact(contactId), [contactId]);
+  const [contact, setContact] = useState(() => getContact(contactId));
   const isBot = isCursorBotContact(contact);
+  const showInviteCard =
+    !isBot && contact != null && isChatInvitePending(contact);
   const {
     wallet,
     selectedWallet,
@@ -178,9 +183,20 @@ export function ChatThreadScreen() {
     // Keep first paint cheap: only read messages after the transition starts.
     startTransition(() => {
       ensureChatThread(contactId);
+      setContact(getContact(contactId));
       setMessages(listChatMessages(contactId));
       setArchived(getChatThread(contactId)?.archived === true);
     });
+  }, [contactId]);
+
+  const onInviteAdd = useCallback(() => {
+    setChatInviteState(contactId, "accepted");
+    setContact(getContact(contactId));
+  }, [contactId]);
+
+  const onInviteDeny = useCallback(() => {
+    setChatInviteState(contactId, "denied");
+    setContact(getContact(contactId));
   }, [contactId]);
 
   useEffect(() => {
@@ -240,6 +256,7 @@ export function ChatThreadScreen() {
   useEffect(() => {
     return subscribeChatStore(() => {
       startTransition(() => {
+        setContact(getContact(contactId));
         setMessages(listChatMessages(contactId));
         setArchived(getChatThread(contactId)?.archived === true);
         // Keep unread at 0 while this thread is open (live inbound).
@@ -941,6 +958,14 @@ export function ChatThreadScreen() {
             </>
           )}
         </View>
+
+        {showInviteCard ? (
+          <ChatInviteCard
+            peerName={name}
+            onAdd={onInviteAdd}
+            onDeny={onInviteDeny}
+          />
+        ) : null}
 
         <FlatList
           ref={listRef}

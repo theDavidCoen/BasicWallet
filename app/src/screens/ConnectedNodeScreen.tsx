@@ -21,6 +21,7 @@ import { probeLndHub } from "../lightning/lndhub";
 import { loadLndHubCredentials } from "../lightning/lndhubCredentials";
 import { loadLndRestCredentials } from "../lightning/lndCredentials";
 import { lndRestHostLabel, probeLndRest } from "../lightning/lndRest";
+import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 import { useWallet } from "../wallet/WalletProvider";
@@ -39,6 +40,7 @@ type LnStatus = {
 
 export function ConnectedNodeScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
   const { selectedWallet } = useWallet();
   const network = getNetworkConfig();
   const [ln, setLn] = useState<LnStatus>({ state: "loading" });
@@ -83,7 +85,7 @@ export function ConnectedNodeScreen() {
                 state: "missing",
                 walletLabel,
                 tag,
-                error: "No Lightning credentials for this wallet.",
+                error: t("node.noCreds"),
               });
             }
             return;
@@ -113,7 +115,7 @@ export function ConnectedNodeScreen() {
               state: "error",
               walletLabel,
               tag,
-              error: e instanceof Error ? e.message : "Connection failed",
+              error: e instanceof Error ? e.message : t("node.connectionFailed"),
             });
           }
         }
@@ -121,17 +123,15 @@ export function ConnectedNodeScreen() {
       return () => {
         cancelled = true;
       };
-    }, [isLightning, selectedWallet?.id, selectedWallet?.label, selectedWallet?.tag]),
+    }, [isLightning, selectedWallet?.id, selectedWallet?.label, selectedWallet?.tag, t]),
   );
 
   return (
     <ScreenChrome logoScale={0.77}>
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-        <Text style={ui.title}>CONNECTED NODE</Text>
+        <Text style={ui.title}>{t("node.title")}</Text>
         <Text style={ui.caption}>
-          {isLightning
-            ? "Lightning connection for the selected wallet."
-            : "Arkade operator and chain explorer for this network."}
+          {isLightning ? t("node.captionLn") : t("node.captionArkade")}
         </Text>
 
         {isLightning ? (
@@ -150,7 +150,7 @@ export function ConnectedNodeScreen() {
             networkId={network.id}
             arkServerUrl={network.arkServerUrl}
             esploraUrl={network.esploraUrl}
-            walletLabel={selectedWallet?.label ?? "Personal"}
+            walletLabel={selectedWallet?.label ?? t("common.personal")}
           />
         )}
       </ScrollView>
@@ -165,21 +165,22 @@ function LightningPanel({
   ln: LnStatus;
   onRemove: () => void;
 }) {
+  const { t } = useI18n();
   if (ln.state === "loading") {
     return (
       <View style={ui.card}>
         <ActivityIndicator color={colors.fg} />
-        <Text style={[styles.meta, { marginTop: 12 }]}>Checking connection…</Text>
+        <Text style={[styles.meta, { marginTop: 12 }]}>{t("node.checking")}</Text>
       </View>
     );
   }
 
   const statusLine =
     ln.state === "ok"
-      ? "Connected · Lightning"
+      ? t("node.statusOkLn")
       : ln.state === "error"
-        ? "Unreachable · Lightning"
-        : "Not configured · Lightning";
+        ? t("node.statusErrLn")
+        : t("node.statusMissingLn");
 
   return (
     <>
@@ -192,13 +193,13 @@ function LightningPanel({
         {ln.alias ? (
           <Text style={[styles.alias, { marginTop: 12 }]}>{ln.alias}</Text>
         ) : null}
-        {ln.host ? <Text style={styles.meta}>Host · {ln.host}</Text> : null}
+        {ln.host ? <Text style={styles.meta}>{t("node.host", { host: ln.host })}</Text> : null}
         {ln.provider ? (
-          <Text style={styles.meta}>Provider · {ln.provider}</Text>
+          <Text style={styles.meta}>{t("node.provider", { provider: ln.provider })}</Text>
         ) : null}
         {ln.role ? (
           <Text style={styles.meta}>
-            Key · {ln.role === "admin" ? "admin (send + receive)" : "invoice-only (receive)"}
+            {ln.role === "admin" ? t("node.keyAdmin") : t("node.keyInvoice")}
           </Text>
         ) : null}
         {ln.state === "ok" && ln.balanceSats != null ? (
@@ -206,20 +207,17 @@ function LightningPanel({
             <Text style={styles.bal}>
               {ln.balanceSats.toLocaleString("en-US")} sats
             </Text>
-            <Text style={styles.caption}>Available balance</Text>
+            <Text style={styles.caption}>{t("node.availableBalance")}</Text>
           </>
         ) : null}
         {ln.error ? <Text style={styles.err}>{ln.error}</Text> : null}
       </View>
 
-      <Text style={[ui.hint, { marginTop: 20 }]}>
-        To connect another Lightning node, use{"\n"}
-        Add Wallet → Connect Lightning Node.
-      </Text>
+      <Text style={[ui.hint, { marginTop: 20 }]}>{t("node.hintLn")}</Text>
 
       {ln.state !== "missing" || ln.walletLabel ? (
         <Pressable style={[ui.secondaryBtn, { marginTop: 24 }]} onPress={onRemove}>
-          <Text style={ui.secondaryBtnText}>Remove this connection</Text>
+          <Text style={ui.secondaryBtnText}>{t("node.remove")}</Text>
         </Pressable>
       ) : null}
     </>
@@ -239,29 +237,27 @@ function ArkadePanel({
   esploraUrl: string;
   walletLabel: string;
 }) {
+  const { t } = useI18n();
   return (
     <>
       <View style={ui.card}>
-        <Text style={styles.status}>Connected · Arkade</Text>
+        <Text style={styles.status}>{t("node.statusOkArkade")}</Text>
         <Text style={styles.alias}>{walletLabel}</Text>
-        <Text style={styles.meta}>Network · {networkLabel}</Text>
-        <Text style={styles.meta}>Id · {networkId}</Text>
+        <Text style={styles.meta}>{t("node.network", { label: networkLabel })}</Text>
+        <Text style={styles.meta}>{t("node.id", { id: networkId })}</Text>
 
-        <Text style={[styles.section, { marginTop: 20 }]}>Operator (ASP)</Text>
+        <Text style={[styles.section, { marginTop: 20 }]}>{t("node.operator")}</Text>
         <Text style={styles.url} selectable>
           {arkServerUrl}
         </Text>
 
-        <Text style={[styles.section, { marginTop: 16 }]}>Explorer (Esplora)</Text>
+        <Text style={[styles.section, { marginTop: 16 }]}>{t("node.explorer")}</Text>
         <Text style={styles.url} selectable>
           {esploraUrl}
         </Text>
       </View>
 
-      <Text style={[ui.hint, { marginTop: 20 }]}>
-        Change network or ASP under Settings → Arkade → Network.{"\n"}
-        Lightning nodes are added from Add Wallet.
-      </Text>
+      <Text style={[ui.hint, { marginTop: 20 }]}>{t("node.hintArkade")}</Text>
     </>
   );
 }

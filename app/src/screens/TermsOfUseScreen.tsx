@@ -10,6 +10,7 @@ import {
   View,
 } from "react-native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
+import { useI18n } from "../i18n";
 import { mnemonicFromEntropy, randomEntropy32 } from "../onboarding/mnemonicFromEntropy";
 import { requireUserPresence } from "../security/userPresence";
 import { colors } from "../theme/colors";
@@ -17,26 +18,15 @@ import { ui } from "../theme/ui";
 import { setMnemonicSource } from "../wallet/mnemonicMeta";
 import { useWallet } from "../wallet/WalletProvider";
 
-/** Shared onboarding Terms of Use body (passkey + device-only). */
-export const TERMS_OF_USE_BODY =
-  "You alone control your keys and backups.\n" +
-  "If you lose them with no backup, your bitcoin is gone.\n\n" +
-  "Imported wallets are not automatically synced. Set up a Nostr or Home Server backup sync.\n\n" +
-  "Basic is zero-knowledge:\n" +
-  "• We cannot see your balances or transactions\n" +
-  "• We cannot move, freeze, or recover your funds\n" +
-  "• We cannot reset a lost passkey or passphrase\n" +
-  "• We never store your seed or mnemonic";
-
 export function TermsOfUseScreen() {
   const navigation = useNavigation<RootNav>();
   const route = useRoute<RouteProp<RootStackParamList, "TermsOfUse">>();
+  const { t } = useI18n();
   const { provisionFromMnemonic } = useWallet();
   const [busy, setBusy] = useState(false);
   const mode = route.params.mode;
   const isPasskey = mode === "passkey";
   const isDev = mode === "dev-csprng";
-  const isDeviceOnly = mode === "device-only" || isDev;
 
   async function onContinue() {
     if (mode === "device-only") {
@@ -48,7 +38,7 @@ export function TermsOfUseScreen() {
     }
 
     if (isPasskey) {
-      // Detect first (cross-device). PasskeyProgress also offers create when needed.
+      // Detect first (cross-device). PasskeyProgress auto-creates when none found.
       navigation.navigate("PasskeyProgress", { mode: "detect" });
       return;
     }
@@ -56,9 +46,9 @@ export function TermsOfUseScreen() {
     setBusy(true);
     try {
       if (isDev) {
-        const auth = await requireUserPresence("Confirm device unlock to create a dev wallet");
+        const auth = await requireUserPresence(t("onboarding.termsDevAuth"));
         if (!auth.ok) {
-          Alert.alert("Authentication required", auth.reason);
+          Alert.alert(t("onboarding.termsAuthRequired"), auth.reason);
           return;
         }
         const entropy = await randomEntropy32();
@@ -68,12 +58,24 @@ export function TermsOfUseScreen() {
 
       navigation.replace("Ready");
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Unknown error";
-      Alert.alert("Could not open wallet", msg);
+      const msg = e instanceof Error ? e.message : t("common.unknownError");
+      Alert.alert(t("onboarding.passkeyOpenFailedTitle"), msg);
     } finally {
       setBusy(false);
     }
   }
+
+  const responsibilitiesBody =
+    t("onboarding.termsRespLine1") + "\n" + t("onboarding.termsRespLine2");
+
+  const zkBody =
+    t("onboarding.termsZkLine1") +
+    "\n" +
+    t("onboarding.termsZkLine2") +
+    "\n" +
+    t("onboarding.termsZkLine3") +
+    "\n" +
+    t("onboarding.termsZkLine4");
 
   return (
     <View style={ui.root}>
@@ -82,45 +84,41 @@ export function TermsOfUseScreen() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={ui.title}>TERMS OF USE</Text>
-        <Text style={ui.caption}>
-          {isPasskey
-            ? "Passkey syncs across your devices.\nRead before you continue."
-            : "This wallet stays on this device unless\nyou add another backup."}
-        </Text>
+        <Text style={ui.title}>{t("onboarding.termsTitle")}</Text>
 
         {isPasskey ? (
           <View style={ui.card}>
-            <Text style={ui.cardTitle}>Across your devices</Text>
-            <Text style={ui.caption}>
-              iCloud Keychain, Google Password{"\n"}Manager, or 3rd party password manager.
+            <Text style={ui.cardTitle}>{t("onboarding.termsAcrossTitle")}</Text>
+            <Text style={[ui.caption, styles.cardBody]}>
+              {t("onboarding.termsAcrossSync")}
+              {"\n"}
+              {t("onboarding.termsAcrossManagers")}
             </Text>
           </View>
         ) : (
           <View style={ui.cardMuted}>
-            <Text style={ui.cardTitle}>This device only</Text>
-            <Text style={ui.caption}>
-              Dies with the phone. Enable cloud sync{"\n"}or export 24 words / Nostr package.
+            <Text style={ui.cardTitle}>{t("onboarding.termsDeviceOnlyTitle")}</Text>
+            <Text style={[ui.caption, styles.cardBody]}>
+              {t("onboarding.termsDeviceOnlyBody")}
+              {"\n"}
+              {t("onboarding.termsDeviceOnlyRisk")}
             </Text>
           </View>
         )}
 
+        <View style={ui.card}>
+          <Text style={ui.cardTitle}>{t("onboarding.termsZkTitle")}</Text>
+          <Text style={[ui.caption, styles.cardBody]}>{zkBody}</Text>
+        </View>
+
         {isDev ? (
-          <Text style={[ui.hint, { marginTop: 12 }]}>
-            DEV: CSPRNG entropy (not passkey PRF). Mnemonic goes to Keystore only.
-          </Text>
+          <Text style={[ui.hint, { marginTop: 12 }]}>{t("onboarding.termsDevHint")}</Text>
         ) : null}
 
         <View style={styles.termsBlock}>
-          <Text style={styles.termsHeading}>Your responsibilities</Text>
-          <Text style={styles.termsBody}>{TERMS_OF_USE_BODY}</Text>
+          <Text style={styles.termsHeading}>{t("onboarding.termsReadBefore")}</Text>
+          <Text style={styles.termsBody}>{responsibilitiesBody}</Text>
         </View>
-
-        {isDeviceOnly && !isDev ? (
-          <Text style={[ui.hint, { marginTop: 16 }]}>
-            Never mark “safe” without another{"\n"}backup path (Nostr / home server / 24 words).
-          </Text>
-        ) : null}
 
         <Pressable
           style={[ui.primaryBtn, { marginTop: 28 }, busy && { opacity: 0.6 }]}
@@ -130,7 +128,7 @@ export function TermsOfUseScreen() {
           {busy ? (
             <ActivityIndicator color="#000" />
           ) : (
-            <Text style={ui.primaryBtnText}>I understand · Continue</Text>
+            <Text style={ui.primaryBtnText}>{t("onboarding.termsContinue")}</Text>
           )}
         </Pressable>
       </ScrollView>
@@ -141,6 +139,10 @@ export function TermsOfUseScreen() {
 const styles = StyleSheet.create({
   scroll: {
     paddingBottom: 24,
+  },
+  cardBody: {
+    textAlign: "left",
+    marginBottom: 0,
   },
   termsBlock: {
     marginTop: 20,

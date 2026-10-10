@@ -75,13 +75,13 @@ export function CursorAgentSettingsScreen() {
     if (busy) return;
     const key = draftKey.trim();
     if (!key) {
-      Alert.alert("Cursor API key", "Paste your Cursor API key from the Dashboard.");
+      Alert.alert(t("cursor.alertEmptyTitle"), t("cursor.alertEmptyBody"));
       return;
     }
     if (!(await hasNostrIdentity())) {
       Alert.alert(
-        "Nostr identity required",
-        "Create or import a Nostr identity first (Settings → Nostr identity).",
+        t("cursor.alertNeedNostrTitle"),
+        t("cursor.alertNeedNostrBody"),
       );
       return;
     }
@@ -100,11 +100,11 @@ export function CursorAgentSettingsScreen() {
       setBotNpub(act.botNpub);
       setEnabled(true);
       Alert.alert(
-        "Cursor agent active",
-        "Ask Cursor is ready in Chat & Pay. Shopping MCPs (e.g. Bitrefill) must already be configured on your Cursor Cloud / Dashboard.",
+        t("cursor.alertActiveTitle"),
+        t("cursor.alertActiveBody"),
       );
     } catch (e) {
-      Alert.alert("Save failed", e instanceof Error ? e.message : "Unknown error");
+      Alert.alert(t("cursor.saveFailed"), e instanceof Error ? e.message : t("common.unknownError"));
     } finally {
       setBusy(false);
     }
@@ -112,12 +112,12 @@ export function CursorAgentSettingsScreen() {
 
   function onDisable() {
     Alert.alert(
-      "Disable Cursor agent?",
-      "Stops the bot watcher, removes Ask Cursor from Chat & Pay, and wipes the bot key and your Cursor API key from this device.",
+      t("cursor.disableTitle"),
+      t("cursor.disableBody"),
       [
-        { text: "Cancel", style: "cancel" },
+        { text: t("common.cancel"), style: "cancel" },
         {
-          text: "Disable & wipe",
+          text: t("cursor.disableWipe"),
           style: "destructive",
           onPress: () => {
             void (async () => {
@@ -131,8 +131,8 @@ export function CursorAgentSettingsScreen() {
                 setDraftKey("");
               } catch (e) {
                 Alert.alert(
-                  "Disable failed",
-                  e instanceof Error ? e.message : "Unknown error",
+                  t("cursor.disableFailed"),
+                  e instanceof Error ? e.message : t("common.unknownError"),
                 );
               } finally {
                 setBusy(false);
@@ -147,34 +147,27 @@ export function CursorAgentSettingsScreen() {
   async function copyBotNpub() {
     if (!botNpub) return;
     await Clipboard.setStringAsync(botNpub);
-    Alert.alert("Copied", "Bot npub copied. Strangers messaging this npub are ignored.");
+    Alert.alert(t("cursor.copiedTitle"), t("cursor.copiedBody"));
   }
 
   return (
     <ScreenChrome logoScale={0.77}>
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
         <Text style={ui.title}>{t("cursor.title")}</Text>
-        <Text style={ui.caption}>
-          Paste your Cursor API key to activate Ask Cursor in Chat & Pay. Bitrefill
-          and other shopping MCPs stay on your Cursor Cloud / Dashboard — Basic never
-          asks for those keys.
-        </Text>
+        <Text style={ui.caption}>{t("cursor.caption")}</Text>
 
         {!ready ? (
           <ActivityIndicator color={colors.fg} style={{ marginTop: 24 }} />
         ) : (
           <>
             {!hasIdentity ? (
-              <Text style={styles.warn}>
-                Create a Nostr identity first (Settings → Nostr identity). Only that
-                npub can talk to your bot.
-              </Text>
+              <Text style={styles.warn}>{t("cursor.needIdentity")}</Text>
             ) : null}
 
             {savedMask ? (
               <View style={styles.statusCard}>
                 <Text style={styles.statusLabel}>
-                  {enabled ? "Active" : "Key saved"}
+                  {enabled ? t("cursor.active") : t("cursor.keySaved")}
                 </Text>
                 <Text style={styles.statusValue}>{savedMask}</Text>
                 {savedEmail ? (
@@ -187,7 +180,7 @@ export function CursorAgentSettingsScreen() {
             <TextInput
               value={draftKey}
               onChangeText={setDraftKey}
-              placeholder={savedMask ? "Paste new key to replace…" : "Paste API key…"}
+              placeholder={savedMask ? t("cursor.phReplace") : t("cursor.phPaste")}
               placeholderTextColor={colors.hint}
               style={styles.input}
               autoCapitalize="none"
@@ -201,13 +194,13 @@ export function CursorAgentSettingsScreen() {
               onPress={() => void onSave()}
               disabled={busy}
               accessibilityRole="button"
-              accessibilityLabel="Save Cursor API key and activate bot"
+              accessibilityLabel={t("cursor.saveA11y")}
             >
               {busy ? (
                 <ActivityIndicator color="#000" />
               ) : (
                 <Text style={ui.primaryBtnText}>
-                  {savedMask ? "Validate & update" : "Save & activate"}
+                  {savedMask ? t("cursor.saveUpdate") : t("cursor.saveActivate")}
                 </Text>
               )}
             </Pressable>
@@ -234,18 +227,12 @@ export function CursorAgentSettingsScreen() {
                 <Text style={styles.fieldLabel}>{t("cursor.botNpub")}</Text>
                 <Pressable onPress={() => void copyBotNpub()}>
                   <Text style={styles.botNpub}>{midEllipsis(botNpub, 16, 10)}</Text>
-                  <Text style={styles.statusSub}>
-                    Tap to copy. Only your activating npub can converse; others get
-                    silence.
-                  </Text>
+                  <Text style={styles.statusSub}>{t("cursor.botCopyHint")}</Text>
                 </Pressable>
               </View>
             ) : null}
 
-            <Text style={styles.note}>
-              You pay Cursor Cloud usage for agents started with your key. The bot
-              replies while Basic is open or recently resumed (same family as chat).
-            </Text>
+            <Text style={styles.note}>{t("cursor.note")}</Text>
 
             {enabled || savedMask ? (
               <Pressable
@@ -253,7 +240,7 @@ export function CursorAgentSettingsScreen() {
                 onPress={onDisable}
                 disabled={busy}
                 accessibilityRole="button"
-                accessibilityLabel="Disable Cursor agent"
+                accessibilityLabel={t("cursor.disableA11y")}
               >
                 <Text style={styles.dangerText}>
                   {t("cursor.disableWipe")}

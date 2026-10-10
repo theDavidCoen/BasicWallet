@@ -16,6 +16,7 @@ import {
 } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { useI18n } from "../i18n";
 import {
   listArchivedPasskeyChildren,
   type PasskeyChildEntry,
@@ -27,6 +28,7 @@ import { getMnemonicSource } from "../wallet/mnemonicMeta";
 
 export function ArchivedWalletsScreen() {
   const navigation = useNavigation<RootNav>();
+  const { t } = useI18n();
   const { restoreArchivedPasskeyWallet } = useWallet();
   const [entries, setEntries] = useState<PasskeyChildEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,12 +54,12 @@ export function ArchivedWalletsScreen() {
 
   async function onRestore(entry: PasskeyChildEntry) {
     Alert.alert(
-      "Restore wallet?",
-      `${entry.label} will return to your wallet list.`,
+      t("archived.restoreTitle"),
+      t("archived.restoreBody", { label: entry.label }),
       [
-        { text: "Cancel", style: "cancel" },
+        { text: t("common.cancel"), style: "cancel" },
         {
-          text: "Restore",
+          text: t("archived.restore"),
           onPress: () => {
             void (async () => {
               setBusyIndex(entry.index);
@@ -67,8 +69,8 @@ export function ArchivedWalletsScreen() {
                 navigation.navigate("Home");
               } catch (e) {
                 Alert.alert(
-                  "Could not restore",
-                  e instanceof Error ? e.message : "Unknown error",
+                  t("archived.restoreFailed"),
+                  e instanceof Error ? e.message : t("common.unknownError"),
                 );
               } finally {
                 setBusyIndex(null);
@@ -83,31 +85,27 @@ export function ArchivedWalletsScreen() {
   return (
     <ScreenChrome logoScale={0.77}>
       <ScrollView contentContainerStyle={styles.scroll}>
-        <Text style={ui.title}>ARCHIVED WALLETS</Text>
-        <Text style={ui.caption}>
-          Passkey wallets you removed stay archived across fresh installs.{"\n"}
-          Restore puts them back in your wallet list.
-        </Text>
+        <Text style={ui.title}>{t("archived.title")}</Text>
+        <Text style={ui.caption}>{t("archived.caption")}</Text>
 
         {loading ? (
           <ActivityIndicator color={colors.fg} style={{ marginTop: 24 }} />
         ) : !passkeyRoot && entries.length === 0 ? (
           <View style={ui.card}>
-            <Text style={ui.caption}>
-              Archive applies to passkey-derived wallets. Device-only wallets are
-              removed permanently unless you have a backup.
-            </Text>
+            <Text style={ui.caption}>{t("archived.deviceOnlyNote")}</Text>
           </View>
         ) : entries.length === 0 ? (
           <View style={ui.card}>
-            <Text style={ui.caption}>No archived wallets.</Text>
+            <Text style={ui.caption}>{t("archived.empty")}</Text>
           </View>
         ) : (
           entries.map((entry) => (
             <View key={entry.index} style={[ui.card, styles.rowCard]}>
               <View style={styles.rowText}>
                 <Text style={styles.label}>{entry.label}</Text>
-                <Text style={styles.meta}>Index {entry.index}</Text>
+                <Text style={styles.meta}>
+                  {t("archived.index", { index: entry.index })}
+                </Text>
               </View>
               <Pressable
                 style={[ui.secondaryBtn, busyIndex === entry.index && { opacity: 0.6 }]}
@@ -117,7 +115,7 @@ export function ArchivedWalletsScreen() {
                 {busyIndex === entry.index ? (
                   <ActivityIndicator color={colors.fg} />
                 ) : (
-                  <Text style={ui.secondaryBtnText}>Restore</Text>
+                  <Text style={ui.secondaryBtnText}>{t("archived.restore")}</Text>
                 )}
               </Pressable>
             </View>

@@ -1,0 +1,17 @@
+{
+  "title": "LOG",
+  "caption": "Diagnostica di sessione per tutta l’app (UI, Arkade, Lightning, rete). Seed, chiavi private, nsec/npub, xpub/xprv e simili non entrano mai nel buffer. Don't trust, verify.",
+  "save": "Salva log",
+  "saveHint": "CSV (timestamp, livello, messaggio)",
+  "share": "Condividi log",
+  "shareHint": "Testo grezzo (una riga per voce)",
+  "clear": "Cancella log",
+  "noLogsTitle": "Nessun log",
+  "noLogsBody": "Ancora nulla acquisito.",
+  "saveFailed": "Salvataggio non riuscito",
+  "shareFailed": "Condivisione non riuscita",
+  "clearTitle": "Cancellare i log?",
+  "clearBody": "Rimuove tutte le righe in buffer da questo dispositivo.",
+  "clearAction": "Cancella",
+  "clearFailed": "Cancellazione non riuscita"
+}

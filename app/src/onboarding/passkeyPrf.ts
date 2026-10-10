@@ -13,6 +13,14 @@ import * as SecureStore from "expo-secure-store";
 import * as Passkeys from "react-native-passkeys";
 import { PASSKEY_RP_ID, PASSKEY_RP_NAME } from "../config/passkey";
 
+/** Subset of WebAuthn AuthenticatorSelectionCriteria used for create retries. */
+type CreateSelection = {
+  authenticatorAttachment?: "platform" | "cross-platform";
+  residentKey?: "required" | "preferred" | "discouraged";
+  requireResidentKey?: boolean;
+  userVerification?: "required" | "preferred" | "discouraged";
+};
+
 export class PasskeyPrfUnavailableError extends Error {
   constructor(message = "Passkey PRF is not available in this build") {
     super(message);
@@ -25,6 +33,19 @@ export class PasskeyNotFoundError extends Error {
   constructor(message = "No matching passkey found for Basic Wallet") {
     super(message);
     this.name = "PasskeyNotFoundError";
+  }
+}
+
+/**
+ * Credential Manager had no viable create provider (common on OEM skins when
+ * Google Password Manager / passkey provider is off or no account is signed in).
+ */
+export class PasskeyNoCreateOptionError extends Error {
+  constructor(
+    message = "No passkey provider is available to create a passkey on this device.",
+  ) {
+    super(message);
+    this.name = "PasskeyNoCreateOptionError";
   }
 }
 
@@ -81,6 +102,71 @@ function extractPrfFirst(results: { first?: string } | undefined): Uint8Array {
   return raw.slice(0, 32);
 }
 
+function errorText(e: unknown): string {
+  if (e instanceof Error) return `${e.name} ${e.message}`;
+  return String(e);
+}
+
+/** Native module often surfaces the full Java exception via else → e.toString(). */
+export function isNoCreateOptionError(e: unknown): boolean {
+  if (e instanceof PasskeyNoCreateOptionError) return true;
+  const t = errorText(e);
+  return /NoCreateOption|no create options available/i.test(t);
+}
+
+/**
+ * Credential Manager / provider missing or misconfigured — same class of failure
+ * as NoCreateOption (no viable passkey manager on device).
+ * Avoid matching WebAuthn DomError names that merely contain "NotSupported".
+ */
+export function isPasskeyManagerUnavailableError(e: unknown): boolean {
+  if (isNoCreateOptionError(e)) return true;
+  const t = errorText(e);
+  if (/NotConfigured|ProviderConfiguration/i.test(t)) return true;
+  // react-native-passkeys maps CreateCredentialUnsupportedException → "NotSupported"
+  if (/\bNotSupported\b/.test(t) && !/DomError/i.test(t)) return true;
+  return false;
+}
+
+function isUserCancelledError(e: unknown): boolean {
+  return /UserCancelled|cancel/i.test(errorText(e));
+}
+
+function isInterruptedError(e: unknown): boolean {
+  return /Interrupted/i.test(errorText(e));
+}
+
+/**
+ * Map Credential Manager / WebAuthn create failures to user-facing errors
+ * (never raw androidx stack traces in UI).
+ */
+export function mapPasskeyCreateError(e: unknown): Error {
+  if (
+    e instanceof PasskeyNoCreateOptionError ||
+    e instanceof PasskeyPrfUnavailableError ||
+    e instanceof PasskeyNotFoundError
+  ) {
+    return e;
+  }
+  if (isPasskeyManagerUnavailableError(e)) {
+    return new PasskeyNoCreateOptionError(
+      "No passkey provider is available on this device.\n\n" +
+        "Enable Google Password Manager (or another passkey provider) in system settings, " +
+        "sign in to a Google account if needed, then try again.\n\n" +
+        "Or continue without passkey.",
+    );
+  }
+  if (isUserCancelledError(e)) {
+    return new PasskeyPrfUnavailableError("Passkey creation was cancelled.");
+  }
+  if (e instanceof Error && !/androidx\.credentials|CreateCredential/i.test(e.message)) {
+    return e;
+  }
+  return new PasskeyPrfUnavailableError(
+    "Could not create a passkey. Enable a passkey provider (Google Password Manager) and try again.",
+  );
+}
+
 async function getPrfFromAssertion(allowCredentials?: { id: string; type: "public-key" }[]) {
   const challenge = await randomChallengeB64Url();
   const saltB64 = bytesToBase64Url(BASIC_PRF_SALT);
@@ -116,6 +202,11 @@ export async function getExistingPrfEntropy(): Promise<Uint8Array> {
     const entropy = await getPrfFromAssertion();
     if (entropy) return entropy;
   } catch (e) {
+    // Surface missing-provider failures immediately — do not fall through to a
+    // create attempt that will also fail with NoCreateOption.
+    if (isPasskeyManagerUnavailableError(e)) {
+      throw mapPasskeyCreateError(e);
+    }
     console.warn("[basic] discoverable passkey get failed", e);
   }
 
@@ -125,6 +216,9 @@ export async function getExistingPrfEntropy(): Promise<Uint8Array> {
       const entropy = await getPrfFromAssertion([{ id: credentialId, type: "public-key" }]);
       if (entropy) return entropy;
     } catch (e) {
+      if (isPasskeyManagerUnavailableError(e)) {
+        throw mapPasskeyCreateError(e);
+      }
       console.warn("[basic] passkey get with stored id failed", e);
     }
   }
@@ -132,20 +226,29 @@ export async function getExistingPrfEntropy(): Promise<Uint8Array> {
   throw new PasskeyNotFoundError();
 }
 
-/**
- * Explicit first-time create. Caller must only invoke after user confirms “create new”.
- */
-export async function createNewPrfEntropy(): Promise<Uint8Array> {
-  if (!Passkeys.isSupported()) {
-    throw new PasskeyPrfUnavailableError(
-      "Passkeys are not supported on this device. Need a device with platform passkeys.",
-    );
-  }
+/** Platform-bound create — steers Android Credential Manager toward GPM / device unlock. */
+const PLATFORM_CREATE_SELECTION: CreateSelection = {
+  authenticatorAttachment: "platform",
+  residentKey: "required",
+  requireResidentKey: true,
+  userVerification: "required",
+};
 
+/**
+ * Broader create — omit attachment so OEM Credential Manager can offer other
+ * providers when platform-only returns NoCreateOption (seen on OnePlus / OxygenOS).
+ */
+const OPEN_CREATE_SELECTION: CreateSelection = {
+  residentKey: "preferred",
+  requireResidentKey: false,
+  userVerification: "required",
+};
+
+async function createPasskeyCredential(selection: CreateSelection) {
   const challenge = await randomChallengeB64Url();
   const saltB64 = bytesToBase64Url(BASIC_PRF_SALT);
   const userId = await ensureUserIdB64Url();
-  const creation = await Passkeys.create({
+  return Passkeys.create({
     challenge,
     rp: { id: PASSKEY_RP_ID, name: PASSKEY_RP_NAME },
     user: {
@@ -157,16 +260,51 @@ export async function createNewPrfEntropy(): Promise<Uint8Array> {
       { type: "public-key", alg: -7 },
       { type: "public-key", alg: -257 },
     ],
-    // Platform + residentKey steers Android Credential Manager toward password
-    // managers (GPM) instead of the hybrid “use a different device” QR path.
-    authenticatorSelection: {
-      authenticatorAttachment: "platform",
-      residentKey: "required",
-      requireResidentKey: true,
-      userVerification: "required",
-    },
+    authenticatorSelection: selection,
     extensions: { prf: { eval: { first: saltB64 } } },
   });
+}
+
+/**
+ * Explicit first-time create. Caller must only invoke after user confirms “create new”.
+ * Retries with alternate authenticatorSelection when Credential Manager reports no options.
+ */
+export async function createNewPrfEntropy(): Promise<Uint8Array> {
+  if (!Passkeys.isSupported()) {
+    throw new PasskeyPrfUnavailableError(
+      "Passkeys are not supported on this device. Need a device with platform passkeys.",
+    );
+  }
+
+  let creation: Awaited<ReturnType<typeof Passkeys.create>>;
+  try {
+    creation = await createPasskeyCredential(PLATFORM_CREATE_SELECTION);
+  } catch (e) {
+    if (isInterruptedError(e)) {
+      try {
+        creation = await createPasskeyCredential(PLATFORM_CREATE_SELECTION);
+      } catch (e2) {
+        if (isNoCreateOptionError(e2)) {
+          try {
+            creation = await createPasskeyCredential(OPEN_CREATE_SELECTION);
+          } catch (e3) {
+            throw mapPasskeyCreateError(e3);
+          }
+        } else {
+          throw mapPasskeyCreateError(e2);
+        }
+      }
+    } else if (isNoCreateOptionError(e)) {
+      console.warn("[basic] passkey create: no options with platform; retrying open selection");
+      try {
+        creation = await createPasskeyCredential(OPEN_CREATE_SELECTION);
+      } catch (e2) {
+        throw mapPasskeyCreateError(e2);
+      }
+    } else {
+      throw mapPasskeyCreateError(e);
+    }
+  }
 
   if (!creation) {
     throw new PasskeyPrfUnavailableError("Passkey creation was cancelled or failed.");
@@ -176,7 +314,7 @@ export async function createNewPrfEntropy(): Promise<Uint8Array> {
   let results = creation.clientExtensionResults?.prf?.results;
   if (enabled === false && !results?.first) {
     throw new PasskeyPrfUnavailableError(
-        "This password manager does not support WebAuthn PRF (required for Basic). " +
+      "This password manager does not support WebAuthn PRF (required for Basic). " +
         "Enable Google Password Manager as your preferred passkey provider and try again.",
     );
   }

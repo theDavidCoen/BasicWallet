@@ -1,0 +1,11 @@
+{
+  "title": "CARTEIRAS ARQUIVADAS",
+  "caption": "Carteiras passkey removidas ficam arquivadas mesmo após uma instalação nova.\nRestaurar as coloca de volta na lista.",
+  "deviceOnlyNote": "O arquivo vale para carteiras derivadas de passkey. Carteiras só neste dispositivo são removidas permanentemente se você não tiver backup.",
+  "empty": "Nenhuma carteira arquivada.",
+  "index": "Índice %{index}",
+  "restore": "Restaurar",
+  "restoreTitle": "Restaurar carteira?",
+  "restoreBody": "%{label} voltará à lista de carteiras.",
+  "restoreFailed": "Não foi possível restaurar"
+}

@@ -23,6 +23,7 @@ import {
 import {
   queueContactShareWatchBoot,
 } from "../contacts/contactShareWatch";
+import { useHomeTourUiOpen } from "../home/useHomeTourUiOpen";
 import { useWallet } from "../wallet/WalletProvider";
 import { useSheets } from "./SheetHost";
 import { colors } from "../theme/colors";
@@ -82,6 +83,7 @@ export function ChatUnreadBanner({
   const [summary, setSummary] = useState<UnreadChatSummary>(emptySummary);
   const [dismissWatermarkMs, setDismissWatermarkMs] = useState(0);
   const [routeName, setRouteName] = useState<string | undefined>();
+  const homeTourOpen = useHomeTourUiOpen();
 
   const sheetOpen =
     activityOpen ||
@@ -152,7 +154,11 @@ export function ChatUnreadBanner({
     dismissWatermarkMs,
   );
   const hidden =
-    sheetOpen || !bannerEligible || !hasWallet || routeName !== "Home";
+    sheetOpen ||
+    homeTourOpen ||
+    !bannerEligible ||
+    !hasWallet ||
+    routeName !== "Home";
 
   if (hidden) return null;
 

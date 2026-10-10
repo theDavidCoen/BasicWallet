@@ -26,18 +26,26 @@ import {
   resolveDelegateUrl,
   type DelegateSettings,
 } from "../arkade/delegateSettings";
+import { useI18n } from "../i18n";
 import { clearOpenWallet } from "../wallet/hdWallet";
 import { useWallet } from "../wallet/WalletProvider";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
 export function DelegatesScreen() {
+  const { t } = useI18n();
   const network = getNetworkConfig();
   const { selectWallet, selectedWallet } = useWallet();
   const [settings, setSettings] = useState<DelegateSettings | null>(null);
   const [customDraft, setCustomDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [probeLine, setProbeLine] = useState<string | null>(null);
+
+  const formatProbe = useCallback(
+    (info: { fee: number; address: string }) =>
+      t("arkade.probeOk", { fee: info.fee, addr: info.address.slice(0, 18) }),
+    [t],
+  );
 
   const reload = useCallback(() => {
     void (async () => {
@@ -51,12 +59,12 @@ export function DelegatesScreen() {
       }
       try {
         const info = await probeDelegateInfo(url);
-        setProbeLine(`ok · fee ${info.fee} sats · ${info.address.slice(0, 18)}…`);
+        setProbeLine(formatProbe(info));
       } catch (e) {
-        setProbeLine(e instanceof Error ? e.message : "unreachable");
+        setProbeLine(e instanceof Error ? e.message : t("arkade.unreachable"));
       }
     })();
-  }, [network.id]);
+  }, [formatProbe, network.id, t]);
 
   useFocusEffect(
     useCallback(() => {
@@ -78,29 +86,29 @@ export function DelegatesScreen() {
         if (url) {
           try {
             const info = await probeDelegateInfo(url);
-            setProbeLine(`ok · fee ${info.fee} sats · ${info.address.slice(0, 18)}…`);
+            setProbeLine(formatProbe(info));
           } catch (e) {
-            setProbeLine(e instanceof Error ? e.message : "unreachable");
+            setProbeLine(e instanceof Error ? e.message : t("arkade.unreachable"));
           }
         } else {
           setProbeLine(null);
         }
       } catch (e) {
         Alert.alert(
-          "Could not apply",
-          e instanceof Error ? e.message : "Unknown error",
+          t("arkade.applyFailed"),
+          e instanceof Error ? e.message : t("common.unknownError"),
         );
       } finally {
         setBusy(false);
       }
     },
-    [network.id, selectWallet, selectedWallet],
+    [formatProbe, network.id, selectWallet, selectedWallet, t],
   );
 
   if (!settings) {
     return (
       <ScreenChrome logoScale={0.77}>
-        <Text style={ui.title}>DELEGATES</Text>
+        <Text style={ui.title}>{t("arkade.delegatesTitle")}</Text>
         <ActivityIndicator color={colors.fg} style={{ marginTop: 24 }} />
       </ScreenChrome>
     );
@@ -114,16 +122,13 @@ export function DelegatesScreen() {
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ paddingBottom: 40 }}
       >
-        <Text style={ui.title}>DELEGATES</Text>
-        <Text style={ui.caption}>
-          A delegate helps renew expiring VTXOs.{"\n"}
-          Default is the Arkade network delegator.
-        </Text>
+        <Text style={ui.title}>{t("arkade.delegatesTitle")}</Text>
+        <Text style={ui.caption}>{t("arkade.delegatesCaption")}</Text>
 
         <View style={styles.row}>
           <View style={styles.rowText}>
-            <Text style={styles.label}>Use delegate</Text>
-            <Text style={styles.hint}>Off = renew locally when possible</Text>
+            <Text style={styles.label}>{t("arkade.useDelegate")}</Text>
+            <Text style={styles.hint}>{t("arkade.useDelegateHint")}</Text>
           </View>
           <Switch
             value={settings.enabled}
@@ -138,7 +143,7 @@ export function DelegatesScreen() {
           <>
             <View style={styles.row}>
               <View style={styles.rowText}>
-                <Text style={styles.label}>Arkade default</Text>
+                <Text style={styles.label}>{t("arkade.arkadeDefault")}</Text>
                 <Text style={styles.hint} numberOfLines={2}>
                   {defaultUrl}
                 </Text>
@@ -156,7 +161,7 @@ export function DelegatesScreen() {
 
             {!settings.useDefault ? (
               <>
-                <Text style={styles.fieldLabel}>custom server</Text>
+                <Text style={styles.fieldLabel}>{t("arkade.customServer")}</Text>
                 <TextInput
                   value={customDraft}
                   onChangeText={setCustomDraft}
@@ -173,7 +178,7 @@ export function DelegatesScreen() {
                   onPress={() => {
                     const url = normalizeDelegateUrl(customDraft);
                     if (!url) {
-                      Alert.alert("Invalid URL", "Enter a valid http(s) host.");
+                      Alert.alert(t("arkade.invalidUrlTitle"), t("arkade.invalidUrlBody"));
                       return;
                     }
                     void applyAndReopen({
@@ -186,7 +191,7 @@ export function DelegatesScreen() {
                   {busy ? (
                     <ActivityIndicator color="#000" />
                   ) : (
-                    <Text style={ui.primaryBtnText}>Save custom server</Text>
+                    <Text style={ui.primaryBtnText}>{t("arkade.saveCustom")}</Text>
                   )}
                 </Pressable>
               </>
