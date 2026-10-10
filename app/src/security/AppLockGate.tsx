@@ -90,6 +90,13 @@ export function AppLockGate({ children }: { children: ReactNode }) {
     });
   }, [afterUnlock]);
 
+  const releaseBioLatch = useCallback((presenceGraceMs?: number) => {
+    if (presenceGraceMs !== undefined) endPresencePrompt(presenceGraceMs);
+    else endPresencePrompt();
+    setBusy(false);
+    unlockingRef.current = false;
+  }, []);
+
   const tryBiometrics = useCallback(async () => {
     if (unlockingRef.current) return;
     unlockingRef.current = true;
@@ -107,39 +114,59 @@ export function AppLockGate({ children }: { children: ReactNode }) {
         // Always disable OS/Knox device-PIN fallback. App PIN is in-app only.
         disableDeviceFallback: true,
       });
+
+      if (result.success) {
+        // Mark unlocked before clearing presence — ending presence can let an
+        // AppState "active" event re-enter enterLocked (second bio prompt).
+        unlockedRef.current = true;
+        setUnlocked(true);
+        setError(null);
+        setMode("bio");
+        // Grace 0 + latch clear before backup/passphrase (FundsReceived notices).
+        releaseBioLatch(0);
+        await afterUnlock();
+        return;
+      }
+
+      // Fail / cancel: re-enable the circle before pin/status awaits so a
+      // Xiaomi dismiss → retap loop is not swallowed by busy/disabled.
+      releaseBioLatch();
+
+      const err = result.error ?? "";
+      const userDismissed =
+        err === "user_cancel" ||
+        err === "system_cancel" ||
+        err === "app_cancel";
+
       const pinSet = await pinPromise;
-      if (!result.success) {
-        // If biometrics are actually unavailable, prefer PIN / honest error.
-        const bio = await getOsBiometricsStatus();
-        if (!bio.available) {
-          if (pinSet) {
-            setMode("pin");
-            setError(null);
-            return;
-          }
-          setError(t("privacy.bioOffNoPin"));
-          return;
-        }
-        setError(t("privacy.authFailed"));
-        // After cancel/fail, offer our PIN pad when configured.
+
+      if (userDismissed) {
+        // Cancel ≠ hardware off — skip getOsBiometricsStatus on the critical path.
         if (pinSet) setMode("pin");
         return;
       }
-      // Mark unlocked before clearing the presence latch — ending presence can
-      // let an AppState "active" event re-enter enterLocked (second bio prompt).
-      unlockedRef.current = true;
-      setUnlocked(true);
-      setError(null);
-      setMode("bio");
-      // End presence *before* backup/passphrase work so FundsReceived notices work.
-      endPresencePrompt(0);
-      await afterUnlock();
+
+      // Non-cancel failure: check whether biometrics are actually unavailable.
+      const bio = await getOsBiometricsStatus();
+      if (!bio.available) {
+        if (pinSet) {
+          setMode("pin");
+          setError(null);
+          return;
+        }
+        setError(t("privacy.bioOffNoPin"));
+        return;
+      }
+      setError(t("privacy.authFailed"));
+      if (pinSet) setMode("pin");
+    } catch {
+      releaseBioLatch();
+      setError(t("privacy.authFailed"));
     } finally {
-      endPresencePrompt();
-      setBusy(false);
-      unlockingRef.current = false;
+      // Safety if authenticateAsync threw before releaseBioLatch ran.
+      if (unlockingRef.current) releaseBioLatch();
     }
-  }, [afterUnlock, refreshPinAvailable, t]);
+  }, [afterUnlock, refreshPinAvailable, releaseBioLatch, t]);
 
   const enterLocked = useCallback(async () => {
     if (unlockedRef.current) return;
