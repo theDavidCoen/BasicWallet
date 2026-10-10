@@ -211,9 +211,13 @@ Both phones need Bluetooth (and nearby-devices) permission. Stay within range un
 - Share a contact over Nostr gift wraps when identity is set.
 
 ### Closed-app alerts (Android)
-- Opt-in opaque tray wake for Pay in Chat / contact share while the app is closed (never amounts or memos).
+
+- Settings → **Notifications** → **Closed-app alerts** (opt-in, off by default; needs a Nostr identity).
 - First open of **Chat & Pay** may ask once to enable notifications; Enable or Not now is remembered. After Not now, a compact notif OFF badge opens Settings → Notifications.
-- Tapping a tray notification unlocks (if needed) and opens the chat thread for that sender.
+- Opaque tray only (“New Pay message”) for Pay in Chat / contact share while Basic is closed — never amounts, memos, or addresses.
+- Tap the tray → unlock → Chat thread (or Chat & Pay hub if the contact is unknown). Classic Bitcoin receives still catch up when you open the app (no tray).
+- Prefer swipe-away over system **Force stop**; some OEMs block tray wake after force-stop.
+
 
 ### Lightning
 
