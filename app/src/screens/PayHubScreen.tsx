@@ -4,7 +4,17 @@
 
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { startTransition, useCallback, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
 import {
@@ -24,6 +34,15 @@ import {
   isCursorBotContact,
 } from "../agent/botContact";
 import { suggestionChipsFor, useI18n } from "../i18n";
+import { hasNostrIdentity } from "../nostr/identityStore";
+import {
+  ensureAndroidNotificationPermission,
+  readChatHubNotifPrompt,
+  readPushNotificationPrefs,
+  registerPushWithNotifier,
+  writeChatHubNotifPrompt,
+  writePushNotificationPrefs,
+} from "../notifications";
 import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
@@ -104,6 +123,9 @@ export function PayHubScreen() {
   const [showArchived, setShowArchived] = useState(false);
   const [contactCount, setContactCount] = useState(() => listContacts().length);
   const [botContact, setBotContact] = useState<Contact | null>(() => getCursorBotContact());
+  const [showNotifPrompt, setShowNotifPrompt] = useState(false);
+  const [showNotifOffBadge, setShowNotifOffBadge] = useState(false);
+  const [notifBusy, setNotifBusy] = useState(false);
 
   const reload = useCallback(() => {
     startTransition(() => {
@@ -115,12 +137,94 @@ export function PayHubScreen() {
     });
   }, []);
 
+  const refreshNotifChrome = useCallback(async () => {
+    const prefs = await readPushNotificationPrefs();
+    const prompt = await readChatHubNotifPrompt();
+    if (prefs.enabled) {
+      // Already on: never prompt again; hide OFF badge.
+      if (!prompt.answered) {
+        await writeChatHubNotifPrompt("enable");
+      }
+      setShowNotifPrompt(false);
+      setShowNotifOffBadge(false);
+      return;
+    }
+    if (!prompt.answered) {
+      setShowNotifPrompt(true);
+      setShowNotifOffBadge(false);
+      return;
+    }
+    setShowNotifPrompt(false);
+    setShowNotifOffBadge(prompt.choice === "deny");
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       reload();
+      void refreshNotifChrome();
       return subscribeChatStore(reload);
-    }, [reload]),
+    }, [reload, refreshNotifChrome]),
   );
+
+  const onNotifPromptEnable = useCallback(async () => {
+    if (notifBusy) return;
+    setNotifBusy(true);
+    try {
+      if (Platform.OS !== "android") {
+        await writeChatHubNotifPrompt("enable");
+        setShowNotifPrompt(false);
+        setShowNotifOffBadge(false);
+        Alert.alert(
+          t("notifications.alertAndroidOnlyTitle"),
+          t("notifications.alertAndroidOnlyBody"),
+        );
+        return;
+      }
+      if (!(await hasNostrIdentity())) {
+        Alert.alert(
+          t("notifications.alertNostrRequiredTitle"),
+          t("notifications.alertNostrRequiredBody"),
+        );
+        return;
+      }
+      const perm = await ensureAndroidNotificationPermission();
+      if (!perm.granted) {
+        Alert.alert(
+          t("notifications.alertPermissionTitle"),
+          t("notifications.alertPermissionBody"),
+        );
+        return;
+      }
+      await writePushNotificationPrefs({ enabled: true });
+      await writeChatHubNotifPrompt("enable");
+      setShowNotifPrompt(false);
+      setShowNotifOffBadge(false);
+      const reg = await registerPushWithNotifier();
+      if (!reg.ok) {
+        Alert.alert(
+          t("notifications.alertRegisteredLocallyTitle"),
+          t("notifications.alertRegisteredLocallyBody", {
+            reason: reg.reason,
+          }),
+        );
+      }
+    } finally {
+      setNotifBusy(false);
+      void refreshNotifChrome();
+    }
+  }, [notifBusy, refreshNotifChrome, t]);
+
+  const onNotifPromptDeny = useCallback(async () => {
+    if (notifBusy) return;
+    setNotifBusy(true);
+    try {
+      await writeChatHubNotifPrompt("deny");
+      setShowNotifPrompt(false);
+      setShowNotifOffBadge(true);
+    } finally {
+      setNotifBusy(false);
+    }
+  }, [notifBusy]);
 
   const rows: Row[] = threads
     .map((t) => {
@@ -159,10 +263,67 @@ export function PayHubScreen() {
   const askTitle = t("chat.askCursor");
   const aiCaption = t("chat.aiConcierge");
 
+  const notifOffBadge = showNotifOffBadge ? (
+    <Pressable
+      onPress={() => navigation.navigate("Notifications")}
+      hitSlop={8}
+      accessibilityRole="button"
+      accessibilityLabel={t("chat.notifOffBadgeA11y")}
+      style={styles.notifOffHit}
+    >
+      <Text style={styles.notifOffText}>{t("chat.notifOffBadge")}</Text>
+    </Pressable>
+  ) : null;
+
   return (
-    <ScreenChrome logoScale={0.77}>
+    <ScreenChrome logoScale={0.77} headerRight={notifOffBadge}>
       <Text style={ui.title}>{t("chat.hubTitle")}</Text>
       <Text style={ui.caption}>{t("chat.hubCaption")}</Text>
+
+      <Modal
+        visible={showNotifPrompt}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          /* must answer Enable or Not now — no dismiss-without-choice */
+        }}
+      >
+        <View style={styles.promptBackdrop}>
+          <View style={styles.promptCard}>
+            <Text style={styles.promptKicker}>{t("settings.notifications")}</Text>
+            <Text style={styles.promptTitle}>{t("chat.notifPromptTitle")}</Text>
+            <Text style={styles.promptBody}>{t("chat.notifPromptBody")}</Text>
+            <View style={styles.promptActions}>
+              <Pressable
+                style={styles.promptDenyBtn}
+                disabled={notifBusy}
+                onPress={() => void onNotifPromptDeny()}
+                accessibilityRole="button"
+                accessibilityLabel={t("chat.notifPromptDeny")}
+              >
+                <Text style={styles.promptDenyText}>
+                  {t("chat.notifPromptDeny")}
+                </Text>
+              </Pressable>
+              <Pressable
+                style={styles.promptEnableBtn}
+                disabled={notifBusy}
+                onPress={() => void onNotifPromptEnable()}
+                accessibilityRole="button"
+                accessibilityLabel={t("chat.notifPromptEnable")}
+              >
+                {notifBusy ? (
+                  <ActivityIndicator color="#000" />
+                ) : (
+                  <Text style={styles.promptEnableText}>
+                    {t("chat.notifPromptEnable")}
+                  </Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <ScrollView
         style={styles.list}
@@ -300,6 +461,82 @@ export function PayHubScreen() {
 }
 
 const styles = StyleSheet.create({
+  notifOffHit: {
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    backgroundColor: colors.card,
+  },
+  notifOffText: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 10,
+    color: colors.caption,
+  },
+  promptBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  promptCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    padding: 18,
+  },
+  promptKicker: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 11,
+    color: colors.caption,
+    marginBottom: 8,
+  },
+  promptTitle: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 18,
+    color: colors.fg,
+  },
+  promptBody: {
+    marginTop: 10,
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 13,
+    color: colors.caption,
+    lineHeight: 19,
+  },
+  promptActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 18,
+  },
+  promptDenyBtn: {
+    flex: 1,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  promptDenyText: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 14,
+    color: colors.fg,
+  },
+  promptEnableBtn: {
+    flex: 1,
+    borderRadius: 10,
+    backgroundColor: colors.fg,
+    paddingVertical: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 44,
+  },
+  promptEnableText: {
+    fontFamily: "JetBrainsMono_700Bold",
+    fontSize: 14,
+    color: "#000",
+  },
   list: { flex: 1, marginTop: 16 },
   listContent: { paddingBottom: 16 },
   botSection: {

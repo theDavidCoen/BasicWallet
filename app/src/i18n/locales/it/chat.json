@@ -1,6 +1,12 @@
 {
   "hubTitle": "CHAT E PAGA",
   "hubCaption": "Chat private con i contatti. Crittografate con i dati del tuo account.",
+  "notifPromptTitle": "Abilitare le notifiche?",
+  "notifPromptBody": "Basic può riattivare il tray quando l’app è in background o chiusa, così vedi i nuovi messaggi Chat & Pay. Serve il permesso di notifica di sistema. Solo opache: mai importi o indirizzi.",
+  "notifPromptEnable": "Abilita",
+  "notifPromptDeny": "Non ora",
+  "notifOffBadge": "notif OFF",
+  "notifOffBadgeA11y": "Notifiche disattivate. Apri le impostazioni notifiche.",
   "askCursor": "Chiedi a Cursor",
   "askName": "Chiedi a %{name}",
   "aiConcierge": "Il tuo concierge AI",
