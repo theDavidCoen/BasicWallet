@@ -1,11 +1,9 @@
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   Alert,
   AppState,
   type AppStateStatus,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,6 +12,7 @@ import {
 import * as ScreenCapture from "expo-screen-capture";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, Caption, ScreenTitle } from "../components/ui";
 import { getNetworkConfig } from "../config/network";
 import { getWallet } from "../account/walletRegistry";
 import { loadMnemonicForCrypto } from "../security/mnemonicStore";
@@ -21,8 +20,6 @@ import { requireUserPresence } from "../security/userPresence";
 import { markSeedExportConfirmed } from "../wallet/backupReminder";
 import { useWallet } from "../wallet/WalletProvider";
 import { colors } from "../theme/colors";
-import { ui } from "../theme/ui";
-
 /**
  * Settings-only 24-word export (Penpot 11e).
  * Never onboarding. Reveal only after biometrics/PIN. FLAG_SECURE while shown.
@@ -120,11 +117,10 @@ export function ExportRecoveryPhraseScreen() {
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={ui.title}>RECOVERY PHRASE</Text>
-        <Text style={ui.caption}>
-          {walletLabel} · this Arkade wallet only.{"\n"}
-          Write offline. Shown only after biometrics / PIN.
-        </Text>
+        <ScreenTitle>RECOVERY PHRASE</ScreenTitle>
+        <Caption>
+          {`${walletLabel} · this Arkade wallet only.\nWrite offline. Shown only after biometrics / PIN.`}
+        </Caption>
 
         {words ? (
           <>
@@ -145,26 +141,18 @@ export function ExportRecoveryPhraseScreen() {
               · Screenshots are blocked while revealed.
             </Text>
 
-            <Pressable style={[ui.primaryBtn, { marginTop: 24 }]} onPress={() => void onDone()}>
-              <Text style={ui.primaryBtnText}>I wrote it down</Text>
-            </Pressable>
+            <Button style={{ marginTop: 24 }} onPress={() => void onDone()}>
+              I wrote it down
+            </Button>
           </>
         ) : (
           <View style={styles.locked}>
             <Text style={styles.lockedText}>
               Your 24-word phrase stays hidden until you authenticate.
             </Text>
-            <Pressable
-              style={[ui.primaryBtn, busy && { opacity: 0.6 }]}
-              disabled={busy}
-              onPress={() => void onReveal()}
-            >
-              {busy ? (
-                <ActivityIndicator color="#000" />
-              ) : (
-                <Text style={ui.primaryBtnText}>Authenticate · Reveal</Text>
-              )}
-            </Pressable>
+            <Button busy={busy} onPress={() => void onReveal()}>
+              Authenticate · Reveal
+            </Button>
           </View>
         )}
       </ScrollView>

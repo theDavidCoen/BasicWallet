@@ -6,7 +6,6 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Pressable,
   ScrollView,
   Share,
   StyleSheet,
@@ -25,6 +24,7 @@ import {
 import { ExitStepHeader, EXIT_STEP } from "../components/ExitStepHeader";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button } from "../components/ui";
 import { getNetworkConfig } from "../config/network";
 import { requireExitAuth, canRevealExitSecrets } from "../exit/gates";
 import { createFeeOnchainWallet, pollFeeBalance } from "../exit/feeWallet";
@@ -162,12 +162,11 @@ export function UnilateralExitExecuteScreen() {
       <ScreenChrome logoScale={0.77}>
         <ExitStepHeader step={EXIT_STEP.execute} title={t("exit.executeTitle")} />
         <Text style={ui.caption}>{t("exit.noPackageSteps")}</Text>
-        <Pressable
-          style={ui.primaryBtn}
+        <Button
           onPress={() => navigation.navigate("ExitRecoveryAddress", { from: "exit" })}
         >
-          <Text style={ui.primaryBtnText}>{t("exit.startFromRecovery")}</Text>
-        </Pressable>
+          {t("exit.startFromRecovery")}
+        </Button>
       </ScreenChrome>
     );
   }
@@ -209,29 +208,17 @@ export function UnilateralExitExecuteScreen() {
           </Text>
         ) : null}
 
-        <Pressable
-          style={[ui.primaryBtn, (!funded || starting) && { opacity: 0.5 }]}
-          disabled={!funded || starting}
-          onPress={() => void onExecute()}
-        >
-          {starting ? (
-            <ActivityIndicator color="#000" />
-          ) : (
-            <Text style={ui.primaryBtnText}>{t("exit.startExecute")}</Text>
-          )}
-        </Pressable>
+        <Button busy={starting} disabled={!funded || starting} onPress={() => void onExecute()}>
+              {t("exit.startExecute")}
+            </Button>
 
-        <Pressable
-          style={ui.secondaryBtn}
-          onPress={() => navigation.navigate("UnilateralExitFund")}
-          disabled={starting}
-        >
-          <Text style={ui.secondaryBtnText}>{t("exit.backToFundFees")}</Text>
-        </Pressable>
+        <Button variant="secondary" disabled={starting} onPress={() => navigation.navigate("UnilateralExitFund")}>
+              {t("exit.backToFundFees")}
+            </Button>
 
-        <Pressable style={ui.secondaryBtn} onPress={() => void onExport()} disabled={starting}>
-          <Text style={ui.secondaryBtnText}>{t("exit.exportPackage")}</Text>
-        </Pressable>
+        <Button variant="secondary" disabled={starting} onPress={() => void onExport()}>
+              {t("exit.exportPackage")}
+            </Button>
       </ScrollView>
     </ScreenChrome>
   );
