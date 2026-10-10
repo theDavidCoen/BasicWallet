@@ -16,6 +16,7 @@ import {
 import { useFocusEffect } from "@react-navigation/native";
 import { remountAppForNetworkSwitch } from "../runtime/remountApp";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, Caption, ScreenTitle } from "../components/ui";
 import type { ArkadeNetworkId } from "../config/network";
 import {
   defaultArkServerUrl,
@@ -122,8 +123,8 @@ export function ArkadeNetworkScreen() {
   return (
     <ScreenChrome logoScale={0.77}>
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-        <Text style={ui.title}>{t("arkade.networkTitle")}</Text>
-        <Text style={ui.caption}>{t("arkade.networkCaption")}</Text>
+        <ScreenTitle>{t("arkade.networkTitle")}</ScreenTitle>
+        <Caption>{t("arkade.networkCaption")}</Caption>
 
         <Text style={styles.section}>{t("arkade.networkSection")}</Text>
         {networks.map((n) => {
@@ -157,34 +158,30 @@ export function ArkadeNetworkScreen() {
         />
         <Text style={styles.meta}>{t("arkade.aspEmptyHint")}</Text>
         {draftServer.trim() ? (
-          <Pressable
-            style={[ui.secondaryBtn, { marginTop: 12 }]}
-            disabled={busy}
-            onPress={() => setDraftServer("")}
-          >
-            <Text style={ui.secondaryBtnText}>{t("arkade.useDefault")}</Text>
-          </Pressable>
+          <Button variant="secondary" style={{ marginTop: 12 }} disabled={busy} onPress={() => setDraftServer("")}>
+              {t("arkade.useDefault")}
+            </Button>
         ) : null}
 
-        <Pressable
-          style={[ui.primaryBtn, { marginTop: 28 }, busy && { opacity: 0.5 }]}
-          disabled={busy}
-          onPress={applyAndRestart}
-        >
-          {busy ? (
-            <ActivityIndicator color={colors.bg} />
-          ) : (
-            <Text style={ui.primaryBtnText}>{t("arkade.applyRestart")}</Text>
-          )}
-        </Pressable>
+        <Button style={{ marginTop: 28 }} busy={busy} onPress={applyAndRestart}>
+          {t("arkade.applyRestart")}
+        </Button>
 
-        <Text style={[ui.hint, { marginTop: 20 }]}>{t("arkade.networkHint")}</Text>
+        <Text style={styles.networkHint}>{t("arkade.networkHint")}</Text>
       </ScrollView>
     </ScreenChrome>
   );
 }
 
 const styles = StyleSheet.create({
+  networkHint: {
+    fontFamily: "JetBrainsMono_400Regular",
+    fontSize: 12,
+    color: colors.hint,
+    textAlign: "center",
+    lineHeight: 18,
+    marginTop: 20,
+  },
   section: {
     fontFamily: "JetBrainsMono_700Bold",
     fontSize: 12,

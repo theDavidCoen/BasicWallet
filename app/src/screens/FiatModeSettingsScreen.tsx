@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Button } from "../components/ui";
 import { useNavigation } from "@react-navigation/native";
 import { ScreenChrome } from "../components/ScreenChrome";
 import { getNetworkConfig } from "../config/network";
@@ -218,16 +219,13 @@ export function FiatModeSettingsScreen() {
       ) : null}
 
       {canConfirm ? (
-        <Pressable
-          style={styles.primary}
+        <Button
+          style={{ marginTop: 4 }}
           onPress={() => void onConfirm()}
-          accessibilityRole="button"
           accessibilityLabel={confirmLabel}
         >
-          <Text style={styles.primaryLabel}>
-            {confirmLabel}
-          </Text>
-        </Pressable>
+          {confirmLabel}
+        </Button>
       ) : null}
 
       {!arkade ? (
@@ -323,18 +321,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.caption,
     lineHeight: 18,
-  },
-  primary: {
-    backgroundColor: colors.fg,
-    borderRadius: 10,
-    paddingVertical: 16,
-    alignItems: "center",
-    marginTop: 4,
-  },
-  primaryLabel: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 15,
-    color: "#000",
   },
   footnote: {
     fontFamily: "JetBrainsMono_400Regular",

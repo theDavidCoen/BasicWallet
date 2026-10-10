@@ -1,6 +1,7 @@
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
+import { Button } from "../components/ui";
 import { colors } from "../theme/colors";
 
 function midEllipsis(s: string, left = 12, right = 8): string {
@@ -29,12 +30,12 @@ export function FundsSentScreen() {
         </Text>
       ) : null}
 
-      <Pressable
-        style={styles.primary}
+      <Button
+        style={{ marginTop: 36, alignSelf: "stretch" }}
         onPress={() => navigation.replace("Activity")}
       >
-        <Text style={styles.primaryText}>View activity</Text>
-      </Pressable>
+        View activity
+      </Button>
       <Pressable
         style={styles.secondary}
         onPress={() => navigation.navigate("Home")}
@@ -80,19 +81,6 @@ const styles = StyleSheet.create({
     color: colors.hint,
     textAlign: "center",
     marginTop: 8,
-  },
-  primary: {
-    alignSelf: "stretch",
-    backgroundColor: colors.fg,
-    borderRadius: 10,
-    paddingVertical: 16,
-    alignItems: "center",
-    marginTop: 36,
-  },
-  primaryText: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 15,
-    color: "#000",
   },
   secondary: {
     alignSelf: "stretch",

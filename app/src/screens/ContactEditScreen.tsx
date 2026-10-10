@@ -18,6 +18,7 @@ import {
 } from "react-native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, ScreenTitle } from "../components/ui";
 import {
   createContactDraft,
   createEmptyField,
@@ -250,7 +251,7 @@ export function ContactEditScreen() {
   return (
     <View style={styles.screenRoot}>
     <ScreenChrome logoScale={0.77}>
-      <Text style={ui.title}>{title}</Text>
+      <ScreenTitle>{title}</ScreenTitle>
       <View style={styles.avatar}>
         <Text style={styles.avatarText}>{initials}</Text>
       </View>
@@ -438,15 +439,9 @@ export function ContactEditScreen() {
           </Text>
         </Pressable>
 
-        <Pressable
-          style={[styles.primary, !draft.name.trim() && { opacity: 0.5 }]}
-          disabled={!draft.name.trim()}
-          onPress={onSave}
-        >
-          <Text style={styles.primaryText}>
-            {t("contacts.save")}
-          </Text>
-        </Pressable>
+        <Button disabled={!draft.name.trim()} onPress={onSave}>
+          {t("contacts.save")}
+        </Button>
 
         {!isNew ? (
           <>
@@ -630,18 +625,6 @@ const styles = StyleSheet.create({
   },
   verifyOk: { color: "#8CFF9A" },
   verifyErr: { color: "#E07070" },
-  primary: {
-    backgroundColor: colors.fg,
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: "center",
-    marginTop: 8,
-  },
-  primaryText: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 15,
-    color: "#000",
-  },
   secondary: {
     borderWidth: 1,
     borderColor: colors.border,

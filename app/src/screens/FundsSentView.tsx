@@ -1,4 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Button } from "../components/ui";
 import { colors } from "../theme/colors";
 
 function midEllipsis(s: string, left = 12, right = 8): string {
@@ -56,15 +57,13 @@ export function FundsSentView({
         </Text>
       ) : null}
 
-      <Pressable
-        style={styles.primary}
+      <Button
+        style={{ marginTop: 36, alignSelf: "stretch" }}
         onPress={onViewActivity}
-        hitSlop={8}
-        accessibilityRole="button"
         accessibilityLabel="View details"
       >
-        <Text style={styles.primaryText}>View details</Text>
-      </Pressable>
+        View details
+      </Button>
       {showSaveToContacts ? (
         <Pressable
           style={styles.secondary}
@@ -124,19 +123,6 @@ const styles = StyleSheet.create({
     color: colors.hint,
     textAlign: "center",
     marginTop: 8,
-  },
-  primary: {
-    alignSelf: "stretch",
-    backgroundColor: colors.fg,
-    borderRadius: 10,
-    paddingVertical: 16,
-    alignItems: "center",
-    marginTop: 36,
-  },
-  primaryText: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 15,
-    color: "#000",
   },
   secondary: {
     alignSelf: "stretch",

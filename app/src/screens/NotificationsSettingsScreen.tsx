@@ -4,18 +4,10 @@
  */
 
 import { useCallback, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Switch,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Alert, Platform, StyleSheet, Switch, Text } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Caption, ScreenTitle, SettingsRow } from "../components/ui";
 import { useI18n } from "../i18n";
 import { hasNostrIdentity } from "../nostr/identityStore";
 import {
@@ -27,7 +19,7 @@ import {
   writePushNotificationPrefs,
 } from "../notifications";
 import { colors } from "../theme/colors";
-import { ui } from "../theme/ui";
+import { fonts } from "../theme/typography";
 
 export function NotificationsSettingsScreen() {
   const { t } = useI18n();
@@ -122,9 +114,7 @@ export function NotificationsSettingsScreen() {
   if (!ready) {
     return (
       <ScreenChrome logoScale={0.77}>
-        <Text style={ui.title}>
-          {t("notifications.title")}
-        </Text>
+        <ScreenTitle>{t("notifications.title")}</ScreenTitle>
         <ActivityIndicator color={colors.fg} style={{ marginTop: 24 }} />
       </ScreenChrome>
     );
@@ -132,34 +122,28 @@ export function NotificationsSettingsScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={ui.title}>
-        {t("notifications.title")}
-      </Text>
-      <Text style={ui.caption}>{t("notifications.caption")}</Text>
+      <ScreenTitle>{t("notifications.title")}</ScreenTitle>
+      <Caption>{t("notifications.caption")}</Caption>
 
-      <Pressable
-        style={styles.row}
-        onPress={() => void onToggle(!enabled)}
+      <SettingsRow
+        label={t("notifications.closedAppAlerts")}
+        hint={t("notifications.closedAppHint")}
         disabled={busy || Platform.OS !== "android"}
-      >
-        <View style={styles.rowText}>
-          <Text style={styles.label}>
-            {t("notifications.closedAppAlerts")}
-          </Text>
-          <Text style={styles.hint}>{t("notifications.closedAppHint")}</Text>
-        </View>
-        {busy ? (
-          <ActivityIndicator color={colors.fg} />
-        ) : (
-          <Switch
-            value={enabled}
-            onValueChange={(v) => void onToggle(v)}
-            disabled={Platform.OS !== "android"}
-            trackColor={{ false: colors.border, true: colors.fg }}
-            thumbColor="#000000"
-          />
-        )}
-      </Pressable>
+        onPress={() => void onToggle(!enabled)}
+        right={
+          busy ? (
+            <ActivityIndicator color={colors.fg} />
+          ) : (
+            <Switch
+              value={enabled}
+              onValueChange={(v) => void onToggle(v)}
+              disabled={Platform.OS !== "android"}
+              trackColor={{ false: colors.border, true: colors.fg }}
+              thumbColor={colors.onPrimary}
+            />
+          )
+        }
+      />
 
       <Text style={styles.meta}>{permLabel}</Text>
       {!hasIdentity ? (
@@ -175,30 +159,8 @@ export function NotificationsSettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 16,
-    paddingVertical: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  rowText: { flex: 1 },
-  label: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 15,
-    color: colors.fg,
-  },
-  hint: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 12,
-    color: colors.hint,
-    marginTop: 4,
-    lineHeight: 16,
-  },
   meta: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 12,
     color: colors.hint,
     marginTop: 16,

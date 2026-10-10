@@ -16,6 +16,7 @@ import {
 import { useNavigation } from "@react-navigation/native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, Caption, ScreenTitle } from "../components/ui";
 import {
   buildAppLogsCsv,
   buildAppLogsRaw,
@@ -26,7 +27,7 @@ import {
 } from "../diagnostics/appLog";
 import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
-import { ui } from "../theme/ui";
+import { fonts } from "../theme/typography";
 
 const DANGER = "#E07070";
 
@@ -104,21 +105,17 @@ export function LogsScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={ui.title}>{t("logs.title")}</Text>
-      <Text style={ui.caption}>{t("logs.caption")}</Text>
+      <ScreenTitle>{t("logs.title")}</ScreenTitle>
+      <Caption>{t("logs.caption")}</Caption>
 
       <View style={styles.actions}>
-        <Pressable
-          style={[styles.primary, busy != null && styles.disabled]}
+        <Button
+          busy={busy === "save"}
           disabled={busy != null}
           onPress={() => void onSaveCsv()}
         >
-          {busy === "save" ? (
-            <ActivityIndicator color="#000" />
-          ) : (
-            <Text style={styles.primaryText}>{t("logs.save")}</Text>
-          )}
-        </Pressable>
+          {t("logs.save")}
+        </Button>
         <Text style={styles.actionHint}>{t("logs.saveHint")}</Text>
 
         <Pressable
@@ -155,17 +152,6 @@ const styles = StyleSheet.create({
     marginTop: 28,
     gap: 8,
   },
-  primary: {
-    backgroundColor: colors.fg,
-    borderRadius: 10,
-    paddingVertical: 16,
-    alignItems: "center",
-  },
-  primaryText: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 15,
-    color: "#000",
-  },
   secondary: {
     marginTop: 16,
     borderRadius: 10,
@@ -175,7 +161,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   secondaryText: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 15,
     color: colors.fg,
   },
@@ -188,12 +174,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   dangerText: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 15,
     color: DANGER,
   },
   actionHint: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 12,
     color: colors.hint,
     textAlign: "center",
