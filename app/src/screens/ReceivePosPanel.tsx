@@ -18,6 +18,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ExpandableQrCode } from "../components/ExpandableQrCode";
 import { BasicLogo } from "../components/BasicLogo";
+import { AmountKeypad, Button } from "../components/ui";
 import { getNetworkConfig } from "../config/network";
 import {
   fetchFiatSpot,
@@ -32,13 +33,8 @@ import {
   type DisplayCurrencyCode,
 } from "../settings/displayCurrencies";
 import { colors } from "../theme/colors";
-
-const KEYS = [
-  ["1", "2", "3"],
-  ["4", "5", "6"],
-  ["7", "8", "9"],
-  ["C", "0", "⌫"],
-] as const;
+import { fonts } from "../theme/typography";
+import { radii } from "../theme/radii";
 
 /** Hard cap: 21 million BTC in sats. */
 const MAX_POS_SATS = 21_000_000 * 100_000_000;
@@ -594,28 +590,7 @@ export function ReceivePosPanel({
         </View>
       ) : null}
 
-      <View style={styles.pad}>
-        {KEYS.map((row, ri) => (
-          <View key={`r${ri}`} style={styles.padRow}>
-            {row.map((label) => (
-              <Pressable
-                key={label}
-                style={styles.key}
-                onPress={() => onKey(label)}
-              >
-                <Text
-                  style={[
-                    styles.keyLabel,
-                    (label === "C" || label === "⌫") && styles.keyMuted,
-                  ]}
-                >
-                  {label}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        ))}
-      </View>
+      <AmountKeypad onKey={onKey} />
 
       {lightningMode && onMemoChange ? (
         <View style={styles.memoBlock}>
@@ -633,30 +608,44 @@ export function ReceivePosPanel({
         </View>
       ) : null}
 
-      <Pressable
-        style={[styles.cta, (!canRequest || chatRequestBusy || requestBusy) && styles.ctaDisabled]}
+      <Button
+        style={[
+          styles.cta,
+          (!canRequest || chatRequestBusy || requestBusy) && styles.ctaDisabled,
+        ]}
+        textStyle={styles.ctaText}
         disabled={!canRequest || chatRequestBusy || requestBusy}
+        busy={chatRequestBusy || requestBusy || (!!fiatMode && rate == null)}
         onPress={onRequest}
+        accessibilityLabel={
+          isChatRequest
+            ? "Send request"
+            : isChatSend
+              ? "Confirm"
+              : lightningMode
+                ? t("receive.createInvoice")
+                : "Request"
+        }
       >
-        {chatRequestBusy || requestBusy ? (
-          <ActivityIndicator color="#000" />
-        ) : isChatRequest ? (
-          <Text style={styles.ctaText}>Send request</Text>
-        ) : isChatSend ? (
-          <Text style={styles.ctaText}>Confirm</Text>
-        ) : lightningMode ? (
-          <Text style={styles.ctaText}>{t("receive.createInvoice")}</Text>
-        ) : !fiatMode && !bip21Uri ? (
+        {!fiatMode &&
+        !bip21Uri &&
+        !isChatRequest &&
+        !isChatSend &&
+        !lightningMode ? (
           <View style={styles.ctaBusy}>
-            <ActivityIndicator color="#000" />
+            <ActivityIndicator color={colors.onPrimary} />
             <Text style={styles.ctaPreparing}>Preparing receive…</Text>
           </View>
-        ) : fiatMode && rate == null ? (
-          <ActivityIndicator color="#000" />
+        ) : isChatRequest ? (
+          "Send request"
+        ) : isChatSend ? (
+          "Confirm"
+        ) : lightningMode ? (
+          t("receive.createInvoice")
         ) : (
-          <Text style={styles.ctaText}>Request</Text>
+          "Request"
         )}
-      </Pressable>
+      </Button>
     </View>
   );
 }
@@ -780,39 +769,9 @@ const styles = StyleSheet.create({
     textDecorationLine: "none",
     opacity: 0.45,
   },
-  pad: {
-    marginTop: 28,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#333",
-    backgroundColor: "#141414",
-    overflow: "hidden",
-    flexGrow: 1,
-    maxHeight: 340,
-  },
-  padRow: { flex: 1, flexDirection: "row" },
-  key: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#2a2a2a",
-  },
-  keyLabel: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 24,
-    color: colors.fg,
-  },
-  keyMuted: {
-    fontSize: 20,
-    color: colors.caption,
-  },
   cta: {
     marginTop: 20,
-    backgroundColor: colors.fg,
-    borderRadius: 12,
-    paddingVertical: 16,
-    alignItems: "center",
+    borderRadius: radii.md,
   },
   ctaDisabled: { opacity: 0.4 },
   ctaBusy: {
@@ -821,14 +780,14 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   ctaPreparing: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 13,
-    color: "#000",
+    color: colors.onPrimary,
   },
   ctaText: {
-    fontFamily: "JetBrainsMono_700Bold",
+    fontFamily: fonts.bold,
     fontSize: 17,
-    color: "#000",
+    color: colors.onPrimary,
   },
   receiveScroll: {
     alignItems: "center",

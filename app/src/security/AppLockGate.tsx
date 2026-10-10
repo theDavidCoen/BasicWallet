@@ -3,15 +3,17 @@ import {
   ActivityIndicator,
   AppState,
   type AppStateStatus,
-  Pressable,
+  Platform,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from "react-native";
 import * as ScreenCapture from "expo-screen-capture";
 import * as LocalAuthentication from "expo-local-authentication";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BasicLogo } from "../components/BasicLogo";
+import { Caption, Hint, ScreenTitle } from "../components/ui";
 import { useI18n } from "../i18n";
 import { UnlockPinPad } from "../screens/SetAppPinScreen";
 import { hasAppPin } from "./appPin";
@@ -21,7 +23,8 @@ import { notifyAppUnlocked } from "./appLockEvents";
 import {
   beginPresencePrompt,
   endPresencePrompt,
-  isPresencePromptActive,
+  isPresencePromptInFlight,
+  resetPresencePrompt,
   subscribeAppUnlockFromPresence,
 } from "./presencePrompt";
 import {
@@ -31,12 +34,21 @@ import {
 import { useWallet } from "../wallet/WalletProvider";
 import { colors } from "../theme/colors";
 
+/** Xiaomi can leave authenticateAsync pending without a visible sheet. */
+const BIO_AUTH_WATCHDOG_MS = 12_000;
+
 /**
  * Penpot 01e / 01f — gate when 05c Biometrics lock is ON.
  *
  * Important (Samsung / Knox): never enable LocalAuthentication device-credential
  * fallback — that surfaces OS "Use PIN" even when no Basic app PIN exists.
  * App PIN is only our in-app pad, shown when Privacy → App PIN is set.
+ *
+ * Unlock reliability (Xiaomi): no auto-prompt (user taps the circle). While an
+ * OS auth is in flight, extra taps queue at most one retry after settle — never
+ * cancelAuthenticate mid-flight (that made rapid taps cancel each other).
+ * Warm resume: abort stale auth + clear latches on true background so the
+ * circle is interactive immediately when the app returns.
  */
 export function AppLockGate({ children }: { children: ReactNode }) {
   const insets = useSafeAreaInsets();
@@ -48,12 +60,18 @@ export function AppLockGate({ children }: { children: ReactNode }) {
   const [unlocked, setUnlocked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Remount bio touchable after resume — MIUI can leave a dead responder. */
+  const [lockEpoch, setLockEpoch] = useState(0);
   const unlockingRef = useRef(false);
-  const autoPromptedRef = useRef(false);
   /** Sync unlock for AppState — setState alone races with presence end → second bio. */
   const unlockedRef = useRef(false);
   /** AppLockGate mounts only after wallet bootstrap — track mid-session provision. */
   const prevHasWalletRef = useRef(hasWallet);
+  const bioWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Ignore stale authenticateAsync results after a newer attempt starts. */
+  const bioAttemptRef = useRef(0);
+  /** At most one user retry after the in-flight auth settles (no mid-flight cancel). */
+  const pendingUserRetryRef = useRef(false);
 
   const applyScreenCapture = useCallback(async (block: boolean) => {
     try {
@@ -75,7 +93,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
     setUnlocked(true);
     setError(null);
     setMode("bio");
-    autoPromptedRef.current = false;
+    pendingUserRetryRef.current = false;
     // Push deep-link / other deferred UI — after lock overlay clears.
     notifyAppUnlocked();
     // Far off the unlock paint path — PBKDF2 must not run during Home mount.
@@ -89,69 +107,151 @@ export function AppLockGate({ children }: { children: ReactNode }) {
     });
   }, [afterUnlock]);
 
-  const tryBiometrics = useCallback(async () => {
-    if (unlockingRef.current) return;
+  const clearBioWatchdog = useCallback(() => {
+    if (bioWatchdogRef.current) {
+      clearTimeout(bioWatchdogRef.current);
+      bioWatchdogRef.current = null;
+    }
+  }, []);
+
+  const releaseBioLatch = useCallback(
+    (presenceGraceMs?: number) => {
+      clearBioWatchdog();
+      if (presenceGraceMs !== undefined) endPresencePrompt(presenceGraceMs);
+      else endPresencePrompt();
+      setBusy(false);
+      unlockingRef.current = false;
+    },
+    [clearBioWatchdog],
+  );
+
+  /** True Home / recents background: kill hung authenticateAsync + all latches. */
+  const abortStaleBioAuth = useCallback(() => {
+    bioAttemptRef.current += 1;
+    pendingUserRetryRef.current = false;
+    clearBioWatchdog();
+    unlockingRef.current = false;
+    setBusy(false);
+    setError(null);
+    resetPresencePrompt();
+    void LocalAuthentication.cancelAuthenticate().catch(() => {
+      /* optional */
+    });
+  }, [clearBioWatchdog]);
+
+  const runBiometrics = useCallback(async () => {
+    if (unlockingRef.current || unlockedRef.current) return;
+
+    const attempt = ++bioAttemptRef.current;
     unlockingRef.current = true;
     setBusy(true);
     setError(null);
     beginPresencePrompt();
-    // Warm PIN availability in parallel — never block the system bio sheet.
+    // Warm PIN in parallel — never block the system bio sheet.
     const pinPromise = refreshPinAvailable();
+
+    clearBioWatchdog();
+    bioWatchdogRef.current = setTimeout(() => {
+      if (!unlockingRef.current || bioAttemptRef.current !== attempt) return;
+      console.warn("[basic] bio auth watchdog — releasing latch");
+      releaseBioLatch();
+    }, BIO_AUTH_WATCHDOG_MS);
+
     try {
-      // Fire OS prompt immediately. Do not await hasHardware/isEnrolled first
-      // (those round-trips often delay the modal by seconds on cold tap).
+      // Fire OS prompt immediately. No hasHardware/isEnrolled awaits first.
       const result = await LocalAuthentication.authenticateAsync({
         promptMessage: t("privacy.unlockPrompt"),
         cancelLabel: t("common.cancel"),
-        // Always disable OS/Knox device-PIN fallback. App PIN is in-app only.
         disableDeviceFallback: true,
       });
-      const pinSet = await pinPromise;
-      if (!result.success) {
-        // If biometrics are actually unavailable, prefer PIN / honest error.
-        const bio = await getOsBiometricsStatus();
-        if (!bio.available) {
-          if (pinSet) {
-            setMode("pin");
-            setError(null);
-            return;
-          }
-          setError(t("privacy.bioOffNoPin"));
-          return;
-        }
-        setError(t("privacy.authFailed"));
-        // After cancel/fail, offer our PIN pad when configured.
-        if (pinSet) setMode("pin");
+
+      if (bioAttemptRef.current !== attempt) return;
+
+      if (result.success) {
+        pendingUserRetryRef.current = false;
+        unlockedRef.current = true;
+        setUnlocked(true);
+        setError(null);
+        setMode("bio");
+        // Grace 0 before backup work so FundsReceived notices work.
+        releaseBioLatch(0);
+        await afterUnlock();
         return;
       }
-      // Mark unlocked before clearing the presence latch — ending presence can
-      // let an AppState "active" event re-enter enterLocked (second bio prompt).
-      unlockedRef.current = true;
-      setUnlocked(true);
-      setError(null);
-      setMode("bio");
-      // End presence *before* backup/passphrase work so FundsReceived notices work.
-      endPresencePrompt(0);
-      await afterUnlock();
-    } finally {
-      endPresencePrompt();
-      setBusy(false);
-      unlockingRef.current = false;
-    }
-  }, [afterUnlock, refreshPinAvailable, t]);
 
-  const enterLocked = useCallback(async () => {
+      // Clear latch before pin/status awaits so the circle is live again.
+      releaseBioLatch();
+
+      const err = result.error ?? "";
+      const userDismissed =
+        err === "user_cancel" ||
+        err === "system_cancel" ||
+        err === "app_cancel";
+
+      const pinSet = await pinPromise;
+      if (bioAttemptRef.current !== attempt) return;
+
+      if (userDismissed) {
+        setError(null);
+        return;
+      }
+
+      const bio = await getOsBiometricsStatus();
+      if (bioAttemptRef.current !== attempt) return;
+      if (!bio.available) {
+        if (pinSet) {
+          setMode("pin");
+          setError(null);
+          return;
+        }
+        setError(t("privacy.bioOffNoPin"));
+        return;
+      }
+      setError(t("privacy.authFailed"));
+      if (pinSet) setMode("pin");
+    } catch {
+      if (bioAttemptRef.current !== attempt) return;
+      releaseBioLatch();
+      setError(t("privacy.authFailed"));
+    } finally {
+      if (bioAttemptRef.current === attempt && unlockingRef.current) {
+        releaseBioLatch();
+      }
+      // One queued tap after settle — never cancelAuthenticate mid-flight.
+      if (
+        !unlockedRef.current &&
+        pendingUserRetryRef.current &&
+        bioAttemptRef.current === attempt
+      ) {
+        pendingUserRetryRef.current = false;
+        void runBiometrics();
+      }
+    }
+  }, [afterUnlock, clearBioWatchdog, refreshPinAvailable, releaseBioLatch, t]);
+
+  const onBioCirclePress = useCallback(() => {
     if (unlockedRef.current) return;
+    if (unlockingRef.current) {
+      // In flight: queue a single retry after settle (Xiaomi rapid taps).
+      pendingUserRetryRef.current = true;
+      return;
+    }
+    pendingUserRetryRef.current = false;
+    void runBiometrics();
+  }, [runBiometrics]);
+
+  const enterLocked = useCallback(() => {
+    // Always present a clean Unlock UI (warm resume may leave busy/latches).
+    unlockedRef.current = false;
+    pendingUserRetryRef.current = false;
+    unlockingRef.current = false;
     setUnlocked(false);
+    setBusy(false);
     setMode("bio");
     setError(null);
-    // Do not await pin refresh before the bio sheet — warm in background.
     void refreshPinAvailable();
-    if (!autoPromptedRef.current) {
-      autoPromptedRef.current = true;
-      await tryBiometrics();
-    }
-  }, [refreshPinAvailable, tryBiometrics]);
+    // No auto-prompt on cold start or resume — user taps the circle.
+  }, [refreshPinAvailable]);
 
   // Cold start only (this gate mounts after wallet bootstrap). Mid-session
   // provision must not re-enter lock — see hasWallet effect below.
@@ -161,8 +261,8 @@ export function AppLockGate({ children }: { children: ReactNode }) {
       const p = await readPrivacySettings();
       if (cancelled) return;
       setLockEnabled(p.biometricsLock);
-      await refreshPinAvailable();
-      await applyScreenCapture(p.blockScreenshots);
+      void refreshPinAvailable();
+      void applyScreenCapture(p.blockScreenshots);
 
       const presentAtBoot = prevHasWalletRef.current;
       if (!presentAtBoot || !p.biometricsLock) {
@@ -175,10 +275,11 @@ export function AppLockGate({ children }: { children: ReactNode }) {
         return;
       }
 
-      await enterLocked();
+      enterLocked();
     })();
     return () => {
       cancelled = true;
+      clearBioWatchdog();
     };
     // Mount-once cold start. enterLocked/hasWallet changes must not re-lock.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -194,29 +295,37 @@ export function AppLockGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const onState = (next: AppStateStatus) => {
-      // Biometric system UI often backgrounds the app; ignore while our prompt is open.
-      if (isPresencePromptActive()) return;
+      // OS biometric chrome often goes active→inactive only. Do not cancel auth
+      // there (would dismiss the sheet). True Home/recents uses "background".
+      if (next === "inactive") {
+        return;
+      }
 
       if (next === "background") {
-        // Drop RAM passphrase whenever we leave the foreground (SecureStore keeps it).
+        // Always abort — hung authenticateAsync + presence grace were leaving
+        // Unlock with unlockingRef/busy stuck after warm resume (Xiaomi).
+        abortStaleBioAuth();
         lockBackupPassphraseSession();
         if (lockEnabled && hasWallet) {
-          autoPromptedRef.current = false;
           unlockedRef.current = false;
           setUnlocked(false);
           setMode("bio");
+          setLockEpoch((n) => n + 1);
         }
         return;
       }
+
       if (next === "active") {
-        if (isPresencePromptActive()) return;
+        // Sheet still up: leave the in-flight auth alone.
+        if (isPresencePromptInFlight()) return;
+
+        // Fresh interactive Unlock after Home/recents (clear grace + latches).
+        abortStaleBioAuth();
         if (lockEnabled && hasWallet && !unlockedRef.current) {
-          void enterLocked();
+          enterLocked();
+          setLockEpoch((n) => n + 1);
           return;
         }
-        // Biometrics lock OFF: background cleared the session but never reloads it
-        // (unlike afterUnlock). Without this, dirty home/Nostr uploads stay stuck
-        // forever after the first background — Settings still shows backup ON.
         if (hasWallet && !lockEnabled) {
           void flushEncryptedBackupAfterUnlock("resume-no-lock");
         }
@@ -224,7 +333,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
     };
     const sub = AppState.addEventListener("change", onState);
     return () => sub.remove();
-  }, [hasWallet, lockEnabled, enterLocked]);
+  }, [hasWallet, lockEnabled, enterLocked, abortStaleBioAuth]);
 
   if (!ready) return <>{children}</>;
 
@@ -232,7 +341,14 @@ export function AppLockGate({ children }: { children: ReactNode }) {
 
   return (
     <View style={styles.fill}>
-      {children}
+      {/* Underlay must not steal touches while Unlock is up (warmup / Home). */}
+      <View
+        style={styles.fill}
+        pointerEvents={showLock ? "none" : "auto"}
+        collapsable={false}
+      >
+        {children}
+      </View>
       {showLock ? (
         <View
           style={[
@@ -243,6 +359,8 @@ export function AppLockGate({ children }: { children: ReactNode }) {
               alignItems: mode === "pin" ? "stretch" : "center",
             },
           ]}
+          pointerEvents="auto"
+          collapsable={false}
         >
           {mode === "pin" && pinAvailable ? (
             <UnlockPinPad
@@ -254,31 +372,60 @@ export function AppLockGate({ children }: { children: ReactNode }) {
             />
           ) : (
             <>
-              <BasicLogo scale={1.2} />
-              <Text style={styles.title}>
-                {t("privacy.unlockTitle")}
-              </Text>
-              <Text style={styles.sub}>{t("privacy.unlockSub")}</Text>
+              <View pointerEvents="none">
+                <BasicLogo scale={1.2} />
+                <ScreenTitle style={styles.title}>
+                  {t("privacy.unlockTitle")}
+                </ScreenTitle>
+                <Caption style={styles.sub}>{t("privacy.unlockSub")}</Caption>
+              </View>
 
-              <Pressable
-                style={[styles.bioHit, busy && { opacity: 0.6 }]}
-                disabled={busy}
-                onPress={() => void tryBiometrics()}
+              {/*
+                TouchableOpacity + large hitSlop: more reliable than Pressable
+                onPressIn on MIUI. Spinner is a non-interactive overlay so child
+                swaps do not abort the responder. No disabled / opacity on the
+                touch target during auth.
+              */}
+              <TouchableOpacity
+                key={`bio-hit-${lockEpoch}`}
+                style={styles.bioHit}
+                activeOpacity={1}
+                delayPressIn={0}
+                hitSlop={{ top: 28, bottom: 28, left: 28, right: 28 }}
+                pressRetentionOffset={{
+                  top: 40,
+                  bottom: 40,
+                  left: 40,
+                  right: 40,
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={t("privacy.touchFaceId")}
+                onPress={onBioCirclePress}
+                {...(Platform.OS === "android"
+                  ? { touchSoundDisabled: true }
+                  : null)}
               >
+                <Text style={styles.bioLabel} pointerEvents="none">
+                  {t("privacy.touchFaceId")}
+                </Text>
                 {busy ? (
-                  <ActivityIndicator color={colors.fg} />
-                ) : (
-                  <Text style={styles.bioLabel}>
-                    {t("privacy.touchFaceId")}
-                  </Text>
-                )}
-              </Pressable>
+                  <View style={styles.bioBusyOverlay} pointerEvents="none">
+                    <ActivityIndicator color={colors.fg} />
+                  </View>
+                ) : null}
+              </TouchableOpacity>
 
-              {error ? <Text style={styles.error}>{error}</Text> : null}
+              {error ? (
+                <Text style={styles.error} pointerEvents="none">
+                  {error}
+                </Text>
+              ) : null}
 
               {pinAvailable ? (
-                <Pressable
+                <TouchableOpacity
                   style={styles.pinLink}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 12, bottom: 12, left: 24, right: 24 }}
                   onPress={() => {
                     setError(null);
                     setMode("pin");
@@ -287,9 +434,11 @@ export function AppLockGate({ children }: { children: ReactNode }) {
                   <Text style={styles.pinLinkText}>
                     {t("privacy.usePinInstead")}
                   </Text>
-                </Pressable>
+                </TouchableOpacity>
               ) : (
-                <Text style={styles.hint}>{t("privacy.optionalPinHint")}</Text>
+                <View pointerEvents="none" style={styles.hintWrap}>
+                  <Hint style={styles.hint}>{t("privacy.optionalPinHint")}</Hint>
+                </View>
               )}
             </>
           )}
@@ -307,31 +456,34 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 28,
     zIndex: 100,
+    elevation: 100,
   },
   title: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 20,
-    color: colors.fg,
     marginTop: 48,
-    textAlign: "center",
+    marginBottom: 0,
   },
   sub: {
-    fontFamily: "JetBrainsMono_400Regular",
     fontSize: 13,
-    color: colors.caption,
-    textAlign: "center",
     lineHeight: 18,
     marginTop: 12,
+    marginBottom: 0,
   },
   bioHit: {
     marginTop: 48,
-    width: 100,
-    height: 100,
-    borderRadius: 50,
+    width: 128,
+    height: 128,
+    borderRadius: 64,
     borderWidth: 2,
     borderColor: colors.fg,
     alignItems: "center",
     justifyContent: "center",
+    overflow: "hidden",
+  },
+  bioBusyOverlay: {
+    ...StyleSheet.absoluteFill,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.bg,
   },
   bioLabel: {
     fontFamily: "JetBrainsMono_400Regular",
@@ -357,8 +509,11 @@ const styles = StyleSheet.create({
     color: colors.fg,
     textAlign: "center",
   },
-  hint: {
+  hintWrap: {
     marginTop: "auto",
+    alignSelf: "stretch",
+  },
+  hint: {
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 12,
     color: colors.hint,

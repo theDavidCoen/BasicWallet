@@ -1,7 +1,8 @@
 import { useNavigation } from "@react-navigation/native";
 import { useEffect } from "react";
-import { Text, View } from "react-native";
+import { View } from "react-native";
 import type { RootNav } from "../navigation/types";
+import { Caption, Hint, ScreenTitle } from "../components/ui";
 import { useI18n } from "../i18n";
 import { armHomeTourIfNeeded } from "../home/homeTour";
 import { markWarmupSeen } from "../wallet/warmupSeen";
@@ -31,9 +32,9 @@ export function ReadyScreen() {
 
   return (
     <View style={ui.centerRoot}>
-      <Text style={ui.title}>{t("onboarding.readyTitle")}</Text>
-      <Text style={ui.caption}>{t("onboarding.readyCaption")}</Text>
-      <Text style={[ui.hint, { marginTop: 24 }]}>{t("onboarding.readyOpening")}</Text>
+      <ScreenTitle>{t("onboarding.readyTitle")}</ScreenTitle>
+      <Caption>{t("onboarding.readyCaption")}</Caption>
+      <Hint style={{ marginTop: 24 }}>{t("onboarding.readyOpening")}</Hint>
     </View>
   );
 }

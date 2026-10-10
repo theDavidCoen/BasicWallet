@@ -1,15 +1,9 @@
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import { useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, Caption, ScreenTitle } from "../components/ui";
 import { getNetworkConfig } from "../config/network";
 import { getWallet } from "../account/walletRegistry";
 import { requireUserPresence } from "../security/userPresence";
@@ -34,8 +28,8 @@ export function RemoveWalletScreen() {
   if (!wallet) {
     return (
       <ScreenChrome logoScale={0.77}>
-        <Text style={ui.title}>REMOVE WALLET?</Text>
-        <Text style={ui.caption}>Wallet not found.</Text>
+        <ScreenTitle>REMOVE WALLET?</ScreenTitle>
+        <Caption>Wallet not found.</Caption>
       </ScreenChrome>
     );
   }
@@ -62,12 +56,12 @@ export function RemoveWalletScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={ui.title}>{isPasskeyChild ? "ARCHIVE WALLET?" : "REMOVE WALLET?"}</Text>
-      <Text style={ui.caption}>
+      <ScreenTitle>{isPasskeyChild ? "ARCHIVE WALLET?" : "REMOVE WALLET?"}</ScreenTitle>
+      <Caption>
         {isPasskeyChild
           ? `${wallet.label} will leave your wallet list and move to Archived wallets.\nAfter a fresh install it stays archived until you restore it.`
           : `${wallet.label} will be deleted from this device.\nWithout a backup you cannot recover funds.`}
-      </Text>
+      </Caption>
 
       {!isPasskeyChild ? (
         <View style={ui.card}>
@@ -87,15 +81,15 @@ export function RemoveWalletScreen() {
       )}
 
       {!isPasskeyChild ? (
-        <Pressable
-          style={[ui.primaryBtn, { marginTop: 28 }, busy && { opacity: 0.6 }]}
+        <Button
+          style={{ marginTop: 28 }}
           disabled={busy}
           onPress={() =>
             navigation.navigate("ExportRecoveryPhrase", { walletId: wallet.id })
           }
         >
-          <Text style={ui.primaryBtnText}>Backup recovery phrase</Text>
-        </Pressable>
+          Backup recovery phrase
+        </Button>
       ) : null}
 
       <Pressable
@@ -112,13 +106,14 @@ export function RemoveWalletScreen() {
         )}
       </Pressable>
 
-      <Pressable
-        style={[ui.secondaryBtn, { marginTop: 16 }]}
+      <Button
+        variant="secondary"
+        style={{ marginTop: 16 }}
         disabled={busy}
         onPress={() => navigation.goBack()}
       >
-        <Text style={ui.secondaryBtnText}>Cancel</Text>
-      </Pressable>
+        Cancel
+      </Button>
     </ScreenChrome>
   );
 }

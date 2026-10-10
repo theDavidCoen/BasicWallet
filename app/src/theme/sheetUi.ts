@@ -5,17 +5,19 @@
 
 import { StyleSheet } from "react-native";
 import { colors } from "./colors";
+import { radii } from "./radii";
+import { fonts } from "./typography";
 
 export const sheetUi = StyleSheet.create({
   title: {
-    fontFamily: "JetBrainsMono_700Bold",
+    fontFamily: fonts.bold,
     fontSize: 20,
     color: colors.fg,
     textAlign: "center",
     marginTop: 4,
   },
   caption: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 13,
     color: colors.caption,
     textAlign: "center",
@@ -24,7 +26,7 @@ export const sheetUi = StyleSheet.create({
     lineHeight: 18,
   },
   hint: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 13,
     color: colors.hint,
     textAlign: "center",
@@ -32,7 +34,7 @@ export const sheetUi = StyleSheet.create({
     marginBottom: 16,
   },
   label: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 12,
     color: colors.caption,
     marginBottom: 8,
@@ -40,28 +42,28 @@ export const sheetUi = StyleSheet.create({
   input: {
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 10,
+    borderRadius: radii.sm,
     paddingHorizontal: 14,
     paddingVertical: 14,
     color: colors.fg,
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 16,
     marginBottom: 12,
   },
   primaryBtn: {
-    borderRadius: 10,
+    borderRadius: radii.sm,
     backgroundColor: colors.fg,
     paddingVertical: 16,
     alignItems: "center",
     marginTop: 12,
   },
   primaryBtnText: {
-    fontFamily: "JetBrainsMono_700Bold",
+    fontFamily: fonts.bold,
     fontSize: 14,
-    color: colors.bg,
+    color: colors.onPrimary,
   },
   secondaryBtn: {
-    borderRadius: 10,
+    borderRadius: radii.sm,
     borderWidth: 1,
     borderColor: colors.border,
     paddingVertical: 16,
@@ -69,7 +71,7 @@ export const sheetUi = StyleSheet.create({
     marginTop: 12,
   },
   secondaryBtnText: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 14,
     color: colors.fg,
   },

@@ -4,7 +4,6 @@
 
 import { useMemo, useState } from "react";
 import {
-  ActivityIndicator,
   Alert,
   Pressable,
   ScrollView,
@@ -14,6 +13,7 @@ import {
   View,
 } from "react-native";
 import { PassphraseInput } from "../components/PassphraseInput";
+import { Button, Caption, Hint, ScreenTitle, TextField } from "../components/ui";
 import {
   insertWallet,
   listWallets,
@@ -392,8 +392,17 @@ export function RestoreWalletContent({
 
   const body = (
     <>
-      <Text style={embedded ? styles.title : ui.title}>{title}</Text>
-      <Text style={embedded ? styles.caption : ui.caption}>{caption}</Text>
+      {embedded ? (
+        <>
+          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.caption}>{caption}</Text>
+        </>
+      ) : (
+        <>
+          <ScreenTitle>{title}</ScreenTitle>
+          <Caption>{caption}</Caption>
+        </>
+      )}
 
       {!seedOnly ? (
         <View style={styles.seg}>
@@ -428,29 +437,17 @@ export function RestoreWalletContent({
             placeholder={t("restore.seedPlaceholder")}
             placeholderTextColor={colors.hint}
           />
-          <Pressable
-            style={[ui.primaryBtn, busy && { opacity: 0.6 }]}
-            disabled={busy}
-            onPress={() => void onRestoreSeed()}
-          >
-            {busy ? (
-              <ActivityIndicator color="#000" />
-            ) : (
-              <Text style={ui.primaryBtnText}>
-                {seedOnly && embedded
-                  ? t("restore.importArkadeWallet")
-                  : t("restore.restoreArkadeFromSeed")}
-              </Text>
-            )}
-          </Pressable>
+          <Button busy={busy} onPress={() => void onRestoreSeed()}>
+            {seedOnly && embedded
+              ? t("restore.importArkadeWallet")
+              : t("restore.restoreArkadeFromSeed")}
+          </Button>
         </>
       ) : null}
 
       {!seedOnly && tab === "nsec" ? (
         <>
-          <Text style={[ui.hint, { marginTop: 8, marginBottom: 4 }]}>
-            {t("restore.nsecHint")}
-          </Text>
+          <Hint style={{ marginTop: 8, marginBottom: 4 }}>{t("restore.nsecHint")}</Hint>
           <Text style={styles.label}>{t("restore.nsecLabel")}</Text>
           <TextInput
             style={[styles.input, styles.nsecInput]}
@@ -465,72 +462,56 @@ export function RestoreWalletContent({
             placeholder={t("restore.nsecPlaceholder")}
             placeholderTextColor={colors.hint}
           />
-          <Text style={[ui.hint, { marginTop: 6 }]}>
-            {t("restore.nsecMustStart")}
-          </Text>
+          <Hint style={{ marginTop: 6 }}>{t("restore.nsecMustStart")}</Hint>
           <Text style={styles.label}>{t("restore.passphraseRequiredLabel")}</Text>
           <PassphraseInput
             value={passphrase}
             onChangeText={setPassphrase}
             placeholder="••••••••••••"
           />
-          <Text style={[ui.hint, { marginTop: 12 }]}>{t("restore.passphraseLossCaption")}</Text>
-          <Pressable
-            style={[ui.primaryBtn, busy && { opacity: 0.6 }]}
-            disabled={busy}
-            onPress={() => void onRestoreNsec()}
-          >
-            {busy ? (
-              <ActivityIndicator color="#000" />
-            ) : (
-              <Text style={ui.primaryBtnText}>{t("restore.restorePackage")}</Text>
-            )}
-          </Pressable>
+          <Hint style={{ marginTop: 12 }}>{t("restore.passphraseLossCaption")}</Hint>
+          <Button busy={busy} onPress={() => void onRestoreNsec()}>
+            {t("restore.restorePackage")}
+          </Button>
         </>
       ) : null}
 
       {!seedOnly && tab === "server" ? (
         <>
-          <Text style={[ui.hint, { marginTop: 8 }]}>
-            {t("restore.serverHint")}
-          </Text>
+          <Hint style={{ marginTop: 8 }}>{t("restore.serverHint")}</Hint>
           <Text style={styles.label}>{t("restore.serverUrlLabel")}</Text>
-          <TextInput
-            style={styles.input}
+          <TextField
+            style={{ fontSize: 14, marginBottom: 0 }}
             value={serverUrl}
             onChangeText={setServerUrl}
             autoCapitalize="none"
             placeholder={t("restore.serverUrlPlaceholder")}
-            placeholderTextColor={colors.hint}
           />
           <Text style={styles.label}>{t("restore.usernameLabel")}</Text>
-          <TextInput
-            style={styles.input}
+          <TextField
+            style={{ fontSize: 14, marginBottom: 0 }}
             value={serverUser}
             onChangeText={setServerUser}
             autoCapitalize="none"
             placeholder={t("restore.usernamePlaceholder")}
-            placeholderTextColor={colors.hint}
           />
           <Text style={styles.label}>{t("restore.appPasswordLabel")}</Text>
-          <TextInput
-            style={styles.input}
+          <TextField
+            style={{ fontSize: 14, marginBottom: 0 }}
             value={serverAppPassword}
             onChangeText={setServerAppPassword}
             autoCapitalize="none"
             secureTextEntry
             placeholder={t("restore.appPasswordPlaceholder")}
-            placeholderTextColor={colors.hint}
           />
           <Text style={styles.label}>{t("restore.orBearerLabel")}</Text>
-          <TextInput
-            style={styles.input}
+          <TextField
+            style={{ fontSize: 14, marginBottom: 0 }}
             value={serverToken}
             onChangeText={setServerToken}
             autoCapitalize="none"
             secureTextEntry
             placeholder={t("restore.optionalPlaceholder")}
-            placeholderTextColor={colors.hint}
           />
           <Text style={styles.label}>{t("restore.nsecLabel")}</Text>
           <TextInput
@@ -549,18 +530,10 @@ export function RestoreWalletContent({
             onChangeText={setPassphrase}
             placeholder="••••••••••••"
           />
-          <Text style={[ui.hint, { marginTop: 12 }]}>{t("restore.passphraseLossCaption")}</Text>
-          <Pressable
-            style={[ui.primaryBtn, busy && { opacity: 0.6 }]}
-            disabled={busy}
-            onPress={() => void onRestoreServer()}
-          >
-            {busy ? (
-              <ActivityIndicator color="#000" />
-            ) : (
-              <Text style={ui.primaryBtnText}>{t("restore.restoreFromServer")}</Text>
-            )}
-          </Pressable>
+          <Hint style={{ marginTop: 12 }}>{t("restore.passphraseLossCaption")}</Hint>
+          <Button busy={busy} onPress={() => void onRestoreServer()}>
+            {t("restore.restoreFromServer")}
+          </Button>
         </>
       ) : null}
 

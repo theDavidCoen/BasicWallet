@@ -1,9 +1,10 @@
 import { useCallback, useState } from "react";
-import { Pressable, StyleSheet, Switch, Text, View } from "react-native";
+import { Switch } from "react-native";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import * as ScreenCapture from "expo-screen-capture";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Caption, ScreenTitle, SettingsRow } from "../components/ui";
 import { useI18n } from "../i18n";
 import { hasAppPin } from "../security/appPin";
 import {
@@ -17,9 +18,8 @@ import {
   type PrivacySettings,
 } from "../security/privacySettings";
 import { colors } from "../theme/colors";
-import { ui } from "../theme/ui";
 
-/** Penpot 05c Privacy — biometrics lock · app PIN · block screenshots. */
+/** Privacy — biometrics lock · app PIN · block screenshots. */
 export function PrivacyScreen() {
   const navigation = useNavigation<RootNav>();
   const { t } = useI18n();
@@ -57,9 +57,7 @@ export function PrivacyScreen() {
   if (!settings) {
     return (
       <ScreenChrome logoScale={0.77}>
-        <Text style={ui.title}>
-          {t("privacy.title")}
-        </Text>
+        <ScreenTitle>{t("privacy.title")}</ScreenTitle>
       </ScreenChrome>
     );
   }
@@ -74,10 +72,8 @@ export function PrivacyScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={ui.title}>
-        {t("privacy.title")}
-      </Text>
-      <Text style={ui.caption}>{t("privacy.caption")}</Text>
+      <ScreenTitle>{t("privacy.title")}</ScreenTitle>
+      <Caption>{t("privacy.caption")}</Caption>
 
       <ToggleRow
         label={t("privacy.biometricsLock")}
@@ -91,57 +87,39 @@ export function PrivacyScreen() {
       />
 
       {osBio && !osBio.available ? (
-        <Pressable style={styles.row} onPress={() => void openOsSecuritySettings()}>
-          <View style={styles.rowText}>
-            <Text style={styles.label}>
-              {t("privacy.enableOsBiometrics")}
-            </Text>
-            <Text style={styles.hint}>{t("privacy.enableOsBiometricsHint")}</Text>
-          </View>
-          <Text style={styles.chevron}>›</Text>
-        </Pressable>
+        <SettingsRow
+          label={t("privacy.enableOsBiometrics")}
+          hint={t("privacy.enableOsBiometricsHint")}
+          onPress={() => void openOsSecuritySettings()}
+        />
       ) : null}
 
-      <Pressable
-        style={styles.row}
+      <SettingsRow
+        label={t("privacy.appPin")}
+        hint={
+          pinSet
+            ? osBio?.available
+              ? t("privacy.appPinSetBioOn")
+              : t("privacy.appPinSetBioOff")
+            : osBio?.available
+              ? t("privacy.appPinUnsetBioOn")
+              : t("privacy.appPinUnsetBioOff")
+        }
         onPress={() =>
           navigation.navigate("SetAppPin", { intent: pinSet ? "change" : "set" })
         }
-      >
-        <View style={styles.rowText}>
-          <Text style={styles.label}>
-            {t("privacy.appPin")}
-          </Text>
-          <Text style={styles.hint}>
-            {pinSet
-              ? osBio?.available
-                ? t("privacy.appPinSetBioOn")
-                : t("privacy.appPinSetBioOff")
-              : osBio?.available
-                ? t("privacy.appPinUnsetBioOn")
-                : t("privacy.appPinUnsetBioOff")}
-          </Text>
-        </View>
-        <Text style={styles.chevron}>›</Text>
-      </Pressable>
+      />
 
       {pinSet ? (
-        <Pressable
-          style={styles.row}
+        <SettingsRow
+          label={t("privacy.removeAppPin")}
+          hint={
+            osBio?.available
+              ? t("privacy.removeAppPinHintBioOn")
+              : t("privacy.removeAppPinHintBioOff")
+          }
           onPress={() => navigation.navigate("SetAppPin", { intent: "remove" })}
-        >
-          <View style={styles.rowText}>
-            <Text style={styles.label}>
-              {t("privacy.removeAppPin")}
-            </Text>
-            <Text style={styles.hint}>
-              {osBio?.available
-                ? t("privacy.removeAppPinHintBioOn")
-                : t("privacy.removeAppPinHintBioOff")}
-            </Text>
-          </View>
-          <Text style={styles.chevron}>›</Text>
-        </Pressable>
+        />
       ) : null}
 
       <ToggleRow
@@ -166,49 +144,18 @@ function ToggleRow({
   onChange: (v: boolean) => void;
 }) {
   return (
-    <Pressable style={styles.row} onPress={() => onChange(!value)}>
-      <View style={styles.rowText}>
-        <Text style={styles.label}>
-          {label}
-        </Text>
-        <Text style={styles.hint}>{hint}</Text>
-      </View>
-      <Switch
-        value={value}
-        onValueChange={onChange}
-        trackColor={{ false: colors.border, true: colors.fg }}
-        thumbColor="#000000"
-      />
-    </Pressable>
+    <SettingsRow
+      label={label}
+      hint={hint}
+      onPress={() => onChange(!value)}
+      right={
+        <Switch
+          value={value}
+          onValueChange={onChange}
+          trackColor={{ false: colors.border, true: colors.fg }}
+          thumbColor={colors.onPrimary}
+        />
+      }
+    />
   );
 }
-
-const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 16,
-    paddingVertical: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  rowText: { flex: 1 },
-  label: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 15,
-    color: colors.fg,
-  },
-  hint: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 12,
-    color: colors.hint,
-    marginTop: 4,
-    lineHeight: 16,
-  },
-  chevron: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 18,
-    color: colors.hint,
-  },
-});

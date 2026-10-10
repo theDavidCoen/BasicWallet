@@ -6,7 +6,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
   PanResponder,
-  Pressable,
   StyleSheet,
   Text,
   View,
@@ -18,6 +17,7 @@ import {
   formatEntropyMeter,
   type MotionEntropyCollector,
 } from "../onboarding/motionEntropy";
+import { Button } from "../components/ui";
 import { colors } from "../theme/colors";
 
 type Props = {
@@ -90,13 +90,13 @@ export function AddEntropyPanel({ onComplete }: Props) {
 
       <Text style={styles.meter}>{formatEntropyMeter(progress)}</Text>
 
-      <Pressable
-        style={[styles.primary, !ready && { opacity: 0.4 }]}
+      <Button
+        style={{ marginTop: 0 }}
         disabled={!ready}
         onPress={() => onComplete(collectorRef.current.digest())}
       >
-        <Text style={styles.primaryText}>Continue to name wallet</Text>
-      </Pressable>
+        Continue to name wallet
+      </Button>
     </View>
   );
 }
@@ -149,16 +149,5 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 12,
     marginBottom: 16,
-  },
-  primary: {
-    borderRadius: 10,
-    backgroundColor: colors.fg,
-    paddingVertical: 16,
-    alignItems: "center",
-  },
-  primaryText: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 14,
-    color: colors.bg,
   },
 });

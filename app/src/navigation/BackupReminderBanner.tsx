@@ -11,6 +11,8 @@ import {
 import { useHomeTourUiOpen } from "../home/useHomeTourUiOpen";
 import { isBackupReminderPending } from "../wallet/backupReminder";
 import { colors } from "../theme/colors";
+import { fonts } from "../theme/typography";
+import { radii } from "../theme/radii";
 import { useWallet } from "../wallet/WalletProvider";
 import { useSheets } from "./SheetHost";
 
@@ -171,21 +173,21 @@ const styles = StyleSheet.create({
   },
   dialog: {
     backgroundColor: colors.card,
-    borderRadius: 12,
+    borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.fg,
     paddingVertical: 14,
     paddingHorizontal: 16,
   },
   title: {
-    fontFamily: "JetBrainsMono_700Bold",
+    fontFamily: fonts.bold,
     fontSize: 14,
     color: colors.fg,
     textAlign: "center",
     marginBottom: 6,
   },
   body: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 12,
     color: colors.caption,
     textAlign: "center",

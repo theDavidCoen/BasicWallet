@@ -6,16 +6,14 @@ import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Pressable,
   ScrollView,
   StyleSheet,
   Switch,
   Text,
-  TextInput,
-  View,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, Caption, ScreenTitle, SettingsRow, TextField } from "../components/ui";
 import { getNetworkConfig } from "../config/network";
 import {
   DEFAULT_DELEGATE_URL,
@@ -30,7 +28,7 @@ import { useI18n } from "../i18n";
 import { clearOpenWallet } from "../wallet/hdWallet";
 import { useWallet } from "../wallet/WalletProvider";
 import { colors } from "../theme/colors";
-import { ui } from "../theme/ui";
+import { fonts } from "../theme/typography";
 
 export function DelegatesScreen() {
   const { t } = useI18n();
@@ -108,7 +106,7 @@ export function DelegatesScreen() {
   if (!settings) {
     return (
       <ScreenChrome logoScale={0.77}>
-        <Text style={ui.title}>{t("arkade.delegatesTitle")}</Text>
+        <ScreenTitle>{t("arkade.delegatesTitle")}</ScreenTitle>
         <ActivityIndicator color={colors.fg} style={{ marginTop: 24 }} />
       </ScreenChrome>
     );
@@ -122,59 +120,61 @@ export function DelegatesScreen() {
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ paddingBottom: 40 }}
       >
-        <Text style={ui.title}>{t("arkade.delegatesTitle")}</Text>
-        <Text style={ui.caption}>{t("arkade.delegatesCaption")}</Text>
+        <ScreenTitle>{t("arkade.delegatesTitle")}</ScreenTitle>
+        <Caption>{t("arkade.delegatesCaption")}</Caption>
 
-        <View style={styles.row}>
-          <View style={styles.rowText}>
-            <Text style={styles.label}>{t("arkade.useDelegate")}</Text>
-            <Text style={styles.hint}>{t("arkade.useDelegateHint")}</Text>
-          </View>
-          <Switch
-            value={settings.enabled}
-            disabled={busy}
-            onValueChange={(v) => void applyAndReopen({ ...settings, enabled: v })}
-            trackColor={{ false: colors.border, true: colors.fg }}
-            thumbColor="#000"
-          />
-        </View>
+        <SettingsRow
+          label={t("arkade.useDelegate")}
+          hint={t("arkade.useDelegateHint")}
+          disabled={busy}
+          onPress={() => void applyAndReopen({ ...settings, enabled: !settings.enabled })}
+          right={
+            <Switch
+              value={settings.enabled}
+              disabled={busy}
+              onValueChange={(v) => void applyAndReopen({ ...settings, enabled: v })}
+              trackColor={{ false: colors.border, true: colors.fg }}
+              thumbColor={colors.onPrimary}
+            />
+          }
+        />
 
         {settings.enabled ? (
           <>
-            <View style={styles.row}>
-              <View style={styles.rowText}>
-                <Text style={styles.label}>{t("arkade.arkadeDefault")}</Text>
-                <Text style={styles.hint} numberOfLines={2}>
-                  {defaultUrl}
-                </Text>
-              </View>
-              <Switch
-                value={settings.useDefault}
-                disabled={busy}
-                onValueChange={(v) =>
-                  void applyAndReopen({ ...settings, useDefault: v })
-                }
-                trackColor={{ false: colors.border, true: colors.fg }}
-                thumbColor="#000"
-              />
-            </View>
+            <SettingsRow
+              label={t("arkade.arkadeDefault")}
+              hint={defaultUrl}
+              disabled={busy}
+              onPress={() =>
+                void applyAndReopen({ ...settings, useDefault: !settings.useDefault })
+              }
+              right={
+                <Switch
+                  value={settings.useDefault}
+                  disabled={busy}
+                  onValueChange={(v) =>
+                    void applyAndReopen({ ...settings, useDefault: v })
+                  }
+                  trackColor={{ false: colors.border, true: colors.fg }}
+                  thumbColor={colors.onPrimary}
+                />
+              }
+            />
 
             {!settings.useDefault ? (
               <>
                 <Text style={styles.fieldLabel}>{t("arkade.customServer")}</Text>
-                <TextInput
+                <TextField
                   value={customDraft}
                   onChangeText={setCustomDraft}
                   autoCapitalize="none"
                   autoCorrect={false}
                   placeholder="https://delegate.example.com"
-                  placeholderTextColor={colors.hint}
                   style={styles.input}
                   editable={!busy}
                 />
-                <Pressable
-                  style={[ui.primaryBtn, busy && { opacity: 0.6 }]}
-                  disabled={busy}
+                <Button
+                  busy={busy}
                   onPress={() => {
                     const url = normalizeDelegateUrl(customDraft);
                     if (!url) {
@@ -188,17 +188,13 @@ export function DelegatesScreen() {
                     });
                   }}
                 >
-                  {busy ? (
-                    <ActivityIndicator color="#000" />
-                  ) : (
-                    <Text style={ui.primaryBtnText}>{t("arkade.saveCustom")}</Text>
-                  )}
-                </Pressable>
+                  {t("arkade.saveCustom")}
+                </Button>
               </>
             ) : null}
 
             {probeLine ? (
-              <Text style={[ui.hint, { marginTop: 20 }]}>{probeLine}</Text>
+              <Text style={styles.probeHint}>{probeLine}</Text>
             ) : null}
           </>
         ) : null}
@@ -208,26 +204,13 @@ export function DelegatesScreen() {
 }
 
 const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-    gap: 12,
-  },
-  rowText: { flex: 1 },
-  label: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 15,
-    color: colors.fg,
-  },
-  hint: {
-    fontFamily: "JetBrainsMono_400Regular",
+  probeHint: {
+    fontFamily: fonts.regular,
     fontSize: 12,
     color: colors.hint,
-    marginTop: 4,
+    textAlign: "center",
+    lineHeight: 18,
+    marginTop: 20,
   },
   fieldLabel: {
     fontFamily: "JetBrainsMono_400Regular",

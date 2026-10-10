@@ -43,8 +43,9 @@ import {
   writeChatHubNotifPrompt,
   writePushNotificationPrefs,
 } from "../notifications";
+import { Button, Caption, EmptyStateCard, ScreenTitle } from "../components/ui";
 import { colors } from "../theme/colors";
-import { ui } from "../theme/ui";
+import { fonts } from "../theme/typography";
 
 function formatDay(ms: number | null): string {
   if (!ms) return "";
@@ -277,8 +278,8 @@ export function PayHubScreen() {
 
   return (
     <ScreenChrome logoScale={0.77} headerRight={notifOffBadge}>
-      <Text style={ui.title}>{t("chat.hubTitle")}</Text>
-      <Text style={ui.caption}>{t("chat.hubCaption")}</Text>
+      <ScreenTitle>{t("chat.hubTitle")}</ScreenTitle>
+      <Caption>{t("chat.hubCaption")}</Caption>
 
       <Modal
         visible={showNotifPrompt}
@@ -387,14 +388,17 @@ export function PayHubScreen() {
         ) : null}
 
         {rows.length === 0 ? (
-          <View style={styles.emptyCard}>
+          <EmptyStateCard
+            variant="muted"
+            style={styles.emptyCard}
+          >
             <Text style={styles.emptyTitle}>
               {botContact ? t("chat.noContactChatsYet") : t("chat.noChatsYet")}
             </Text>
             <Text style={styles.emptyBody}>
               {botContact ? t("chat.emptyWithBot") : t("chat.emptyWithoutBot")}
             </Text>
-          </View>
+          </EmptyStateCard>
         ) : (
           rows.map((row) => (
             <ThreadRow
@@ -446,16 +450,13 @@ export function PayHubScreen() {
         ) : null}
       </ScrollView>
 
-      <Pressable
-        style={ui.secondaryBtn}
+      <Button
+        variant="secondary"
         onPress={() => navigation.navigate("Contacts", { selectForChat: true })}
-        accessibilityRole="button"
         accessibilityLabel={t("chat.openContacts")}
       >
-        <Text style={ui.secondaryBtnText}>
-          {t("chat.openContacts")}
-        </Text>
-      </Pressable>
+        {t("chat.openContacts")}
+      </Button>
     </ScreenChrome>
   );
 }
@@ -607,22 +608,19 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   emptyCard: {
-    backgroundColor: colors.card,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
     padding: 20,
+    marginTop: 0,
     marginBottom: 12,
   },
   emptyTitle: {
-    fontFamily: "JetBrainsMono_700Bold",
+    fontFamily: fonts.bold,
     fontSize: 16,
     color: colors.fg,
     textAlign: "center",
     marginBottom: 10,
   },
   emptyBody: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 13,
     color: colors.caption,
     textAlign: "center",

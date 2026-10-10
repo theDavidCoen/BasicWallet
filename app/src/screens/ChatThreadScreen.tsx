@@ -103,8 +103,9 @@ import { hasNostrIdentity } from "../nostr/identityStore";
 import { requireUserPresence } from "../security/userPresence";
 import { useWallet } from "../wallet/WalletProvider";
 import type { BasicWallet } from "../wallet/hdWallet";
+import { Button, Caption, EmptyStateCard, ScreenTitle } from "../components/ui";
 import { colors } from "../theme/colors";
-import { ui } from "../theme/ui";
+import { fonts } from "../theme/typography";
 import { DEFAULT_MIN_VTXO_SATS } from "../wallet/arkMultiSend";
 
 function formatTime(ms: number): string {
@@ -880,16 +881,15 @@ export function ChatThreadScreen() {
   if (!contact) {
     return (
       <ScreenChrome logoScale={0.77}>
-        <Text style={ui.title}>{t("chat.threadTitle")}</Text>
-        <Text style={ui.caption}>{t("chat.contactNotFound")}</Text>
-        <Pressable
-          style={ui.secondaryBtn}
+        <ScreenTitle>{t("chat.threadTitle")}</ScreenTitle>
+        <Caption>{t("chat.contactNotFound")}</Caption>
+        <Button
+          variant="secondary"
           onPress={() => navigation.goBack()}
-          accessibilityRole="button"
           accessibilityLabel={t("common.back")}
         >
-          <Text style={ui.secondaryBtnText}>{t("common.back")}</Text>
-        </Pressable>
+          {t("common.back")}
+        </Button>
       </ScreenChrome>
     );
   }
@@ -978,7 +978,7 @@ export function ChatThreadScreen() {
           ]}
           keyboardShouldPersistTaps="handled"
           ListEmptyComponent={
-            <View style={styles.emptyCard}>
+            <EmptyStateCard variant="muted" style={styles.emptyCard}>
               <Text style={styles.emptyTitle}>
                 {isBot ? t("chat.askAnything") : t("chat.noMessagesYet")}
               </Text>
@@ -1000,7 +1000,7 @@ export function ChatThreadScreen() {
                     </Pressable>
                   ))
                 : null}
-            </View>
+            </EmptyStateCard>
           }
           renderItem={({ item }) => {
             const outgoing = item.direction === "out";
@@ -1083,30 +1083,23 @@ export function ChatThreadScreen() {
 
         {!isBot ? (
           <View style={styles.actionBar}>
-            <Pressable
+            <Button
+              variant="secondary"
               style={[styles.actionBtn, !canNostr && styles.actionDisabled]}
+              textStyle={styles.actionBtnText}
               onPress={openRequest}
-              accessibilityRole="button"
               accessibilityLabel={t("chat.requestA11y")}
             >
-              <Text style={styles.actionBtnText}>
-                {t("chat.request")}
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[styles.actionBtn, styles.actionBtnPrimary]}
+              {t("chat.request")}
+            </Button>
+            <Button
+              style={styles.actionBtnPrimary}
+              textStyle={styles.actionBtnPrimaryText}
               onPress={openSend}
-              accessibilityRole="button"
               accessibilityLabel={t("chat.sendA11y")}
             >
-              <Text
-                style={[
-                  styles.actionBtnText,
-                  styles.actionBtnPrimaryText
-                ]}>
-                {t("chat.send")}
-              </Text>
-            </Pressable>
+              {t("chat.send")}
+            </Button>
           </View>
         ) : null}
 
@@ -1227,11 +1220,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   emptyCard: {
-    backgroundColor: colors.card,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
     padding: 20,
+    marginTop: 0,
   },
   emptyTitle: {
     fontFamily: "JetBrainsMono_700Bold",
@@ -1277,23 +1267,25 @@ const styles = StyleSheet.create({
   },
   actionBtn: {
     flex: 1,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
+    marginTop: 0,
     paddingVertical: 14,
-    alignItems: "center",
   },
   actionDisabled: { opacity: 0.45 },
   actionBtnPrimary: {
-    backgroundColor: colors.fg,
-    borderColor: colors.fg,
+    flex: 1,
+    marginTop: 0,
+    paddingVertical: 14,
   },
   actionBtnText: {
-    fontFamily: "JetBrainsMono_700Bold",
+    fontFamily: fonts.bold,
     fontSize: 14,
     color: colors.fg,
   },
-  actionBtnPrimaryText: { color: "#000" },
+  actionBtnPrimaryText: {
+    fontFamily: fonts.bold,
+    fontSize: 14,
+    color: colors.onPrimary,
+  },
   composerRow: {
     flexDirection: "row",
     alignItems: "flex-end",
@@ -1325,7 +1317,7 @@ const styles = StyleSheet.create({
   sendDraftText: {
     fontFamily: "JetBrainsMono_700Bold",
     fontSize: 18,
-    color: "#000",
+    color: colors.onPrimary,
   },
   slashStrip: {
     gap: 8,

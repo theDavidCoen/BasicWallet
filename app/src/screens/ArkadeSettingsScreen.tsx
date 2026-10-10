@@ -3,13 +3,11 @@
  */
 
 import { useNavigation } from "@react-navigation/native";
-import { Pressable, ScrollView, StyleSheet, Text } from "react-native";
+import { ScrollView, StyleSheet } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { ScreenTitle, SettingsRow } from "../components/ui";
 import { useI18n } from "../i18n";
-import { colors } from "../theme/colors";
-
-const DANGER = "#E07070";
 
 type Row = {
   labelKey: string;
@@ -38,12 +36,13 @@ export function ArkadeSettingsScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={styles.title}>{t("arkade.title")}</Text>
+      <ScreenTitle style={styles.title}>{t("arkade.title")}</ScreenTitle>
       <ScrollView style={styles.list} contentContainerStyle={{ paddingBottom: 40 }}>
         {ROWS.map((row) => (
-          <Pressable
+          <SettingsRow
             key={row.labelKey}
-            style={styles.row}
+            label={t(row.labelKey)}
+            danger={row.danger}
             onPress={() => {
               if (row.on === "RestoreWallet") {
                 // Settings path: seed only. Home/Nostr package restore stays on
@@ -57,12 +56,7 @@ export function ArkadeSettingsScreen() {
               }
               navigation.navigate(row.on);
             }}
-          >
-            <Text style={[styles.rowLabel, row.danger && styles.dangerLabel]}>
-              {t(row.labelKey)}
-            </Text>
-            <Text style={[styles.chevron, row.danger && styles.dangerLabel]}>›</Text>
-          </Pressable>
+          />
         ))}
       </ScrollView>
     </ScreenChrome>
@@ -71,32 +65,8 @@ export function ArkadeSettingsScreen() {
 
 const styles = StyleSheet.create({
   title: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 20,
-    color: colors.fg,
-    textAlign: "center",
     marginVertical: 16,
+    marginBottom: 16,
   },
   list: { flex: 1 },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  rowLabel: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 16,
-    color: colors.fg,
-    flex: 1,
-    paddingRight: 12,
-  },
-  chevron: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 16,
-    color: colors.caption,
-  },
-  dangerLabel: { color: DANGER },
 });

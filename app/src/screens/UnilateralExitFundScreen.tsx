@@ -6,11 +6,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import * as Clipboard from "expo-clipboard";
@@ -24,6 +22,7 @@ import type { ExitPackage } from "@arkade-os/sdk";
 import { ExitStepHeader, EXIT_STEP } from "../components/ExitStepHeader";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, TextField } from "../components/ui";
 import { getNetworkConfig } from "../config/network";
 import { requireExitAuth, canRevealExitSecrets } from "../exit/gates";
 import { createFeeOnchainWallet, pollFeeBalance } from "../exit/feeWallet";
@@ -178,12 +177,9 @@ export function UnilateralExitFundScreen() {
       <ScreenChrome logoScale={0.77}>
         <ExitStepHeader step={EXIT_STEP.fundFees} title={t("exit.fundTitle")} />
         <Text style={ui.caption}>{t("exit.noPackageStep2")}</Text>
-        <Pressable
-          style={ui.primaryBtn}
-          onPress={() => navigation.navigate("UnilateralExitPrepare")}
-        >
-          <Text style={ui.primaryBtnText}>{t("exit.goToPrepare")}</Text>
-        </Pressable>
+        <Button onPress={() => navigation.navigate("UnilateralExitPrepare")}>
+              {t("exit.goToPrepare")}
+            </Button>
       </ScreenChrome>
     );
   }
@@ -224,11 +220,9 @@ export function UnilateralExitFundScreen() {
               state: funded ? t("exit.feeReady") : t("exit.feeWaiting"),
             })}
           </Text>
-          <Pressable style={ui.secondaryBtn} onPress={() => void onCopyFee()}>
-            <Text style={ui.secondaryBtnText}>
+          <Button variant="secondary" onPress={() => void onCopyFee()}>
               {t("exit.copyFeeAddress")}
-            </Text>
-          </Pressable>
+            </Button>
         </View>
 
         <Text style={styles.warn}>
@@ -236,27 +230,22 @@ export function UnilateralExitFundScreen() {
         </Text>
 
         <Text style={styles.label}>{t("exit.esploraLabel")}</Text>
-        <TextInput
+        <TextField
           value={esploraOverride}
           onChangeText={setEsploraOverride}
           autoCapitalize="none"
           autoCorrect={false}
           placeholder={network.esploraUrl}
-          placeholderTextColor={colors.hint}
-          style={styles.input}
+          style={{ fontSize: 13, paddingVertical: 12, marginBottom: 8 }}
         />
 
         {mismatch ? (
-          <Pressable
-            style={ui.secondaryBtn}
-            onPress={() => navigation.navigate("UnilateralExitPrepare")}
-          >
-            <Text style={ui.secondaryBtnText}>{t("exit.repreparePackage")}</Text>
-          </Pressable>
+          <Button variant="secondary" onPress={() => navigation.navigate("UnilateralExitPrepare")}>
+              {t("exit.repreparePackage")}
+            </Button>
         ) : null}
 
-        <Pressable
-          style={[ui.primaryBtn, (!funded || !!mismatch) && { opacity: 0.5 }]}
+        <Button
           disabled={!funded || !!mismatch}
           onPress={() =>
             navigation.navigate("UnilateralExitExecute", {
@@ -264,14 +253,12 @@ export function UnilateralExitFundScreen() {
             })
           }
         >
-          <Text style={ui.primaryBtnText}>
-            {mismatch
-              ? t("exit.fixPackageFirst")
-              : funded
-                ? t("exit.continueStartExecute")
-                : t("exit.waitingFeeFunds")}
-          </Text>
-        </Pressable>
+          {mismatch
+            ? t("exit.fixPackageFirst")
+            : funded
+              ? t("exit.continueStartExecute")
+              : t("exit.waitingFeeFunds")}
+        </Button>
       </ScrollView>
     </ScreenChrome>
   );
@@ -326,16 +313,5 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.fg,
     lineHeight: 20,
-  },
-  input: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 13,
-    color: colors.fg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 8,
   },
 });

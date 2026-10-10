@@ -1,7 +1,6 @@
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { useCallback, useState, type ReactNode } from "react";
 import {
-  ActivityIndicator,
   Alert,
   Pressable,
   ScrollView,
@@ -11,6 +10,7 @@ import {
 } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, Caption, Hint, ScreenTitle } from "../components/ui";
 import { mnemonicFromEntropy, randomEntropy32 } from "../onboarding/mnemonicFromEntropy";
 import {
   readBackupMeta,
@@ -66,13 +66,13 @@ export function AdvancedBackupScreen() {
   return (
     <ScreenChrome logoScale={0.77}>
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-        <Text style={ui.title}>{t("backup.title")}</Text>
+        <ScreenTitle>{t("backup.title")}</ScreenTitle>
         {passkeyOn ? (
-          <Text style={ui.caption}>{t("backup.captionPasskey")}</Text>
+          <Caption>{t("backup.captionPasskey")}</Caption>
         ) : !hasWallet ? (
-          <Text style={ui.caption}>{t("backup.captionOnboarding")}</Text>
+          <Caption>{t("backup.captionOnboarding")}</Caption>
         ) : (
-          <Text style={ui.caption}>{t("backup.captionDefault")}</Text>
+          <Caption>{t("backup.captionDefault")}</Caption>
         )}
 
         <BackupCard
@@ -109,22 +109,16 @@ export function AdvancedBackupScreen() {
           </Pressable>
         ) : null}
 
-        <Text style={[ui.hint, { marginTop: 24 }]}>{t("backup.passphraseLossCaption")}</Text>
+        <Hint style={{ marginTop: 24 }}>{t("backup.passphraseLossCaption")}</Hint>
 
         {!hasWallet ? (
-          <Pressable
-            style={[ui.primaryBtn, { marginTop: 28 }, busy && { opacity: 0.6 }]}
-            disabled={busy}
+          <Button
+            style={{ marginTop: 28 }}
+            busy={busy}
             onPress={() => void onContinueWithoutBackup()}
           >
-            {busy ? (
-              <ActivityIndicator color="#000" />
-            ) : (
-              <Text style={ui.primaryBtnText}>
-                {t("backup.continueWithoutBackup")}
-              </Text>
-            )}
-          </Pressable>
+            {t("backup.continueWithoutBackup")}
+          </Button>
         ) : null}
       </ScrollView>
     </ScreenChrome>

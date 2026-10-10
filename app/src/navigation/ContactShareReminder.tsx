@@ -30,7 +30,10 @@ import { unregisterPushBestEffort } from "../notifications/register";
 import { useHomeTourUiOpen } from "../home/useHomeTourUiOpen";
 import { useWallet } from "../wallet/WalletProvider";
 import { useSheets } from "./SheetHost";
+import { Hint } from "../components/ui";
 import { colors } from "../theme/colors";
+import { fonts } from "../theme/typography";
+import { radii } from "../theme/radii";
 
 export function ContactShareReminder({
   navigationRef,
@@ -194,7 +197,7 @@ export function ContactShareReminder({
           <Text style={styles.body}>
             {fromLabel} shared “{contactName}”. Tap to review and add or refuse.
           </Text>
-          <Text style={styles.cta}>Tap to open</Text>
+          <Hint style={styles.cta}>Tap to open</Hint>
         </Pressable>
       </Animated.View>
     </View>
@@ -212,12 +215,13 @@ const styles = StyleSheet.create({
   },
   dialog: {
     backgroundColor: colors.card,
-    borderRadius: 12,
+    borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.fg,
     paddingTop: 14,
     paddingBottom: 14,
     paddingHorizontal: 16,
+    marginTop: 0,
   },
   closeHit: {
     position: "absolute",
@@ -251,10 +255,11 @@ const styles = StyleSheet.create({
     lineHeight: 17,
   },
   cta: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 11,
     color: colors.hint,
     textAlign: "center",
     marginTop: 10,
+    lineHeight: 16,
   },
 });

@@ -3,15 +3,8 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-} from "react-native";
+import { Alert, ScrollView, StyleSheet, Text } from "react-native";
+import { Button, Caption, ScreenTitle, TextField } from "../components/ui";
 import * as Clipboard from "expo-clipboard";
 import { getNetworkConfig } from "../config/network";
 import {
@@ -110,21 +103,19 @@ export function ConnectBtcPaySheetContent({ open, onConnected }: Props) {
         contentContainerStyle={{ paddingBottom: 24 }}
         style={{ flex: 1 }}
       >
-        <Text style={sheetUi.title}>BTCPAY</Text>
-        <Text style={sheetUi.caption}>
-          BTCPay → Services → LND (REST).{"\n"}
-          Scan the pairing QR or paste the config.
-        </Text>
+        <ScreenTitle style={sheetUi.title}>BTCPAY</ScreenTitle>
+        <Caption style={sheetUi.caption}>
+          {"BTCPay → Services → LND (REST).\nScan the pairing QR or paste the config."}
+        </Caption>
 
         <Text style={styles.fieldLabel}>config</Text>
-        <TextInput
+        <TextField
           value={payload}
           onChangeText={setPayload}
           autoCapitalize="none"
           autoCorrect={false}
           multiline
           placeholder="Paste config from BTCPay"
-          placeholderTextColor={colors.hint}
           style={[styles.input, styles.inputMulti]}
           editable={!busy}
           textContentType="none"
@@ -132,33 +123,27 @@ export function ConnectBtcPaySheetContent({ open, onConnected }: Props) {
           importantForAutofill="no"
         />
 
-        <Pressable
-          style={sheetUi.secondaryBtn}
+        <Button
+          size="sheet"
+          variant="secondary"
           disabled={busy}
           onPress={() => void onPasteClipboard()}
         >
-          <Text style={sheetUi.secondaryBtnText}>Paste from clipboard</Text>
-        </Pressable>
+          Paste from clipboard
+        </Button>
 
-        <Pressable
-          style={sheetUi.secondaryBtn}
+        <Button
+          size="sheet"
+          variant="secondary"
           disabled={busy}
           onPress={() => setScanOpen(true)}
         >
-          <Text style={sheetUi.secondaryBtnText}>Scan pairing QR</Text>
-        </Pressable>
+          Scan pairing QR
+        </Button>
 
-        <Pressable
-          style={[sheetUi.primaryBtn, busy && { opacity: 0.6 }]}
-          disabled={busy}
-          onPress={() => void connectWithRaw(payload)}
-        >
-          {busy ? (
-            <ActivityIndicator color="#000" />
-          ) : (
-            <Text style={sheetUi.primaryBtnText}>Connect BTCPay</Text>
-          )}
-        </Pressable>
+        <Button size="sheet" busy={busy} onPress={() => void connectWithRaw(payload)}>
+          Connect BTCPay
+        </Button>
 
         <Text style={[sheetUi.hint, { marginTop: 20 }]}>
           Payments only — no channel management.{"\n"}

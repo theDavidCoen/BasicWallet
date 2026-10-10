@@ -6,7 +6,6 @@ import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -38,8 +37,15 @@ import type { ExitJobRecord } from "../exit/jobStore";
 import { getOpenWallet } from "../wallet/hdWallet";
 import { useWallet } from "../wallet/WalletProvider";
 import { useI18n } from "../i18n";
+import {
+  Button,
+  Caption,
+  EmptyStateCard,
+  Hint,
+  ScreenTitle,
+} from "../components/ui";
 import { colors } from "../theme/colors";
-import { ui } from "../theme/ui";
+import { fonts } from "../theme/typography";
 
 function JobCard({
   job,
@@ -78,7 +84,7 @@ function JobCard({
       : null;
   const progress = dedupeExitEventsForDisplay(job.events, 12);
   return (
-    <View style={ui.cardMuted}>
+    <EmptyStateCard variant="muted">
       <Text style={styles.cardLabel}>
         {t("exit.jobExitStatus", {
           status: statusLabel,
@@ -115,27 +121,17 @@ function JobCard({
         </Text>
       )}
       {job.status === "running" ? (
-        <Pressable style={ui.secondaryBtn} onPress={onStop}>
-          <Text style={ui.secondaryBtnText}>
-            {t("exit.stopResumeLater")}
-          </Text>
-        </Pressable>
+        <Button variant="secondary" onPress={onStop}>
+          {t("exit.stopResumeLater")}
+        </Button>
       ) : null}
       {job.status === "stopped" ? (
-        <Pressable style={ui.primaryBtn} onPress={onResume}>
-          <Text style={ui.primaryBtnText}>
-            {t("exit.resume")}
-          </Text>
-        </Pressable>
+        <Button onPress={onResume}>{t("exit.resume")}</Button>
       ) : null}
       {job.status === "failed" ? (
-        <Pressable style={ui.primaryBtn} onPress={onResume}>
-          <Text style={ui.primaryBtnText}>
-            {t("exit.retryExit")}
-          </Text>
-        </Pressable>
+        <Button onPress={onResume}>{t("exit.retryExit")}</Button>
       ) : null}
-    </View>
+    </EmptyStateCard>
   );
 }
 
@@ -154,7 +150,7 @@ function PendingSweepCard({
 }) {
   const { t } = useI18n();
   return (
-    <View style={ui.cardMuted}>
+    <EmptyStateCard variant="muted">
       <Text style={styles.cardLabel}>
         {t("exit.remainingOnchain", { sats: sats.toLocaleString("en-US") })}
       </Text>
@@ -174,20 +170,10 @@ function PendingSweepCard({
           {t("exit.setRecoveryFirst")}
         </Text>
       )}
-      <Pressable
-        style={[ui.primaryBtn, sweeping && { opacity: 0.6 }]}
-        disabled={sweeping}
-        onPress={onSweep}
-      >
-        {sweeping ? (
-          <ActivityIndicator color="#000" />
-        ) : (
-          <Text style={ui.primaryBtnText}>
-            {t("exit.exitRemainingFunds")}
-          </Text>
-        )}
-      </Pressable>
-    </View>
+      <Button busy={sweeping} onPress={onSweep}>
+        {t("exit.exitRemainingFunds")}
+      </Button>
+    </EmptyStateCard>
   );
 }
 
@@ -465,8 +451,8 @@ export function UnilateralExitHubScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={ui.title}>{t("exit.title")}</Text>
-        <Text style={ui.caption}>{caption}</Text>
+        <ScreenTitle>{t("exit.title")}</ScreenTitle>
+        <Caption>{caption}</Caption>
 
         {hasPendingSweep ? (
           <View style={{ marginTop: 8 }}>
@@ -495,7 +481,7 @@ export function UnilateralExitHubScreen() {
           </View>
         ) : null}
 
-        <View style={[ui.cardMuted, { marginTop: 16 }]}>
+        <EmptyStateCard variant="muted" style={{ marginTop: 16 }}>
           <Text style={styles.cardLabel}>{t("exit.localReadiness", { network: network.label })}</Text>
           {busy ? (
             <ActivityIndicator color={colors.fg} style={{ marginTop: 8 }} />
@@ -517,55 +503,37 @@ export function UnilateralExitHubScreen() {
               </Text>
             </>
           )}
-        </View>
+        </EmptyStateCard>
 
         {!isArkade ? (
-          <Text style={[ui.hint, { marginTop: 20 }]}>
-            {t("exit.switchArkadeHint")}
-          </Text>
+          <Hint style={{ marginTop: 20 }}>{t("exit.switchArkadeHint")}</Hint>
         ) : (
           <>
             {!hasActive && hasPkg ? (
-              <Pressable
-                style={[ui.primaryBtn, continuing && { opacity: 0.6 }]}
-                disabled={continuing}
-                onPress={continueDraftExit}
-              >
-                {continuing ? (
-                  <ActivityIndicator color="#000" />
-                ) : (
-                  <Text style={ui.primaryBtnText}>{t("exit.continueExit")}</Text>
-                )}
-              </Pressable>
+              <Button busy={continuing} onPress={continueDraftExit}>
+                {t("exit.continueExit")}
+              </Button>
             ) : null}
 
-            <Pressable
-              style={
+            <Button
+              variant={
                 hasActive || (!hasPkg && !hasPendingSweep)
-                  ? ui.primaryBtn
-                  : ui.secondaryBtn
+                  ? "primary"
+                  : "secondary"
               }
               onPress={startWizard}
             >
-              <Text
-                style={
-                  hasActive || (!hasPkg && !hasPendingSweep)
-                    ? ui.primaryBtnText
-                    : ui.secondaryBtnText
-                }
-              >
-                {hasActive
-                  ? t("exit.startAnother")
-                  : t("exit.prepareNewPackage")}
-              </Text>
-            </Pressable>
+              {hasActive
+                ? t("exit.startAnother")
+                : t("exit.prepareNewPackage")}
+            </Button>
 
-            <Pressable
-              style={ui.secondaryBtn}
+            <Button
+              variant="secondary"
               onPress={() => navigation.navigate("Home")}
             >
-              <Text style={ui.secondaryBtnText}>{t("exit.home")}</Text>
-            </Pressable>
+              {t("exit.home")}
+            </Button>
           </>
         )}
       </ScrollView>
@@ -577,13 +545,13 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   content: { paddingBottom: 48 },
   cardLabel: {
-    fontFamily: "JetBrainsMono_700Bold",
+    fontFamily: fonts.bold,
     fontSize: 12,
     color: colors.caption,
     marginBottom: 8,
   },
   cardBody: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 13,
     color: colors.fg,
     lineHeight: 20,
@@ -597,33 +565,33 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   csvHeadline: {
-    fontFamily: "JetBrainsMono_700Bold",
+    fontFamily: fonts.bold,
     fontSize: 13,
     color: colors.fg,
     lineHeight: 20,
   },
   csvDetail: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 12,
     color: colors.caption,
     lineHeight: 18,
     marginTop: 4,
   },
   progressLabel: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 12,
     color: colors.hint,
     marginBottom: 4,
   },
   event: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 11,
     color: colors.caption,
     lineHeight: 16,
     marginTop: 4,
   },
   err: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 12,
     color: "#E07070",
     marginTop: 8,
