@@ -12,6 +12,7 @@ import * as ScreenCapture from "expo-screen-capture";
 import * as LocalAuthentication from "expo-local-authentication";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BasicLogo } from "../components/BasicLogo";
+import { Caption, Hint, ScreenTitle } from "../components/ui";
 import { useI18n } from "../i18n";
 import { UnlockPinPad } from "../screens/SetAppPinScreen";
 import { hasAppPin } from "./appPin";
@@ -255,10 +256,10 @@ export function AppLockGate({ children }: { children: ReactNode }) {
           ) : (
             <>
               <BasicLogo scale={1.2} />
-              <Text style={styles.title}>
+              <ScreenTitle style={styles.title}>
                 {t("privacy.unlockTitle")}
-              </Text>
-              <Text style={styles.sub}>{t("privacy.unlockSub")}</Text>
+              </ScreenTitle>
+              <Caption style={styles.sub}>{t("privacy.unlockSub")}</Caption>
 
               <Pressable
                 style={[styles.bioHit, busy && { opacity: 0.6 }]}
@@ -289,7 +290,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
                   </Text>
                 </Pressable>
               ) : (
-                <Text style={styles.hint}>{t("privacy.optionalPinHint")}</Text>
+                <Hint style={styles.hint}>{t("privacy.optionalPinHint")}</Hint>
               )}
             </>
           )}
@@ -309,19 +310,14 @@ const styles = StyleSheet.create({
     zIndex: 100,
   },
   title: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 20,
-    color: colors.fg,
     marginTop: 48,
-    textAlign: "center",
+    marginBottom: 0,
   },
   sub: {
-    fontFamily: "JetBrainsMono_400Regular",
     fontSize: 13,
-    color: colors.caption,
-    textAlign: "center",
     lineHeight: 18,
     marginTop: 12,
+    marginBottom: 0,
   },
   bioHit: {
     marginTop: 48,

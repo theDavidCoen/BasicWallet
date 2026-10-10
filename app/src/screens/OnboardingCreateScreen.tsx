@@ -1,13 +1,15 @@
 import { useNavigation } from "@react-navigation/native";
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { useEffect, useRef, useState } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
 import * as Passkeys from "react-native-passkeys";
 import type { RootNav } from "../navigation/types";
 import { BasicLogo } from "../components/BasicLogo";
+import { Button, Caption } from "../components/ui";
 import { InteractiveBottomSheet } from "../components/sheet/InteractiveBottomSheet";
 import { colors } from "../theme/colors";
+import { fonts } from "../theme/typography";
 import { PasskeyPrfUnavailableError } from "../onboarding/passkeyPrf";
 import { needsOnboardingSecurityGate } from "../security/onboardingSecurityGate";
 import type { OnboardingContinueTo } from "../security/onboardingSecurityGate";
@@ -225,24 +227,19 @@ export function OnboardingCreateScreen() {
         <BasicLogo scale={PENPOT.logoScale} />
       </View>
 
-      <Text style={[styles.tagline, { marginTop: Math.max(16, tagMarginTop) }]}>
+      <Caption style={[styles.tagline, { marginTop: Math.max(16, tagMarginTop) }]}>
         {t("onboarding.tagline")}
-      </Text>
+      </Caption>
 
       <View style={{ marginTop: Math.max(24, btnMarginTop) }}>
-        <Pressable
-          style={[styles.primaryBtn, busy && { opacity: 0.6 }]}
-          disabled={busy}
+        <Button
+          style={styles.primaryBtn}
+          textStyle={styles.primaryBtnText}
+          busy={busy}
           onPress={() => void onContinuePasskey()}
         >
-          {busy ? (
-            <ActivityIndicator color="#000" />
-          ) : (
-            <Text style={styles.primaryBtnText}>
-              {t("onboarding.continue")}
-            </Text>
-          )}
-        </Pressable>
+          {t("onboarding.continue")}
+        </Button>
 
         <Text
           style={[styles.textLink, { marginTop: Math.max(16, btnGap) }]}
@@ -318,24 +315,23 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   tagline: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 14,
     color: colors.caption,
     textAlign: "center",
     lineHeight: 19, // ~1.35 × 14
+    marginBottom: 0,
   },
   primaryBtn: {
-    backgroundColor: colors.fg,
-    borderRadius: 10,
+    marginTop: 0,
     minHeight: PENPOT.btnH,
     paddingVertical: 14,
-    alignItems: "center",
     justifyContent: "center",
   },
   primaryBtnText: {
-    fontFamily: "JetBrainsMono_700Bold",
+    fontFamily: fonts.bold,
     fontSize: 16,
-    color: "#000000",
+    color: colors.onPrimary,
   },
   textLink: {
     fontFamily: "JetBrainsMono_400Regular",

@@ -5,6 +5,7 @@ import {
   StyleSheet,
   Text,
   type StyleProp,
+  type TextStyle,
   type ViewStyle,
 } from "react-native";
 import { colors } from "../../theme/colors";
@@ -14,12 +15,17 @@ import { fonts } from "../../theme/typography";
 export type ButtonVariant = "primary" | "secondary" | "danger";
 
 export type ButtonProps = {
-  children: string;
+  /** Label string, or custom node (e.g. POS “Preparing receive…”). */
+  children: ReactNode;
   onPress?: () => void;
+  /** Home Receive/Send use press-in for snappier navigation. */
+  onPressIn?: () => void;
   variant?: ButtonVariant;
   busy?: boolean;
   disabled?: boolean;
   style?: StyleProp<ViewStyle>;
+  /** Override label metrics when a screen needs pixel-parity (e.g. fontSize 16/17). */
+  textStyle?: StyleProp<TextStyle>;
   accessibilityLabel?: string;
   /** Replace label while busy (default: spinner). */
   busyContent?: ReactNode;
@@ -32,10 +38,12 @@ export type ButtonProps = {
 export function Button({
   children,
   onPress,
+  onPressIn,
   variant = "primary",
   busy,
   disabled,
   style,
+  textStyle,
   accessibilityLabel,
   busyContent,
 }: ButtonProps) {
@@ -50,24 +58,30 @@ export function Button({
         style,
       ]}
       onPress={onPress}
+      onPressIn={onPressIn}
       disabled={blocked}
       accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel ?? children}
+      accessibilityLabel={
+        accessibilityLabel ?? (typeof children === "string" ? children : undefined)
+      }
       accessibilityState={{ disabled: blocked, busy: Boolean(busy) }}
     >
       {busy ? (
         busyContent ?? (
           <ActivityIndicator color={isPrimary ? colors.onPrimary : colors.fg} />
         )
-      ) : (
+      ) : typeof children === "string" ? (
         <Text
           style={[
             isPrimary ? styles.primaryText : styles.secondaryText,
             variant === "danger" && styles.dangerText,
+            textStyle,
           ]}
         >
           {children}
         </Text>
+      ) : (
+        children
       )}
     </Pressable>
   );
