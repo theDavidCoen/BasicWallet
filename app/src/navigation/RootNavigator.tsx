@@ -55,7 +55,10 @@ import { PrivacyScreen } from "../screens/PrivacyScreen";
 import { NotificationsSettingsScreen } from "../screens/NotificationsSettingsScreen";
 import { CursorAgentSettingsScreen } from "../screens/CursorAgentSettingsScreen";
 import { SetAppPinScreen } from "../screens/SetAppPinScreen";
-import { bindPushNotificationListeners } from "../notifications";
+import {
+  bindPushNotificationListeners,
+  flushPendingPushWake,
+} from "../notifications";
 import { OnboardingSecurityScreen } from "../screens/OnboardingSecurityScreen";
 import { ActivityDetailScreen } from "../screens/ActivityDetailScreen";
 import { UnilateralExitHubScreen } from "../screens/UnilateralExitHubScreen";
@@ -94,11 +97,13 @@ const navTheme = {
 export function RootNavigator() {
   const { ready, hasWallet, sessionPhase } = useWallet();
   const navigationRef = useNavigationContainerRef<RootStackParamList>();
+  const navMounted = hasWallet && sessionPhase !== "warming";
 
+  // Bind only when NavigationContainer is actually mounted (not WalletWarmup).
   useEffect(() => {
-    if (!ready || !hasWallet) return;
+    if (!ready || !navMounted) return;
     return bindPushNotificationListeners(navigationRef);
-  }, [ready, hasWallet, navigationRef]);
+  }, [ready, navMounted, navigationRef]);
 
   if (!ready) {
     return (
@@ -116,7 +121,13 @@ export function RootNavigator() {
       {hasWallet && sessionPhase === "warming" ? (
         <WalletWarmupScreen />
       ) : (
-        <NavigationContainer ref={navigationRef} theme={navTheme}>
+        <NavigationContainer
+          ref={navigationRef}
+          theme={navTheme}
+          onReady={() => {
+            void flushPendingPushWake(navigationRef);
+          }}
+        >
           <SheetHost>
             <BackupReminderBanner navigationRef={navigationRef} />
             <ChatUnreadBanner navigationRef={navigationRef} />

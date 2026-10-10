@@ -17,6 +17,7 @@ import { UnlockPinPad } from "../screens/SetAppPinScreen";
 import { hasAppPin } from "./appPin";
 import { getOsBiometricsStatus } from "./osBiometrics";
 import { readPrivacySettings } from "./privacySettings";
+import { notifyAppUnlocked } from "./appLockEvents";
 import {
   beginPresencePrompt,
   endPresencePrompt,
@@ -75,6 +76,8 @@ export function AppLockGate({ children }: { children: ReactNode }) {
     setError(null);
     setMode("bio");
     autoPromptedRef.current = false;
+    // Push deep-link / other deferred UI — after lock overlay clears.
+    notifyAppUnlocked();
     // Far off the unlock paint path — PBKDF2 must not run during Home mount.
     await flushEncryptedBackupAfterUnlock("post-unlock");
   }, []);
@@ -165,6 +168,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
       if (!presentAtBoot || !p.biometricsLock) {
         unlockedRef.current = true;
         setUnlocked(true);
+        notifyAppUnlocked();
         if (presentAtBoot) {
           await flushEncryptedBackupAfterUnlock("no-lock");
         }

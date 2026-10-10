@@ -29,4 +29,7 @@ export {
   getPermissionStatus,
   lastKnownFcmToken,
 } from "./token";
-export { bindPushNotificationListeners } from "./pushBootstrap";
+export {
+  bindPushNotificationListeners,
+  flushPendingPushWake,
+} from "./pushBootstrap";
