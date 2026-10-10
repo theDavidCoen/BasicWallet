@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   AppState,
   type AppStateStatus,
+  InteractionManager,
   Pressable,
   StyleSheet,
   Text,
@@ -32,6 +33,11 @@ import {
 import { useWallet } from "../wallet/WalletProvider";
 import { colors } from "../theme/colors";
 
+/** Xiaomi can leave authenticateAsync pending without a visible sheet. */
+const BIO_AUTH_WATCHDOG_MS = 12_000;
+/** Let Unlock paint + Activity resume before auto sheet (OEM cold start). */
+const AUTO_BIO_DEFER_MS = 80;
+
 /**
  * Penpot 01e / 01f — gate when 05c Biometrics lock is ON.
  *
@@ -55,6 +61,11 @@ export function AppLockGate({ children }: { children: ReactNode }) {
   const unlockedRef = useRef(false);
   /** AppLockGate mounts only after wallet bootstrap — track mid-session provision. */
   const prevHasWalletRef = useRef(hasWallet);
+  const bioWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoBioTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoBioInteractionRef = useRef<{ cancel: () => void } | null>(null);
+  /** Ignore stale authenticateAsync results after cancelAuthenticate + retry. */
+  const bioAttemptRef = useRef(0);
 
   const applyScreenCapture = useCallback(async (block: boolean) => {
     try {
@@ -90,96 +101,162 @@ export function AppLockGate({ children }: { children: ReactNode }) {
     });
   }, [afterUnlock]);
 
-  const releaseBioLatch = useCallback((presenceGraceMs?: number) => {
-    if (presenceGraceMs !== undefined) endPresencePrompt(presenceGraceMs);
-    else endPresencePrompt();
-    setBusy(false);
-    unlockingRef.current = false;
+  const clearBioWatchdog = useCallback(() => {
+    if (bioWatchdogRef.current) {
+      clearTimeout(bioWatchdogRef.current);
+      bioWatchdogRef.current = null;
+    }
   }, []);
 
-  const tryBiometrics = useCallback(async () => {
-    if (unlockingRef.current) return;
-    unlockingRef.current = true;
-    setBusy(true);
-    setError(null);
-    beginPresencePrompt();
-    // Warm PIN availability in parallel — never block the system bio sheet.
-    const pinPromise = refreshPinAvailable();
-    try {
-      // Fire OS prompt immediately. Do not await hasHardware/isEnrolled first
-      // (those round-trips often delay the modal by seconds on cold tap).
-      const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: t("privacy.unlockPrompt"),
-        cancelLabel: t("common.cancel"),
-        // Always disable OS/Knox device-PIN fallback. App PIN is in-app only.
-        disableDeviceFallback: true,
-      });
+  const clearAutoBioSchedule = useCallback(() => {
+    autoBioInteractionRef.current?.cancel();
+    autoBioInteractionRef.current = null;
+    if (autoBioTimerRef.current) {
+      clearTimeout(autoBioTimerRef.current);
+      autoBioTimerRef.current = null;
+    }
+  }, []);
 
-      if (result.success) {
-        // Mark unlocked before clearing presence — ending presence can let an
-        // AppState "active" event re-enter enterLocked (second bio prompt).
-        unlockedRef.current = true;
-        setUnlocked(true);
-        setError(null);
-        setMode("bio");
-        // Grace 0 + latch clear before backup/passphrase (FundsReceived notices).
-        releaseBioLatch(0);
-        await afterUnlock();
-        return;
+  const releaseBioLatch = useCallback(
+    (presenceGraceMs?: number) => {
+      clearBioWatchdog();
+      if (presenceGraceMs !== undefined) endPresencePrompt(presenceGraceMs);
+      else endPresencePrompt();
+      setBusy(false);
+      unlockingRef.current = false;
+    },
+    [clearBioWatchdog],
+  );
+
+  const tryBiometrics = useCallback(
+    async (source: "auto" | "user" = "user") => {
+      if (unlockingRef.current) {
+        // User tap while auto/OEM auth is stuck or sheetless — cancel and retry.
+        if (source !== "user") return;
+        try {
+          await LocalAuthentication.cancelAuthenticate();
+        } catch {
+          /* optional */
+        }
+        releaseBioLatch();
       }
+      if (unlockingRef.current) return;
 
-      // Fail / cancel: re-enable the circle before pin/status awaits so a
-      // Xiaomi dismiss → retap loop is not swallowed by busy/disabled.
-      releaseBioLatch();
+      clearAutoBioSchedule();
+      const attempt = ++bioAttemptRef.current;
+      unlockingRef.current = true;
+      // Visual only — never Pressable.disabled; cold-start OEM delay must not eat taps.
+      setBusy(true);
+      setError(null);
+      beginPresencePrompt();
+      // Warm PIN availability in parallel — never block the system bio sheet.
+      const pinPromise = refreshPinAvailable();
 
-      const err = result.error ?? "";
-      const userDismissed =
-        err === "user_cancel" ||
-        err === "system_cancel" ||
-        err === "app_cancel";
+      clearBioWatchdog();
+      bioWatchdogRef.current = setTimeout(() => {
+        if (!unlockingRef.current || bioAttemptRef.current !== attempt) return;
+        console.warn("[basic] bio auth watchdog — releasing latch");
+        releaseBioLatch();
+      }, BIO_AUTH_WATCHDOG_MS);
 
-      const pinSet = await pinPromise;
+      try {
+        // Fire OS prompt immediately. Do not await hasHardware/isEnrolled first
+        // (those round-trips often delay the modal by seconds on cold tap).
+        const result = await LocalAuthentication.authenticateAsync({
+          promptMessage: t("privacy.unlockPrompt"),
+          cancelLabel: t("common.cancel"),
+          // Always disable OS/Knox device-PIN fallback. App PIN is in-app only.
+          disableDeviceFallback: true,
+        });
 
-      if (userDismissed) {
-        // Cancel ≠ hardware off — skip getOsBiometricsStatus on the critical path.
-        if (pinSet) setMode("pin");
-        return;
-      }
+        // Superseded by a newer user tap / cancelAuthenticate retry.
+        if (bioAttemptRef.current !== attempt) return;
 
-      // Non-cancel failure: check whether biometrics are actually unavailable.
-      const bio = await getOsBiometricsStatus();
-      if (!bio.available) {
-        if (pinSet) {
-          setMode("pin");
+        if (result.success) {
+          // Mark unlocked before clearing presence — ending presence can let an
+          // AppState "active" event re-enter enterLocked (second bio prompt).
+          unlockedRef.current = true;
+          setUnlocked(true);
+          setError(null);
+          setMode("bio");
+          // Grace 0 + latch clear before backup/passphrase (FundsReceived notices).
+          releaseBioLatch(0);
+          await afterUnlock();
+          return;
+        }
+
+        // Fail / cancel: clear latch before pin/status awaits (Xiaomi retap).
+        releaseBioLatch();
+
+        const err = result.error ?? "";
+        const userDismissed =
+          err === "user_cancel" ||
+          err === "system_cancel" ||
+          err === "app_cancel";
+
+        const pinSet = await pinPromise;
+        if (bioAttemptRef.current !== attempt) return;
+
+        if (userDismissed) {
+          // Stay on bio circle so dismiss → retap works; PIN stays via link.
           setError(null);
           return;
         }
-        setError(t("privacy.bioOffNoPin"));
-        return;
-      }
-      setError(t("privacy.authFailed"));
-      if (pinSet) setMode("pin");
-    } catch {
-      releaseBioLatch();
-      setError(t("privacy.authFailed"));
-    } finally {
-      // Safety if authenticateAsync threw before releaseBioLatch ran.
-      if (unlockingRef.current) releaseBioLatch();
-    }
-  }, [afterUnlock, refreshPinAvailable, releaseBioLatch, t]);
 
-  const enterLocked = useCallback(async () => {
+        // Non-cancel failure: check whether biometrics are actually unavailable.
+        const bio = await getOsBiometricsStatus();
+        if (bioAttemptRef.current !== attempt) return;
+        if (!bio.available) {
+          if (pinSet) {
+            setMode("pin");
+            setError(null);
+            return;
+          }
+          setError(t("privacy.bioOffNoPin"));
+          return;
+        }
+        setError(t("privacy.authFailed"));
+        if (pinSet) setMode("pin");
+      } catch {
+        if (bioAttemptRef.current !== attempt) return;
+        releaseBioLatch();
+        setError(t("privacy.authFailed"));
+      } finally {
+        // Safety if authenticateAsync threw before releaseBioLatch ran.
+        if (bioAttemptRef.current === attempt && unlockingRef.current) {
+          releaseBioLatch();
+        }
+      }
+    },
+    [
+      afterUnlock,
+      clearAutoBioSchedule,
+      clearBioWatchdog,
+      refreshPinAvailable,
+      releaseBioLatch,
+      t,
+    ],
+  );
+
+  const enterLocked = useCallback(() => {
     if (unlockedRef.current) return;
     setUnlocked(false);
     setMode("bio");
     setError(null);
     // Do not await pin refresh before the bio sheet — warm in background.
     void refreshPinAvailable();
-    if (!autoPromptedRef.current) {
-      autoPromptedRef.current = true;
-      await tryBiometrics();
-    }
-  }, [refreshPinAvailable, tryBiometrics]);
+    if (autoPromptedRef.current) return;
+    autoPromptedRef.current = true;
+    clearAutoBioSchedule();
+    // Paint Unlock + let Activity resume before auto sheet (Xiaomi cold start).
+    autoBioInteractionRef.current = InteractionManager.runAfterInteractions(() => {
+      autoBioTimerRef.current = setTimeout(() => {
+        autoBioTimerRef.current = null;
+        if (unlockedRef.current || unlockingRef.current) return;
+        void tryBiometrics("auto");
+      }, AUTO_BIO_DEFER_MS);
+    });
+  }, [clearAutoBioSchedule, refreshPinAvailable, tryBiometrics]);
 
   // Cold start only (this gate mounts after wallet bootstrap). Mid-session
   // provision must not re-enter lock — see hasWallet effect below.
@@ -189,8 +266,9 @@ export function AppLockGate({ children }: { children: ReactNode }) {
       const p = await readPrivacySettings();
       if (cancelled) return;
       setLockEnabled(p.biometricsLock);
-      await refreshPinAvailable();
-      await applyScreenCapture(p.blockScreenshots);
+      // Never block the Unlock circle / auto bio on PIN warm or FLAG_SECURE.
+      void refreshPinAvailable();
+      void applyScreenCapture(p.blockScreenshots);
 
       const presentAtBoot = prevHasWalletRef.current;
       if (!presentAtBoot || !p.biometricsLock) {
@@ -203,10 +281,12 @@ export function AppLockGate({ children }: { children: ReactNode }) {
         return;
       }
 
-      await enterLocked();
+      enterLocked();
     })();
     return () => {
       cancelled = true;
+      clearAutoBioSchedule();
+      clearBioWatchdog();
     };
     // Mount-once cold start. enterLocked/hasWallet changes must not re-lock.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -290,8 +370,9 @@ export function AppLockGate({ children }: { children: ReactNode }) {
 
               <Pressable
                 style={[styles.bioHit, busy && { opacity: 0.6 }]}
-                disabled={busy}
-                onPress={() => void tryBiometrics()}
+                // Always hit-testable: disabled={busy} ate cold-start taps while
+                // Xiaomi delayed the system sheet. onPressIn fires before lift.
+                onPressIn={() => void tryBiometrics("user")}
               >
                 {busy ? (
                   <ActivityIndicator color={colors.fg} />
