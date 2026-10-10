@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { Button } from "../components/ui";
 import { colors } from "../theme/colors";
 
@@ -65,25 +65,23 @@ export function FundsSentView({
         View details
       </Button>
       {showSaveToContacts ? (
-        <Pressable
-          style={styles.secondary}
+        <Button
+          variant="secondary"
+          style={{ alignSelf: "stretch" }}
           onPress={onSaveToContacts}
-          hitSlop={8}
-          accessibilityRole="button"
           accessibilityLabel="Save to contacts"
         >
-          <Text style={styles.secondaryText}>Save to contacts</Text>
-        </Pressable>
+          Save to contacts
+        </Button>
       ) : null}
-      <Pressable
-        style={styles.secondary}
+      <Button
+        variant="secondary"
+        style={{ alignSelf: "stretch" }}
         onPress={onDone}
-        hitSlop={8}
-        accessibilityRole="button"
         accessibilityLabel="Done"
       >
-        <Text style={styles.secondaryText}>Done</Text>
-      </Pressable>
+        Done
+      </Button>
     </View>
   );
 }

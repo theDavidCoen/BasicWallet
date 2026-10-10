@@ -9,12 +9,11 @@ import {
   ActivityIndicator,
   Alert,
   BackHandler,
-  Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
+import { Button, Caption, ScreenTitle, TextField } from "../components/ui";
 import { getMnemonicSource } from "../wallet/mnemonicMeta";
 import { useWallet } from "../wallet/WalletProvider";
 import { colors } from "../theme/colors";
@@ -152,14 +151,14 @@ export function AddWalletSheetContent({
   if (!passkeyRoot && deviceStep === "intro") {
     return (
       <View style={styles.root}>
-        <Text style={sheetUi.title}>ADD WALLET</Text>
-        <Text style={sheetUi.caption}>{CAPTION_DEVICE}</Text>
-        <Pressable style={sheetUi.primaryBtn} onPress={() => setDeviceStep("entropy")}>
-          <Text style={sheetUi.primaryBtnText}>Continue</Text>
-        </Pressable>
-        <Pressable style={sheetUi.secondaryBtn} onPress={onImportWallet}>
-          <Text style={sheetUi.secondaryBtnText}>Import Wallet</Text>
-        </Pressable>
+        <ScreenTitle style={sheetUi.title}>ADD WALLET</ScreenTitle>
+        <Caption style={sheetUi.caption}>{CAPTION_DEVICE}</Caption>
+        <Button size="sheet" onPress={() => setDeviceStep("entropy")}>
+          Continue
+        </Button>
+        <Button size="sheet" variant="secondary" onPress={onImportWallet}>
+          Import Wallet
+        </Button>
       </View>
     );
   }
@@ -167,40 +166,36 @@ export function AddWalletSheetContent({
   // Passkey: name + create. Device after entropy: name + create.
   return (
     <View style={styles.root}>
-      <Text style={sheetUi.title}>{passkeyRoot ? "ADD WALLET" : "NAME WALLET"}</Text>
-      <Text style={sheetUi.caption}>
+      <ScreenTitle style={sheetUi.title}>
+        {passkeyRoot ? "ADD WALLET" : "NAME WALLET"}
+      </ScreenTitle>
+      <Caption style={sheetUi.caption}>
         {passkeyRoot
           ? CAPTION_PASSKEY
           : "Label this wallet, then create it with CSPRNG strengthened by your motion."}
-      </Text>
+      </Caption>
 
       <Text style={sheetUi.label}>NAME WALLET</Text>
-      <TextInput
-        style={sheetUi.input}
+      <TextField
         value={label}
         onChangeText={setLabel}
         placeholder="Savings"
-        placeholderTextColor={colors.hint}
         autoCapitalize="words"
         editable={!busy}
       />
 
-      <Pressable
-        style={[sheetUi.primaryBtn, busy && { opacity: 0.6 }]}
-        disabled={busy}
+      <Button
+        size="sheet"
+        busy={busy}
         onPress={() => void (passkeyRoot ? onCreatePasskey() : onCreateDevice())}
       >
-        {busy ? (
-          <ActivityIndicator color={colors.bg} />
-        ) : (
-          <Text style={sheetUi.primaryBtnText}>Create Wallet</Text>
-        )}
-      </Pressable>
+        Create Wallet
+      </Button>
 
       {passkeyRoot ? (
-        <Pressable style={sheetUi.secondaryBtn} disabled={busy} onPress={onImportWallet}>
-          <Text style={sheetUi.secondaryBtnText}>Import Wallet</Text>
-        </Pressable>
+        <Button size="sheet" variant="secondary" disabled={busy} onPress={onImportWallet}>
+          Import Wallet
+        </Button>
       ) : null}
     </View>
   );

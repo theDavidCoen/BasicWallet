@@ -1,17 +1,9 @@
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { useCallback, useMemo, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, Caption, ScreenTitle, TextField } from "../components/ui";
 import { BackupPassphraseLiveRules } from "../components/BackupPassphraseLiveRules";
 import { PassphraseInput } from "../components/PassphraseInput";
 import {
@@ -249,8 +241,8 @@ export function NostrBackupScreen() {
         contentContainerStyle={{ paddingBottom: 40 }}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={ui.title}>{t("backup.nostrScreenTitle")}</Text>
-        <Text style={ui.caption}>{t("backup.nostrCaption")}</Text>
+        <ScreenTitle>{t("backup.nostrScreenTitle")}</ScreenTitle>
+        <Caption>{t("backup.nostrCaption")}</Caption>
 
         <Text style={styles.label}>{t("backup.relaysLabel")}</Text>
         {DEFAULT_NOSTR_RELAYS.map((url) => (
@@ -262,7 +254,7 @@ export function NostrBackupScreen() {
 
         {customRelays.map((url, index) => (
           <View key={`custom-${index}`} style={styles.customRow}>
-            <TextInput
+            <TextField
               style={styles.customInput}
               value={url}
               onChangeText={(v) => updateCustomRelay(index, v)}
@@ -270,7 +262,6 @@ export function NostrBackupScreen() {
               autoCorrect={false}
               keyboardType="url"
               placeholder={t("backup.relayPlaceholder")}
-              placeholderTextColor={colors.hint}
             />
             <Pressable
               onPress={() => removeCustomRelay(index)}
@@ -309,21 +300,9 @@ export function NostrBackupScreen() {
             />
             <BackupPassphraseLiveRules passphrase={passphrase} confirm={confirm} />
 
-            <Pressable
-              style={[
-                ui.primaryBtn,
-                { marginTop: 24 },
-                (busy || !checklist.allOk) && { opacity: 0.6 },
-              ]}
-              disabled={busy || !checklist.allOk}
-              onPress={() => void onNext()}
-            >
-              {busy ? (
-                <ActivityIndicator color="#000" />
-              ) : (
-                <Text style={ui.primaryBtnText}>{t("backup.next")}</Text>
-              )}
-            </Pressable>
+            <Button style={{ marginTop: 24 }} busy={busy} disabled={busy || !checklist.allOk} onPress={() => void onNext()}>
+              {t("backup.next")}
+            </Button>
           </>
         ) : (
           <>
@@ -353,29 +332,18 @@ export function NostrBackupScreen() {
               </>
             )}
 
-            <Pressable
-              style={[ui.primaryBtn, { marginTop: 16 }, busy && { opacity: 0.6 }]}
-              disabled={busy}
-              onPress={() => void onUpdateAndPublish()}
-            >
-              {busy ? (
-                <ActivityIndicator color="#000" />
-              ) : (
-                <Text style={ui.primaryBtnText}>{t("backup.updateAndPublish")}</Text>
-              )}
-            </Pressable>
+            <Button style={{ marginTop: 16 }} busy={busy} disabled={busy} onPress={() => void onUpdateAndPublish()}>
+              {t("backup.updateAndPublish")}
+            </Button>
 
-            <Pressable
-              style={[ui.secondaryBtn, { marginTop: 12 }, busy && { opacity: 0.6 }]}
-              disabled={busy}
+            <Button
+              variant="secondary"
+              style={{ marginTop: 12 }}
+              busy={busy}
               onPress={() => void onDisable()}
             >
-              {busy ? (
-                <ActivityIndicator color={colors.fg} />
-              ) : (
-                <Text style={ui.secondaryBtnText}>{t("backup.disableNostr")}</Text>
-              )}
-            </Pressable>
+              {t("backup.disableNostr")}
+            </Button>
           </>
         )}
       </ScrollView>

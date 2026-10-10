@@ -131,7 +131,7 @@ export function SaveToContactsSheet({
             Lightning invoices (BOLT11) are one-time and cannot be saved. Use an
             LNURL or Lightning Address instead.
           </Caption>
-          <Button onPress={resetAndClose}>OK</Button>
+          <Button size="sheet" onPress={resetAndClose}>OK</Button>
         </View>
       </InteractiveBottomSheet>
     );
@@ -211,6 +211,7 @@ export function SaveToContactsSheet({
               </>
             ) : null}
             <Button
+              size="sheet"
               disabled={!name.trim() || !!existing}
               onPress={saveNew}
             >

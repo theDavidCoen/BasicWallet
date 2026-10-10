@@ -11,12 +11,11 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { remountAppForNetworkSwitch } from "../runtime/remountApp";
 import { ScreenChrome } from "../components/ScreenChrome";
-import { Button, Caption, ScreenTitle } from "../components/ui";
+import { Button, Caption, ScreenTitle, TextField } from "../components/ui";
 import type { ArkadeNetworkId } from "../config/network";
 import {
   defaultArkServerUrl,
@@ -145,12 +144,11 @@ export function ArkadeNetworkScreen() {
 
         <Text style={[styles.section, { marginTop: 28 }]}>{t("arkade.aspSection")}</Text>
         <Text style={styles.meta}>{t("arkade.defaultServer", { url: defaultUrl })}</Text>
-        <TextInput
+        <TextField
           style={styles.input}
           value={draftServer}
           onChangeText={setDraftServer}
           placeholder={defaultUrl}
-          placeholderTextColor={colors.hint}
           autoCapitalize="none"
           autoCorrect={false}
           keyboardType="url"

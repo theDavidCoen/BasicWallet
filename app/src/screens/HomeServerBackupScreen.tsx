@@ -1,16 +1,9 @@
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { useCallback, useMemo, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-} from "react-native";
+import { Alert, ScrollView, StyleSheet, Text } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, Caption, ScreenTitle, TextField } from "../components/ui";
 import { BackupPassphraseLiveRules } from "../components/BackupPassphraseLiveRules";
 import { PassphraseInput } from "../components/PassphraseInput";
 import { backupPassphraseChecklist, validateBackupPassphrase } from "../nostr/passphrasePolicy";
@@ -209,8 +202,8 @@ export function HomeServerBackupScreen() {
         contentContainerStyle={{ paddingBottom: 40 }}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={ui.title}>{t("backup.homeScreenTitle")}</Text>
-        <Text style={ui.caption}>{t("backup.homeCaption")}</Text>
+        <ScreenTitle>{t("backup.homeScreenTitle")}</ScreenTitle>
+        <Caption>{t("backup.homeCaption")}</Caption>
 
         {homeEnabled ? (
           <>
@@ -240,41 +233,29 @@ export function HomeServerBackupScreen() {
               </>
             )}
 
-            <Pressable
-              style={[ui.primaryBtn, { marginTop: 16 }, busy && { opacity: 0.6 }]}
-              disabled={busy}
-              onPress={() => void onUpdateAndUpload()}
-            >
-              {busy ? (
-                <ActivityIndicator color="#000" />
-              ) : (
-                <Text style={ui.primaryBtnText}>{t("backup.updateAndUpload")}</Text>
-              )}
-            </Pressable>
+            <Button style={{ marginTop: 16 }} busy={busy} disabled={busy} onPress={() => void onUpdateAndUpload()}>
+              {t("backup.updateAndUpload")}
+            </Button>
 
-            <Pressable
-              style={[ui.secondaryBtn, { marginTop: 12 }, busy && { opacity: 0.6 }]}
-              disabled={busy}
+            <Button
+              variant="secondary"
+              style={{ marginTop: 12 }}
+              busy={busy}
               onPress={() => void onDisable()}
             >
-              {busy ? (
-                <ActivityIndicator color={colors.fg} />
-              ) : (
-                <Text style={ui.secondaryBtnText}>{t("backup.disableHome")}</Text>
-              )}
-            </Pressable>
+              {t("backup.disableHome")}
+            </Button>
           </>
         ) : (
           <>
             <Text style={styles.label}>{t("backup.serverUrlLabel")}</Text>
-            <TextInput
+            <TextField
               style={styles.input}
               value={url}
               onChangeText={setUrl}
               autoCapitalize="none"
               autoCorrect={false}
               placeholder={t("backup.serverUrlPlaceholder")}
-              placeholderTextColor={colors.hint}
             />
             <Text style={[ui.hint, { marginTop: 6 }]}>
               {t("backup.serverUrlHint")}
@@ -282,37 +263,34 @@ export function HomeServerBackupScreen() {
 
             <Text style={[styles.section, { marginTop: 20 }]}>{t("backup.nextcloudSection")}</Text>
             <Text style={styles.label}>{t("backup.usernameLabel")}</Text>
-            <TextInput
+            <TextField
               style={styles.input}
               value={username}
               onChangeText={setUsername}
               autoCapitalize="none"
               autoCorrect={false}
               placeholder={t("backup.usernamePlaceholder")}
-              placeholderTextColor={colors.hint}
             />
             <Text style={styles.label}>{t("backup.appPasswordLabel")}</Text>
-            <TextInput
+            <TextField
               style={styles.input}
               value={appPassword}
               onChangeText={setAppPassword}
               autoCapitalize="none"
               autoCorrect={false}
               placeholder={t("backup.appPasswordPlaceholder")}
-              placeholderTextColor={colors.hint}
               secureTextEntry
             />
 
             <Text style={[styles.section, { marginTop: 20 }]}>{t("backup.orTokenSection")}</Text>
             <Text style={styles.label}>{t("backup.bearerLabel")}</Text>
-            <TextInput
+            <TextField
               style={styles.input}
               value={token}
               onChangeText={setToken}
               autoCapitalize="none"
               autoCorrect={false}
               placeholder={t("backup.bearerPlaceholder")}
-              placeholderTextColor={colors.hint}
               secureTextEntry
             />
 
@@ -334,21 +312,9 @@ export function HomeServerBackupScreen() {
             />
             <BackupPassphraseLiveRules passphrase={passphrase} confirm={confirm} />
 
-            <Pressable
-              style={[
-                ui.primaryBtn,
-                { marginTop: 24 },
-                (busy || !checklist.allOk) && { opacity: 0.6 },
-              ]}
-              disabled={busy || !checklist.allOk}
-              onPress={() => void onNext()}
-            >
-              {busy ? (
-                <ActivityIndicator color="#000" />
-              ) : (
-                <Text style={ui.primaryBtnText}>{t("backup.next")}</Text>
-              )}
-            </Pressable>
+            <Button style={{ marginTop: 24 }} busy={busy} disabled={busy || !checklist.allOk} onPress={() => void onNext()}>
+              {t("backup.next")}
+            </Button>
           </>
         )}
       </ScrollView>

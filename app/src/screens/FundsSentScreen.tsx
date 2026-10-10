@@ -1,5 +1,5 @@
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { Button } from "../components/ui";
 import { colors } from "../theme/colors";
@@ -36,12 +36,13 @@ export function FundsSentScreen() {
       >
         View activity
       </Button>
-      <Pressable
-        style={styles.secondary}
+      <Button
+        variant="secondary"
+        style={{ alignSelf: "stretch" }}
         onPress={() => navigation.navigate("Home")}
       >
-        <Text style={styles.secondaryText}>Done</Text>
-      </Pressable>
+        Done
+      </Button>
     </View>
   );
 }

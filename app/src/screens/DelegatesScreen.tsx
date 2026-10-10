@@ -10,11 +10,10 @@ import {
   StyleSheet,
   Switch,
   Text,
-  TextInput,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { ScreenChrome } from "../components/ScreenChrome";
-import { Button, Caption, ScreenTitle, SettingsRow } from "../components/ui";
+import { Button, Caption, ScreenTitle, SettingsRow, TextField } from "../components/ui";
 import { getNetworkConfig } from "../config/network";
 import {
   DEFAULT_DELEGATE_URL,
@@ -165,13 +164,12 @@ export function DelegatesScreen() {
             {!settings.useDefault ? (
               <>
                 <Text style={styles.fieldLabel}>{t("arkade.customServer")}</Text>
-                <TextInput
+                <TextField
                   value={customDraft}
                   onChangeText={setCustomDraft}
                   autoCapitalize="none"
                   autoCorrect={false}
                   placeholder="https://delegate.example.com"
-                  placeholderTextColor={colors.hint}
                   style={styles.input}
                   editable={!busy}
                 />

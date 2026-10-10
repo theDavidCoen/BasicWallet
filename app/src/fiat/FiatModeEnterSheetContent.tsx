@@ -5,7 +5,7 @@
  */
 
 import { ScrollView, StyleSheet, Text, View } from "react-native";
-import { Pressable } from "react-native-gesture-handler";
+import { Button, ScreenTitle } from "../components/ui";
 import { getNetworkConfig } from "../config/network";
 import { colors } from "../theme/colors";
 import { sheetUi } from "../theme/sheetUi";
@@ -43,7 +43,7 @@ export function FiatModeEnterSheetContent({
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <Text style={sheetUi.title}>Enter Fiat Mode</Text>
+        <ScreenTitle style={sheetUi.title}>Enter Fiat Mode</ScreenTitle>
 
         {!swapOk ? (
           <Text style={[styles.body, styles.warn]}>
@@ -80,25 +80,23 @@ export function FiatModeEnterSheetContent({
 
       <View style={styles.actions}>
         {swapOk ? (
-          <Pressable
-            style={sheetUi.primaryBtn}
+          <Button
+            size="sheet"
             onPress={onConfirm}
-            hitSlop={8}
-            accessibilityRole="button"
             accessibilityLabel="Confirm Enter Fiat Mode"
           >
-            <Text style={sheetUi.primaryBtnText}>Confirm</Text>
-          </Pressable>
+            Confirm
+          </Button>
         ) : null}
-        <Pressable
+        <Button
+          size="sheet"
+          variant="secondary"
           style={styles.secondaryBtn}
           onPress={onCancel}
-          hitSlop={8}
-          accessibilityRole="button"
           accessibilityLabel="Cancel"
         >
-          <Text style={sheetUi.secondaryBtnText}>{swapOk ? "Cancel" : "Close"}</Text>
-        </Pressable>
+          {swapOk ? "Cancel" : "Close"}
+        </Button>
       </View>
     </View>
   );
@@ -164,7 +162,6 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   secondaryBtn: {
-    ...sheetUi.secondaryBtn,
     backgroundColor: "#000",
   },
 });

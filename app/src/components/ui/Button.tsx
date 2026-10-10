@@ -21,6 +21,8 @@ export type ButtonProps = {
   /** Home Receive/Send use press-in for snappier navigation. */
   onPressIn?: () => void;
   variant?: ButtonVariant;
+  /** `sheet` → label 14 (sheetUi); default hub → 15 (ui). */
+  size?: "hub" | "sheet";
   busy?: boolean;
   disabled?: boolean;
   style?: StyleProp<ViewStyle>;
@@ -40,6 +42,7 @@ export function Button({
   onPress,
   onPressIn,
   variant = "primary",
+  size = "hub",
   busy,
   disabled,
   style,
@@ -49,6 +52,7 @@ export function Button({
 }: ButtonProps) {
   const blocked = Boolean(busy || disabled);
   const isPrimary = variant === "primary" || variant === "danger";
+  const sheetSize = size === "sheet";
 
   return (
     <Pressable
@@ -74,6 +78,7 @@ export function Button({
         <Text
           style={[
             isPrimary ? styles.primaryText : styles.secondaryText,
+            sheetSize && styles.sheetText,
             variant === "danger" && styles.dangerText,
             textStyle,
           ]}
@@ -113,6 +118,9 @@ const styles = StyleSheet.create({
     fontFamily: fonts.regular,
     fontSize: 15,
     color: colors.fg,
+  },
+  sheetText: {
+    fontSize: 14,
   },
   dangerText: {
     color: colors.danger,

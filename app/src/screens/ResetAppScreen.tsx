@@ -1,17 +1,15 @@
 import { useNavigation } from "@react-navigation/native";
 import { useState } from "react";
 import {
-  ActivityIndicator,
   Alert,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, Caption, Hint, ScreenTitle, TextField } from "../components/ui";
 import { useI18n } from "../i18n";
 import { factoryResetWipeDevice } from "../security/appReset";
 import { requireUserPresence } from "../security/userPresence";
@@ -80,8 +78,8 @@ export function ResetAppScreen() {
         contentContainerStyle={{ paddingBottom: 40 }}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={ui.title}>{t("reset.title")}</Text>
-        <Text style={ui.caption}>{t("reset.caption")}</Text>
+        <ScreenTitle>{t("reset.title")}</ScreenTitle>
+        <Caption>{t("reset.caption")}</Caption>
 
         <View style={ui.cardMuted}>
           {bullets.map((line) => (
@@ -91,31 +89,26 @@ export function ResetAppScreen() {
           ))}
         </View>
 
-        <Text style={[ui.hint, { marginTop: 16 }]}>{t("reset.hint")}</Text>
+        <Hint style={{ marginTop: 16 }}>{t("reset.hint")}</Hint>
 
         <Text style={styles.label}>{t("reset.typeLabel")}</Text>
-        <TextInput
-          style={styles.input}
+        <TextField
+          style={{ marginBottom: 0 }}
           value={typed}
           onChangeText={setTyped}
           autoCapitalize="none"
           autoCorrect={false}
           placeholder={t("reset.placeholder")}
-          placeholderTextColor={colors.hint}
           editable={!busy}
         />
 
-        <Pressable
-          style={[ui.primaryBtn, (!phraseOk || busy) && { opacity: 0.5 }]}
-          disabled={!phraseOk || busy}
+        <Button
+          busy={busy}
+          disabled={!phraseOk}
           onPress={() => void onConfirm()}
         >
-          {busy ? (
-            <ActivityIndicator color="#000" />
-          ) : (
-            <Text style={ui.primaryBtnText}>{t("reset.confirmBtn")}</Text>
-          )}
-        </Pressable>
+          {t("reset.confirmBtn")}
+        </Button>
       </ScrollView>
     </ScreenChrome>
   );
@@ -128,15 +121,5 @@ const styles = StyleSheet.create({
     color: colors.hint,
     marginTop: 24,
     marginBottom: 8,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    color: colors.fg,
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 16,
   },
 });

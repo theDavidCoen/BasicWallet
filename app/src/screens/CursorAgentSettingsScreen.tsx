@@ -13,12 +13,12 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import * as Clipboard from "expo-clipboard";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, TextField } from "../components/ui";
 import { activateCursorBot, disableCursorBot } from "../agent/activateBot";
 import { readBotMeta } from "../agent/botIdentity";
 import { midEllipsis } from "../nostr/keys";
@@ -177,11 +177,10 @@ export function CursorAgentSettingsScreen() {
             ) : null}
 
             <Text style={styles.fieldLabel}>{t("cursor.apiKey")}</Text>
-            <TextInput
+            <TextField
               value={draftKey}
               onChangeText={setDraftKey}
               placeholder={savedMask ? t("cursor.phReplace") : t("cursor.phPaste")}
-              placeholderTextColor={colors.hint}
               style={styles.input}
               autoCapitalize="none"
               autoCorrect={false}
@@ -189,21 +188,13 @@ export function CursorAgentSettingsScreen() {
               editable={!busy}
             />
 
-            <Pressable
-              style={[ui.primaryBtn, busy && styles.disabled]}
+            <Button
+              busy={busy}
               onPress={() => void onSave()}
-              disabled={busy}
-              accessibilityRole="button"
               accessibilityLabel={t("cursor.saveA11y")}
             >
-              {busy ? (
-                <ActivityIndicator color="#000" />
-              ) : (
-                <Text style={ui.primaryBtnText}>
-                  {savedMask ? t("cursor.saveUpdate") : t("cursor.saveActivate")}
-                </Text>
-              )}
-            </Pressable>
+              {savedMask ? t("cursor.saveUpdate") : t("cursor.saveActivate")}
+            </Button>
 
             <Pressable
               style={styles.linkBtn}

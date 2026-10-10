@@ -1,5 +1,4 @@
 import { StyleSheet, Text, View } from "react-native";
-import { Pressable } from "react-native-gesture-handler";
 import { getNetworkConfig } from "../config/network";
 import { fiatStableForNetwork, formatBrlDisplay } from "../fiat/depixAssets";
 import { Button } from "../components/ui";
@@ -49,21 +48,20 @@ export function FundsReceivedView({
       <Text style={styles.caption}>{caption}</Text>
 
       <Button
-        style={{ alignSelf: "stretch" }}
+        style={{ alignSelf: "stretch", marginTop: 0 }}
         onPress={onViewDetails}
         accessibilityLabel="View details"
       >
         View details
       </Button>
-      <Pressable
-        style={styles.secondary}
+      <Button
+        variant="secondary"
+        style={{ alignSelf: "stretch" }}
         onPress={onDone}
-        hitSlop={8}
-        accessibilityRole="button"
         accessibilityLabel="Done"
       >
-        <Text style={styles.secondaryText}>Done</Text>
-      </Pressable>
+        Done
+      </Button>
     </View>
   );
 }
