@@ -3,15 +3,8 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-} from "react-native";
+import { Alert, ScrollView, StyleSheet, Text } from "react-native";
+import { Button, Caption, ScreenTitle, TextField } from "../components/ui";
 import * as Clipboard from "expo-clipboard";
 import { getNetworkConfig } from "../config/network";
 import { insertLightningWalletRow } from "../account/lightningActivity";
@@ -112,21 +105,21 @@ export function ConnectLndHubSheetContent({ open, onConnected }: Props) {
         contentContainerStyle={{ paddingBottom: 24 }}
         style={{ flex: 1 }}
       >
-        <Text style={sheetUi.title}>LNDHUB</Text>
-        <Text style={sheetUi.caption}>
-          Scan the admin or invoice QR from your LNbits LndHub extension,{"\n"}
-          or paste the connection URL.
-        </Text>
+        <ScreenTitle style={sheetUi.title}>LNDHUB</ScreenTitle>
+        <Caption style={sheetUi.caption}>
+          {
+            "Scan the admin or invoice QR from your LNbits LndHub extension,\nor paste the connection URL."
+          }
+        </Caption>
 
         <Text style={styles.fieldLabel}>connection URL</Text>
-        <TextInput
+        <TextField
           value={payload}
           onChangeText={setPayload}
           autoCapitalize="none"
           autoCorrect={false}
           multiline
           placeholder="Paste lndhub://… URL"
-          placeholderTextColor={colors.hint}
           style={[styles.input, styles.inputMulti]}
           editable={!busy}
           textContentType="none"
@@ -134,33 +127,27 @@ export function ConnectLndHubSheetContent({ open, onConnected }: Props) {
           importantForAutofill="no"
         />
 
-        <Pressable
-          style={sheetUi.secondaryBtn}
+        <Button
+          size="sheet"
+          variant="secondary"
           disabled={busy}
           onPress={() => void onPasteClipboard()}
         >
-          <Text style={sheetUi.secondaryBtnText}>Paste from clipboard</Text>
-        </Pressable>
+          Paste from clipboard
+        </Button>
 
-        <Pressable
-          style={sheetUi.secondaryBtn}
+        <Button
+          size="sheet"
+          variant="secondary"
           disabled={busy}
           onPress={() => setScanOpen(true)}
         >
-          <Text style={sheetUi.secondaryBtnText}>Scan pairing QR</Text>
-        </Pressable>
+          Scan pairing QR
+        </Button>
 
-        <Pressable
-          style={[sheetUi.primaryBtn, busy && { opacity: 0.6 }]}
-          disabled={busy}
-          onPress={() => void connectWithRaw(payload)}
-        >
-          {busy ? (
-            <ActivityIndicator color="#000" />
-          ) : (
-            <Text style={sheetUi.primaryBtnText}>Connect LNDHub</Text>
-          )}
-        </Pressable>
+        <Button size="sheet" busy={busy} onPress={() => void connectWithRaw(payload)}>
+          Connect LNDHub
+        </Button>
 
         <Text style={[sheetUi.hint, { marginTop: 20 }]}>
           Prefer the admin URL for send + receive.{"\n"}

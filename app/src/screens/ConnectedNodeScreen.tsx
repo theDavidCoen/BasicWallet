@@ -16,6 +16,7 @@ import {
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button } from "../components/ui";
 import { getNetworkConfig } from "../config/network";
 import { probeLndHub } from "../lightning/lndhub";
 import { loadLndHubCredentials } from "../lightning/lndhubCredentials";
@@ -216,9 +217,9 @@ function LightningPanel({
       <Text style={[ui.hint, { marginTop: 20 }]}>{t("node.hintLn")}</Text>
 
       {ln.state !== "missing" || ln.walletLabel ? (
-        <Pressable style={[ui.secondaryBtn, { marginTop: 24 }]} onPress={onRemove}>
-          <Text style={ui.secondaryBtnText}>{t("node.remove")}</Text>
-        </Pressable>
+        <Button variant="secondary" style={{ marginTop: 24 }} onPress={onRemove}>
+              {t("node.remove")}
+            </Button>
       ) : null}
     </>
   );

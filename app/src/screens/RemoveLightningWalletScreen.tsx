@@ -1,15 +1,9 @@
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import { useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, Caption, ScreenTitle } from "../components/ui";
 import { getNetworkConfig } from "../config/network";
 import { getWallet } from "../account/walletRegistry";
 import { requireUserPresence } from "../security/userPresence";
@@ -28,8 +22,8 @@ export function RemoveLightningWalletScreen() {
   if (!wallet) {
     return (
       <ScreenChrome logoScale={0.77}>
-        <Text style={ui.title}>REMOVE LIGHTNING?</Text>
-        <Text style={ui.caption}>Wallet not found.</Text>
+        <ScreenTitle>REMOVE LIGHTNING?</ScreenTitle>
+        <Caption>Wallet not found.</Caption>
       </ScreenChrome>
     );
   }
@@ -56,11 +50,10 @@ export function RemoveLightningWalletScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={ui.title}>REMOVE LIGHTNING?</Text>
-      <Text style={ui.caption}>
-        Removes this Lightning connection from Basic.{"\n"}
-        Funds stay on your Lightning node.
-      </Text>
+      <ScreenTitle>REMOVE LIGHTNING?</ScreenTitle>
+      <Caption>
+        {"Removes this Lightning connection from Basic.\nFunds stay on your Lightning node."}
+      </Caption>
 
       <View style={ui.card}>
         <Text style={ui.cardTitle}>No recovery phrase</Text>
@@ -79,13 +72,14 @@ export function RemoveLightningWalletScreen() {
         )}
       </Pressable>
 
-      <Pressable
-        style={[ui.secondaryBtn, { marginTop: 16 }]}
+      <Button
+        variant="secondary"
+        style={{ marginTop: 16 }}
         disabled={busy}
         onPress={() => navigation.goBack()}
       >
-        <Text style={ui.secondaryBtnText}>Cancel</Text>
-      </Pressable>
+        Cancel
+      </Button>
     </ScreenChrome>
   );
 }

@@ -9,9 +9,9 @@
  */
 
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, StyleSheet, Text, View } from "react-native";
-import { Pressable } from "react-native-gesture-handler";
+import { Alert, StyleSheet, Text, View } from "react-native";
 import { InteractiveBottomSheet } from "./sheet/InteractiveBottomSheet";
+import { Button, Caption, ScreenTitle } from "./ui";
 import { PassphraseInput } from "./PassphraseInput";
 import {
   decryptPackage,
@@ -24,7 +24,6 @@ import {
   scheduleEncryptedBackupSync,
   setSessionBackupPassphrase,
 } from "../nostr/backupSync";
-import { colors } from "../theme/colors";
 import { sheetUi } from "../theme/sheetUi";
 
 export type BackupPassphraseSheetMode = "session" | "pair";
@@ -117,12 +116,12 @@ export function BackupPassphraseSheet({
       portal
     >
       <View style={styles.body}>
-        <Text style={sheetUi.title}>Backup passphrase</Text>
-        <Text style={sheetUi.caption}>
+        <ScreenTitle style={sheetUi.title}>Backup passphrase</ScreenTitle>
+        <Caption style={sheetUi.caption}>
           {pairMode
             ? "Cloud backup is on, but this phone does not have the passphrase stored. Enter it once to continue pairing — Basic saves it securely and sends it to the other phone."
             : "Backup is already set up on this wallet. Enter the passphrase to reactivate encrypted uploads on this device. It stays in memory only for this session — Basic never stores it on disk."}
-        </Text>
+        </Caption>
 
         <Text style={sheetUi.label}>Passphrase</Text>
         <PassphraseInput
@@ -137,33 +136,27 @@ export function BackupPassphraseSheet({
           }}
         />
 
-        <Pressable
-          style={[sheetUi.primaryBtn, busy ? styles.btnDisabled : null]}
+        <Button
+          size="sheet"
+          busy={busy}
           onPress={() => {
             if (!busy) void onConfirm();
           }}
-          disabled={busy}
-          hitSlop={8}
-          accessibilityRole="button"
           accessibilityLabel="Confirm backup passphrase"
         >
-          {busy ? (
-            <ActivityIndicator color={colors.bg} />
-          ) : (
-            <Text style={sheetUi.primaryBtnText}>Confirm</Text>
-          )}
-        </Pressable>
+          Confirm
+        </Button>
 
-        <Pressable
-          style={[styles.secondaryBtn, busy ? styles.btnDisabled : null]}
-          onPress={onDismiss}
+        <Button
+          size="sheet"
+          variant="secondary"
+          style={styles.secondaryBtn}
           disabled={busy}
-          hitSlop={8}
-          accessibilityRole="button"
+          onPress={onDismiss}
           accessibilityLabel="Cancel"
         >
-          <Text style={sheetUi.secondaryBtnText}>Cancel</Text>
-        </Pressable>
+          Cancel
+        </Button>
       </View>
     </InteractiveBottomSheet>
   );
@@ -174,10 +167,6 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   secondaryBtn: {
-    ...sheetUi.secondaryBtn,
     backgroundColor: "#000",
-  },
-  btnDisabled: {
-    opacity: 0.55,
   },
 });

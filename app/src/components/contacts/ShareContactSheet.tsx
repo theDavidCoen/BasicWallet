@@ -3,16 +3,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { filterContacts } from "../../contacts/contactSearch";
 import { shareContactToRecipient } from "../../contacts/contactShare";
 import { listContacts } from "../../contacts/contactStore";
@@ -20,6 +11,7 @@ import type { Contact } from "../../contacts/types";
 import { contactDisplayName, midEllipsis } from "../../contacts/types";
 import { hasNostrIdentity } from "../../nostr/identityStore";
 import { InteractiveBottomSheet } from "../sheet/InteractiveBottomSheet";
+import { Button, Caption, Hint, ScreenTitle, TextField } from "../ui";
 import { colors } from "../../theme/colors";
 import { sheetUi } from "../../theme/sheetUi";
 import { ContactPickList } from "./ContactPickList";
@@ -154,22 +146,21 @@ export function ShareContactSheet({
       portal
     >
       <View style={styles.body}>
-        <Text style={sheetUi.title}>SHARE CONTACT</Text>
-        <Text style={[sheetUi.caption, { marginBottom: 8 }]} numberOfLines={2}>
+        <ScreenTitle style={sheetUi.title}>SHARE CONTACT</ScreenTitle>
+        <Caption style={[sheetUi.caption, { marginBottom: 8 }]} numberOfLines={2}>
           {contactDisplayName(contact)}
-        </Text>
-        <Text style={[sheetUi.hint, { marginBottom: 12 }]}>
+        </Caption>
+        <Hint style={[sheetUi.hint, { marginBottom: 12 }]}>
           Pick a contact (needs npub or NIP-05) or paste one.
-        </Text>
+        </Hint>
 
-        <TextInput
+        <TextField
           value={query}
           onChangeText={(t) => {
             setQuery(t);
             if (pickedId) setPickedId(null);
           }}
           placeholder="Search or paste npub"
-          placeholderTextColor={colors.hint}
           autoCapitalize="none"
           autoCorrect={false}
           editable={!busy}
@@ -220,19 +211,16 @@ export function ShareContactSheet({
         </ScrollView>
 
         <View style={styles.footer}>
-          <Pressable
-            style={[sheetUi.primaryBtn, { marginTop: 0 }, !canSend && { opacity: 0.5 }]}
+          <Button
+            size="sheet"
+            style={{ marginTop: 0 }}
             disabled={!canSend}
+            busy={busy}
             onPress={() => void onSend()}
-            accessibilityRole="button"
             accessibilityLabel="Send contact"
           >
-            {busy ? (
-              <ActivityIndicator color="#000" />
-            ) : (
-              <Text style={sheetUi.primaryBtnText}>Send</Text>
-            )}
-          </Pressable>
+            Send
+          </Button>
         </View>
       </View>
     </InteractiveBottomSheet>

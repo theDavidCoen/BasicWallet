@@ -4,17 +4,15 @@
 
 import { useState } from "react";
 import {
-  ActivityIndicator,
   Alert,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, Caption, Hint, ScreenTitle, TextField } from "../components/ui";
 import { getNetworkConfig } from "../config/network";
 import { onchainTxUrl } from "../config/explorers";
 import { requireExitAuth } from "../exit/gates";
@@ -22,7 +20,6 @@ import { collaborativeOffboard, validateSweepAddress } from "../exit/runExit";
 import { useWallet } from "../wallet/WalletProvider";
 import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
-import { ui } from "../theme/ui";
 
 export function CollaborativeOffboardScreen() {
   const navigation = useNavigation<RootNav>();
@@ -74,34 +71,25 @@ export function CollaborativeOffboardScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <Text style={ui.title}>{t("exit.collabTitle")}</Text>
-        <Text style={ui.caption}>{t("exit.collabCaption")}</Text>
+        <ScreenTitle>{t("exit.collabTitle")}</ScreenTitle>
+        <Caption>{t("exit.collabCaption")}</Caption>
 
         {!isArkade ? (
-          <Text style={ui.hint}>{t("exit.selectArkadeFirst")}</Text>
+          <Hint>{t("exit.selectArkadeFirst")}</Hint>
         ) : (
           <>
             <Text style={styles.label}>{t("exit.destinationAddress")}</Text>
-            <TextInput
+            <TextField
               value={address}
               onChangeText={setAddress}
               autoCapitalize="none"
               autoCorrect={false}
               placeholder={network.id === "mainnet" ? "bc1…" : "tb1…"}
-              placeholderTextColor={colors.hint}
-              style={styles.input}
+              style={{ fontSize: 14, marginBottom: 0 }}
             />
-            <Pressable
-              style={[ui.primaryBtn, busy && { opacity: 0.6 }]}
-              disabled={busy}
-              onPress={() => void onSubmit()}
-            >
-              {busy ? (
-                <ActivityIndicator color="#000" />
-              ) : (
-                <Text style={ui.primaryBtnText}>{t("exit.withdrawAll")}</Text>
-              )}
-            </Pressable>
+            <Button busy={busy} onPress={() => void onSubmit()}>
+              {t("exit.withdrawAll")}
+            </Button>
           </>
         )}
       </ScrollView>
@@ -116,15 +104,5 @@ const styles = StyleSheet.create({
     color: colors.hint,
     marginTop: 16,
     marginBottom: 6,
-  },
-  input: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 14,
-    color: colors.fg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
   },
 });

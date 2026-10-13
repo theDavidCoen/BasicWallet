@@ -16,6 +16,7 @@ import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "ex
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { isValidArkAddress } from "@arkade-os/sdk";
 import { looksLikeBolt11, normalizeBolt11 } from "../lightning/lndhub";
+import { Button } from "../components/ui";
 import { colors } from "../theme/colors";
 
 export function extractArkAddressFromScan(raw: string): string | null {
@@ -214,9 +215,13 @@ export function ScanQrView({
         ) : !permission.granted ? (
           <View style={styles.permBox}>
             <Text style={styles.permText}>Camera access is required to scan.</Text>
-            <Pressable style={styles.primary} onPress={() => void requestPermission()}>
-              <Text style={styles.primaryText}>Allow camera</Text>
-            </Pressable>
+            <Button
+              size="sheet"
+              style={{ marginTop: 0, paddingHorizontal: 24 }}
+              onPress={() => void requestPermission()}
+            >
+              Allow camera
+            </Button>
           </View>
         ) : active ? (
           <CameraView
@@ -364,17 +369,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.caption,
     textAlign: "center",
-  },
-  primary: {
-    backgroundColor: colors.fg,
-    borderRadius: 10,
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-  },
-  primaryText: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 14,
-    color: colors.bg,
   },
   actions: {
     marginTop: 12,

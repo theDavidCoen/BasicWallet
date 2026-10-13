@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, Caption, ScreenTitle } from "../components/ui";
 import { sharedPayloadToContact } from "../contacts/contactShare";
 import {
   dismissContactShareOffer,
@@ -22,7 +23,6 @@ import {
 } from "../contacts/types";
 import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
-import { ui } from "../theme/ui";
 
 export function ContactShareOfferScreen() {
   const navigation = useNavigation<RootNav>();
@@ -89,13 +89,9 @@ export function ContactShareOfferScreen() {
   if (!offer) {
     return (
       <ScreenChrome logoScale={0.77}>
-        <Text style={ui.title}>{t("contacts.shareTitle")}</Text>
-        <Text style={ui.caption}>{t("contacts.shareUnavailable")}</Text>
-        <Pressable style={styles.primary} onPress={() => navigation.navigate("Home")}>
-          <Text style={styles.primaryText}>
-            {t("contacts.home")}
-          </Text>
-        </Pressable>
+        <ScreenTitle>{t("contacts.shareTitle")}</ScreenTitle>
+        <Caption>{t("contacts.shareUnavailable")}</Caption>
+        <Button onPress={() => navigation.navigate("Home")}>{t("contacts.home")}</Button>
       </ScreenChrome>
     );
   }
@@ -107,8 +103,8 @@ export function ContactShareOfferScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={ui.title}>{t("contacts.shareTitle")}</Text>
-      <Text style={ui.caption}>{t("contacts.from", { who: fromLabel })}</Text>
+      <ScreenTitle>{t("contacts.shareTitle")}</ScreenTitle>
+      <Caption>{t("contacts.from", { who: fromLabel })}</Caption>
 
       <ScrollView
         style={styles.scroll}
@@ -153,15 +149,9 @@ export function ContactShareOfferScreen() {
           ) : null}
         </View>
 
-        <Pressable
-          style={[styles.primary, busy && { opacity: 0.5 }]}
-          disabled={busy}
-          onPress={() => void onAdd()}
-        >
-          <Text style={styles.primaryText}>
-            {t("contacts.addContactCta")}
-          </Text>
-        </Pressable>
+        <Button busy={busy} onPress={() => void onAdd()}>
+          {t("contacts.addContactCta")}
+        </Button>
 
         <Pressable
           style={styles.refuseHit}
@@ -239,17 +229,6 @@ const styles = StyleSheet.create({
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 13,
     color: colors.fg,
-  },
-  primary: {
-    backgroundColor: colors.fg,
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: "center",
-  },
-  primaryText: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 15,
-    color: "#000",
   },
   refuseHit: {
     alignItems: "center",

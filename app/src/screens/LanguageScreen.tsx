@@ -3,13 +3,14 @@
  */
 
 import { useCallback, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Caption, ScreenTitle, SettingsRow } from "../components/ui";
 import { useI18n, type LanguagePreference } from "../i18n";
 import { resolveDeviceLocale } from "../i18n/languagePrefs";
 import { colors } from "../theme/colors";
-import { ui } from "../theme/ui";
+import { fonts } from "../theme/typography";
 
 type Row = {
   preference: LanguagePreference;
@@ -51,33 +52,21 @@ export function LanguageScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={ui.title}>{t("settings.languageTitle")}</Text>
-      <Text style={ui.caption}>{t("settings.languageCaption")}</Text>
+      <ScreenTitle>{t("settings.languageTitle")}</ScreenTitle>
+      <Caption>{t("settings.languageCaption")}</Caption>
 
       {rows.map((row) => {
         const selected = preference === row.preference;
         const label = t(row.labelKey);
         return (
-          <Pressable
+          <SettingsRow
             key={row.preference}
-            style={styles.row}
-            onPress={() => void onSelect(row.preference)}
-            accessibilityRole="radio"
-            accessibilityState={{ selected }}
+            label={label}
+            hint={row.hint}
             disabled={saving}
-          >
-            <View style={styles.rowText}>
-              <Text style={styles.label}>
-                {label}
-              </Text>
-              {row.hint ? (
-                <Text style={styles.hint} numberOfLines={2}>
-                  {row.hint}
-                </Text>
-              ) : null}
-            </View>
-            <Text style={styles.check}>{selected ? "✓" : ""}</Text>
-          </Pressable>
+            onPress={() => void onSelect(row.preference)}
+            right={<Text style={styles.check}>{selected ? "✓" : ""}</Text>}
+          />
         );
       })}
 
@@ -89,30 +78,8 @@ export function LanguageScreen() {
 }
 
 const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 18,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-    gap: 12,
-  },
-  rowText: { flex: 1, paddingRight: 8 },
-  label: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 16,
-    color: colors.fg,
-  },
-  hint: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 12,
-    color: colors.hint,
-    marginTop: 4,
-    lineHeight: 16,
-  },
   check: {
-    fontFamily: "JetBrainsMono_700Bold",
+    fontFamily: fonts.bold,
     fontSize: 18,
     color: colors.fg,
     width: 24,

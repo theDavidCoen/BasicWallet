@@ -3,15 +3,8 @@
  */
 
 import { useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { Button, Caption, ScreenTitle, TextField } from "../components/ui";
 import { getNetworkConfig } from "../config/network";
 import { getWallet } from "../account/walletRegistry";
 import { colors } from "../theme/colors";
@@ -42,11 +35,9 @@ export function EditWalletSheetContent({
   if (!wallet) {
     return (
       <View style={styles.root}>
-        <Text style={sheetUi.title}>EDIT WALLET</Text>
-        <Text style={sheetUi.caption}>Wallet not found.</Text>
-        <Pressable style={sheetUi.primaryBtn} onPress={onDone}>
-          <Text style={sheetUi.primaryBtnText}>Done</Text>
-        </Pressable>
+        <ScreenTitle style={sheetUi.title}>EDIT WALLET</ScreenTitle>
+        <Caption style={sheetUi.caption}>Wallet not found.</Caption>
+        <Button size="sheet" onPress={onDone}>Done</Button>
       </View>
     );
   }
@@ -73,33 +64,27 @@ export function EditWalletSheetContent({
 
   return (
     <View style={styles.root}>
-      <Text style={sheetUi.title}>EDIT WALLET</Text>
-      <Text style={sheetUi.caption}>
-        {wallet.label} · {kindLabel}
-      </Text>
+      <ScreenTitle style={sheetUi.title}>EDIT WALLET</ScreenTitle>
+      <Caption style={sheetUi.caption}>{`${wallet.label} · ${kindLabel}`}</Caption>
 
       <Text style={styles.label}>name</Text>
-      <TextInput
+      <TextField
         style={styles.input}
         value={name}
         onChangeText={setName}
         autoCapitalize="words"
         autoCorrect={false}
         placeholder="Wallet name"
-        placeholderTextColor={colors.hint}
       />
 
-      <Pressable
-        style={[sheetUi.primaryBtn, { marginTop: 24 }, busy && { opacity: 0.6 }]}
-        disabled={busy}
+      <Button
+        size="sheet"
+        style={{ marginTop: 24 }}
+        busy={busy}
         onPress={() => void onSave()}
       >
-        {busy ? (
-          <ActivityIndicator color="#000" />
-        ) : (
-          <Text style={sheetUi.primaryBtnText}>Save name</Text>
-        )}
-      </Pressable>
+        Save name
+      </Button>
 
       <Pressable
         style={styles.removeHit}

@@ -20,6 +20,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { BasicLogo } from "../components/BasicLogo";
+import { Button } from "../components/ui";
 import { useI18n } from "../i18n";
 import {
   createNewPrfEntropy,
@@ -361,15 +362,19 @@ export function PasskeyProgressScreen() {
 
         {isNoManager ? (
           <View style={styles.actions}>
-            <Pressable
-              style={styles.primaryBtn}
+            <Button
+              size="sheet"
+              style={{
+                marginTop: 0,
+                borderRadius: 8,
+                minHeight: 52,
+                justifyContent: "center",
+                paddingHorizontal: 20,
+              }}
               onPress={() => void continueWithoutPasskey()}
-              accessibilityRole="button"
             >
-              <Text style={styles.primaryBtnText}>
-                {t("onboarding.continueWithoutPasskey")}
-              </Text>
-            </Pressable>
+              {t("onboarding.continueWithoutPasskey")}
+            </Button>
             {showPasskeySettings ? (
               <Pressable
                 style={styles.linkBtn}

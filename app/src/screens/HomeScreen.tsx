@@ -22,6 +22,7 @@ import {
 import { RestArkProvider } from "@arkade-os/sdk";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome, WalletAvatar } from "../components/ScreenChrome";
+import { Button } from "../components/ui";
 import { PullResyncIndicator } from "../components/PullResyncIndicator";
 import { SyncProgressBar } from "../components/SyncProgressBar";
 import { getVmempoolBase } from "../config/explorers";
@@ -1055,22 +1056,22 @@ export function HomeScreen() {
               ) : null}
 
               <View style={styles.actions}>
-                <Pressable
+                <Button
+                  variant="secondary"
                   style={styles.ghostBtn}
+                  textStyle={styles.ghostLabel}
                   onPressIn={() => navigation.navigate("Receive")}
                 >
-                  <Text style={styles.ghostLabel}>
-                    {t("home.receive")}
-                  </Text>
-                </Pressable>
-                <Pressable
+                  {t("home.receive")}
+                </Button>
+                <Button
+                  variant="secondary"
                   style={styles.ghostBtn}
+                  textStyle={styles.ghostLabel}
                   onPressIn={() => navigation.navigate("Send")}
                 >
-                  <Text style={styles.ghostLabel}>
-                    {t("home.send")}
-                  </Text>
-                </Pressable>
+                  {t("home.send")}
+                </Button>
               </View>
 
               {/* Inside center cluster so it sits under Receive/Send (not below flex:1). */}
@@ -1202,12 +1203,12 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: "#E0A070",
+    backgroundColor: colors.warning,
   },
   exitBadge: {
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 10,
-    color: "#E0A070",
+    color: colors.warning,
     textAlign: "right",
     lineHeight: 14,
     flexShrink: 1,
@@ -1337,11 +1338,7 @@ const styles = StyleSheet.create({
   ghostBtn: {
     flex: 1,
     maxWidth: 160,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingVertical: 16,
-    alignItems: "center",
+    marginTop: 0,
   },
   ghostLabel: {
     fontFamily: "JetBrainsMono_400Regular",

@@ -1,7 +1,7 @@
 import { StyleSheet, Text, View } from "react-native";
-import { Pressable } from "react-native-gesture-handler";
 import { getNetworkConfig } from "../config/network";
 import { fiatStableForNetwork, formatBrlDisplay } from "../fiat/depixAssets";
+import { Button } from "../components/ui";
 import { colors } from "../theme/colors";
 
 export type FundsReceivedKind = "boarding" | "arkade" | "lightning" | "brl";
@@ -47,24 +47,21 @@ export function FundsReceivedView({
       <Text style={styles.amount}>{amountLabel}</Text>
       <Text style={styles.caption}>{caption}</Text>
 
-      <Pressable
-        style={styles.primary}
+      <Button
+        style={{ alignSelf: "stretch", marginTop: 0 }}
         onPress={onViewDetails}
-        hitSlop={8}
-        accessibilityRole="button"
         accessibilityLabel="View details"
       >
-        <Text style={styles.primaryText}>View details</Text>
-      </Pressable>
-      <Pressable
-        style={styles.secondary}
+        View details
+      </Button>
+      <Button
+        variant="secondary"
+        style={{ alignSelf: "stretch" }}
         onPress={onDone}
-        hitSlop={8}
-        accessibilityRole="button"
         accessibilityLabel="Done"
       >
-        <Text style={styles.secondaryText}>Done</Text>
-      </Pressable>
+        Done
+      </Button>
     </View>
   );
 }
@@ -98,18 +95,6 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginTop: 14,
     marginBottom: 36,
-  },
-  primary: {
-    alignSelf: "stretch",
-    backgroundColor: colors.fg,
-    borderRadius: 10,
-    paddingVertical: 16,
-    alignItems: "center",
-  },
-  primaryText: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 15,
-    color: "#000",
   },
   secondary: {
     alignSelf: "stretch",

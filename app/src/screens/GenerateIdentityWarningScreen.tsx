@@ -1,14 +1,14 @@
 import { useNavigation } from "@react-navigation/native";
 import { useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, ScrollView } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, Caption, EmptyStateCard, ScreenTitle } from "../components/ui";
 import { generateAndStoreNostrIdentity, hasNostrIdentity } from "../nostr/identityStore";
 import { requireUserPresence } from "../security/userPresence";
-import { ui } from "../theme/ui";
 import { getMnemonicSource } from "../wallet/mnemonicMeta";
 
-/** Penpot 05k — destroy/replace Nostr identity. */
+/** Destroy/replace Nostr identity. */
 export function GenerateIdentityWarningScreen() {
   const navigation = useNavigation<RootNav>();
   const [busy, setBusy] = useState(false);
@@ -58,35 +58,31 @@ export function GenerateIdentityWarningScreen() {
   return (
     <ScreenChrome logoScale={0.77}>
       <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
-        <Text style={ui.title}>NEW IDENTITY</Text>
-        <Text style={ui.caption}>
-          Generates a fresh nsec on this device.{"\n"}
-          Existing backups tied to the old key stay encrypted.
-        </Text>
+        <ScreenTitle>NEW IDENTITY</ScreenTitle>
+        <Caption>
+          {"Generates a fresh nsec on this device.\n" +
+            "Existing backups tied to the old key stay encrypted."}
+        </Caption>
 
-        <View style={ui.cardMuted}>
+        <EmptyStateCard variant="muted">
           {[
             "Old nsec is overwritten locally",
             "Re-enable encrypted backup after",
             "Export the new nsec offline",
           ].map((line) => (
-            <Text key={line} style={[ui.caption, { textAlign: "left", marginBottom: 10 }]}>
-              · {line}
-            </Text>
+            <Caption
+              key={line}
+              align="left"
+              style={{ textAlign: "left", marginBottom: 10 }}
+            >
+              {`· ${line}`}
+            </Caption>
           ))}
-        </View>
+        </EmptyStateCard>
 
-        <Pressable
-          style={[ui.primaryBtn, busy && { opacity: 0.6 }]}
-          disabled={busy}
-          onPress={() => void onGenerate()}
-        >
-          {busy ? (
-            <ActivityIndicator color="#000" />
-          ) : (
-            <Text style={ui.primaryBtnText}>Generate new identity</Text>
-          )}
-        </Pressable>
+        <Button busy={busy} onPress={() => void onGenerate()}>
+          Generate new identity
+        </Button>
       </ScrollView>
     </ScreenChrome>
   );

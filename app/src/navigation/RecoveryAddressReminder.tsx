@@ -24,7 +24,10 @@ import {
 import { useHomeTourUiOpen } from "../home/useHomeTourUiOpen";
 import { useWallet } from "../wallet/WalletProvider";
 import { useSheets } from "./SheetHost";
+import { Hint } from "../components/ui";
 import { colors } from "../theme/colors";
+import { fonts } from "../theme/typography";
+import { radii } from "../theme/radii";
 
 export function RecoveryAddressReminder({
   navigationRef,
@@ -169,7 +172,7 @@ export function RecoveryAddressReminder({
             Your Arkade balance is over 50,000 sats. Add an onchain address from an
             external wallet so Basic can prepare a unilateral exit package for you.
           </Text>
-          <Text style={styles.cta}>Tap to open Settings</Text>
+          <Hint style={styles.cta}>Tap to open Settings</Hint>
         </Pressable>
       </Animated.View>
     </View>
@@ -187,12 +190,13 @@ const styles = StyleSheet.create({
   },
   dialog: {
     backgroundColor: colors.card,
-    borderRadius: 12,
+    borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.fg,
     paddingTop: 14,
     paddingBottom: 14,
     paddingHorizontal: 16,
+    marginTop: 0,
   },
   closeHit: {
     position: "absolute",
@@ -226,10 +230,11 @@ const styles = StyleSheet.create({
     lineHeight: 17,
   },
   cta: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 11,
     color: colors.hint,
     textAlign: "center",
     marginTop: 10,
+    lineHeight: 16,
   },
 });

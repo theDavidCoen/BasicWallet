@@ -21,6 +21,15 @@ export function endPresencePrompt(graceMs = 2500): void {
   graceUntil = Date.now() + graceMs;
 }
 
+/**
+ * Hard clear after true app background (Home / recents). Stale depth/grace must
+ * not block AppState lock/resume or leave Unlock thinking a prompt is open.
+ */
+export function resetPresencePrompt(): void {
+  depth = 0;
+  graceUntil = 0;
+}
+
 export function isPresencePromptActive(): boolean {
   return depth > 0 || Date.now() < graceUntil;
 }

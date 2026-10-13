@@ -3,9 +3,10 @@
  */
 
 import { useCallback, useState } from "react";
-import { StyleSheet, Switch, Text, View } from "react-native";
+import { Switch } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Caption, ScreenTitle, SettingsRow } from "../components/ui";
 import { useI18n } from "../i18n";
 import {
   DISPLAY_CURRENCY_CODES,
@@ -15,7 +16,6 @@ import {
   type DisplayCurrencySettings,
 } from "../settings/displayCurrencies";
 import { colors } from "../theme/colors";
-import { ui } from "../theme/ui";
 
 export function DisplayCurrenciesScreen() {
   const { t } = useI18n();
@@ -34,39 +34,27 @@ export function DisplayCurrenciesScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={ui.title}>{t("settings.currenciesTitle")}</Text>
-      <Text style={ui.caption}>{t("settings.currenciesCaption")}</Text>
+      <ScreenTitle>{t("settings.currenciesTitle")}</ScreenTitle>
+      <Caption>{t("settings.currenciesCaption")}</Caption>
 
       {DISPLAY_CURRENCY_CODES.map((code) => {
         const on = settings?.enabled.includes(code) ?? false;
         return (
-          <View key={code} style={styles.row}>
-            <Text style={styles.label}>{code}</Text>
-            <Switch
-              value={on}
-              onValueChange={(v) => void toggle(code, v)}
-              trackColor={{ false: colors.border, true: colors.fg }}
-              thumbColor="#000"
-            />
-          </View>
+          <SettingsRow
+            key={code}
+            label={code}
+            onPress={() => void toggle(code, !on)}
+            right={
+              <Switch
+                value={on}
+                onValueChange={(v) => void toggle(code, v)}
+                trackColor={{ false: colors.border, true: colors.fg }}
+                thumbColor={colors.onPrimary}
+              />
+            }
+          />
         );
       })}
     </ScreenChrome>
   );
 }
-
-const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 18,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  label: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 16,
-    color: colors.fg,
-  },
-});

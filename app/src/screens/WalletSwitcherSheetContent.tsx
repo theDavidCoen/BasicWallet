@@ -11,6 +11,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { Button, Caption, ScreenTitle } from "../components/ui";
 import { useWallet } from "../wallet/WalletProvider";
 import { colors } from "../theme/colors";
 import { sheetUi } from "../theme/sheetUi";
@@ -56,8 +57,8 @@ export function WalletSwitcherSheetContent({
 
   return (
     <View style={styles.root}>
-      <Text style={sheetUi.title}>WALLETS</Text>
-      <Text style={sheetUi.caption}>Select your default wallet</Text>
+      <ScreenTitle style={sheetUi.title}>WALLETS</ScreenTitle>
+      <Caption style={sheetUi.caption}>Select your default wallet</Caption>
 
       <FlatList
         data={wallets}
@@ -65,22 +66,12 @@ export function WalletSwitcherSheetContent({
         contentContainerStyle={styles.list}
         ListFooterComponent={
           <View>
-            <Pressable
-              style={sheetUi.primaryBtn}
-              onPress={() => {
-                onAddWallet();
-              }}
-            >
-              <Text style={sheetUi.primaryBtnText}>+ Create wallet</Text>
-            </Pressable>
-            <Pressable
-              style={sheetUi.primaryBtn}
-              onPress={() => {
-                onConnectNode();
-              }}
-            >
-              <Text style={sheetUi.primaryBtnText}>Connect Lightning Node</Text>
-            </Pressable>
+            <Button size="sheet" onPress={() => onAddWallet()}>
+              + Create wallet
+            </Button>
+            <Button size="sheet" onPress={() => onConnectNode()}>
+              Connect Lightning Node
+            </Button>
           </View>
         }
         renderItem={({ item }) => {

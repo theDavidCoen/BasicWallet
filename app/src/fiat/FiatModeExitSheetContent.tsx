@@ -5,7 +5,7 @@
  */
 
 import { ScrollView, StyleSheet, Text, View } from "react-native";
-import { Pressable } from "react-native-gesture-handler";
+import { Button, ScreenTitle } from "../components/ui";
 import { getNetworkConfig } from "../config/network";
 import { fiatFeeBps, fiatStableForNetwork, formatBrlDisplay } from "./depixAssets";
 import { colors } from "../theme/colors";
@@ -35,7 +35,7 @@ export function FiatModeExitSheetContent({
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <Text style={sheetUi.title}>Exit Fiat Mode</Text>
+        <ScreenTitle style={sheetUi.title}>Exit Fiat Mode</ScreenTitle>
 
         <Text style={styles.body}>
           Leaving Fiat Mode converts your {unitLabel} balance back to sats.
@@ -52,24 +52,22 @@ export function FiatModeExitSheetContent({
       </ScrollView>
 
       <View style={styles.actions}>
-        <Pressable
-          style={sheetUi.primaryBtn}
+        <Button
+          size="sheet"
           onPress={onConfirm}
-          hitSlop={8}
-          accessibilityRole="button"
           accessibilityLabel="Confirm Exit Fiat Mode"
         >
-          <Text style={sheetUi.primaryBtnText}>Confirm</Text>
-        </Pressable>
-        <Pressable
+          Confirm
+        </Button>
+        <Button
+          size="sheet"
+          variant="secondary"
           style={styles.secondaryBtn}
           onPress={onCancel}
-          hitSlop={8}
-          accessibilityRole="button"
           accessibilityLabel="Cancel"
         >
-          <Text style={sheetUi.secondaryBtnText}>Cancel</Text>
-        </Pressable>
+          Cancel
+        </Button>
       </View>
     </View>
   );
@@ -102,7 +100,6 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   secondaryBtn: {
-    ...sheetUi.secondaryBtn,
     backgroundColor: "#000",
   },
 });

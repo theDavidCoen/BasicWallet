@@ -9,7 +9,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import {
@@ -27,7 +26,9 @@ import {
 import type { Contact, IdentifierKind } from "../../contacts/types";
 import { IDENTIFIER_KIND_LABELS, IDENTIFIER_KIND_ORDER } from "../../contacts/types";
 import { InteractiveBottomSheet } from "../sheet/InteractiveBottomSheet";
+import { Button, Caption, ScreenTitle, TextField } from "../ui";
 import { colors } from "../../theme/colors";
+import { fonts } from "../../theme/typography";
 import { sheetUi } from "../../theme/sheetUi";
 import { ContactPickList } from "./ContactPickList";
 
@@ -125,14 +126,12 @@ export function SaveToContactsSheet({
         portal
       >
         <View style={styles.body}>
-          <Text style={sheetUi.title}>SAVE TO CONTACTS</Text>
-          <Text style={sheetUi.caption}>
+          <ScreenTitle style={sheetUi.title}>SAVE TO CONTACTS</ScreenTitle>
+          <Caption style={sheetUi.caption}>
             Lightning invoices (BOLT11) are one-time and cannot be saved. Use an
             LNURL or Lightning Address instead.
-          </Text>
-          <Pressable style={sheetUi.primaryBtn} onPress={resetAndClose}>
-            <Text style={sheetUi.primaryBtnText}>OK</Text>
-          </Pressable>
+          </Caption>
+          <Button size="sheet" onPress={resetAndClose}>OK</Button>
         </View>
       </InteractiveBottomSheet>
     );
@@ -147,10 +146,10 @@ export function SaveToContactsSheet({
       portal
     >
       <View style={styles.body}>
-        <Text style={sheetUi.title}>SAVE TO CONTACTS</Text>
-        <Text style={sheetUi.caption} numberOfLines={2}>
+        <ScreenTitle style={sheetUi.title}>SAVE TO CONTACTS</ScreenTitle>
+        <Caption style={sheetUi.caption} numberOfLines={2}>
           {destination.trim()}
-        </Text>
+        </Caption>
 
         {existing ? (
           <Text style={styles.warn}>Already saved as {existing.name}</Text>
@@ -182,12 +181,10 @@ export function SaveToContactsSheet({
         {mode === "new" ? (
           <ScrollView keyboardShouldPersistTaps="handled" style={styles.scroll}>
             <Text style={sheetUi.label}>name</Text>
-            <TextInput
+            <TextField
               value={name}
               onChangeText={setName}
               placeholder="Alice"
-              placeholderTextColor={colors.hint}
-              style={sheetUi.input}
             />
             <Text style={sheetUi.label}>type</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.kinds}>
@@ -206,22 +203,20 @@ export function SaveToContactsSheet({
             {kind === "custom" ? (
               <>
                 <Text style={sheetUi.label}>custom type label</Text>
-                <TextInput
+                <TextField
                   value={customLabel}
                   onChangeText={setCustomLabel}
                   placeholder="e.g. Telegram"
-                  placeholderTextColor={colors.hint}
-                  style={sheetUi.input}
                 />
               </>
             ) : null}
-            <Pressable
-              style={[sheetUi.primaryBtn, (!name.trim() || !!existing) && { opacity: 0.5 }]}
+            <Button
+              size="sheet"
               disabled={!name.trim() || !!existing}
               onPress={saveNew}
             >
-              <Text style={sheetUi.primaryBtnText}>Save contact</Text>
-            </Pressable>
+              Save contact
+            </Button>
           </ScrollView>
         ) : (
           <ScrollView style={styles.scroll} keyboardShouldPersistTaps="handled">
@@ -248,9 +243,9 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   warn: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 13,
-    color: "#E07070",
+    color: colors.danger,
     textAlign: "center",
     marginBottom: 8,
   },
@@ -272,13 +267,13 @@ const styles = StyleSheet.create({
     borderColor: colors.fg,
   },
   tabText: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 14,
     color: colors.caption,
   },
   tabTextOn: {
-    color: "#000",
-    fontFamily: "JetBrainsMono_700Bold",
+    color: colors.onPrimary,
+    fontFamily: fonts.bold,
   },
   scroll: {
     maxHeight: 320,
@@ -301,16 +296,16 @@ const styles = StyleSheet.create({
     borderColor: colors.fg,
   },
   kindChipText: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 13,
     color: colors.caption,
   },
   kindChipTextOn: {
-    color: "#000",
-    fontFamily: "JetBrainsMono_700Bold",
+    color: colors.onPrimary,
+    fontFamily: fonts.bold,
   },
   cancel: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 14,
     color: colors.caption,
     textAlign: "center",

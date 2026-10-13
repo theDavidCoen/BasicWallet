@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { isBtcAddress, isValidArkAddress } from "@arkade-os/sdk";
 import type { RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button } from "../components/ui";
 import { InteractiveBottomSheet } from "../components/sheet/InteractiveBottomSheet";
 import { ContactPickList } from "../components/contacts/ContactPickList";
 import { filterContacts } from "../contacts/contactSearch";
@@ -1887,17 +1888,13 @@ export function SendScreen() {
               </Pressable>
             </View>
 
-            <Pressable
-              style={[styles.primary, (busy || !canSend) && { opacity: 0.6 }]}
-              disabled={busy || !canSend}
+            <Button
+              busy={busy}
+              disabled={!canSend}
               onPress={() => void onSend()}
             >
-              {busy ? (
-                <ActivityIndicator color="#000" />
-              ) : (
-                <Text style={styles.primaryText}>{t("send.confirmSend")}</Text>
-              )}
-            </Pressable>
+              {t("send.confirmSend")}
+            </Button>
           </ScrollView>
 
           <ScanQrModal
@@ -1933,13 +1930,14 @@ export function SendScreen() {
               multiline
               style={[styles.input, styles.inputMulti, { marginBottom: 12 }]}
             />
-            <Pressable
-              style={[styles.primary, { marginTop: 0 }, !enterDraft.trim() && { opacity: 0.5 }]}
+            <Button
+              size="sheet"
+              style={{ marginTop: 0 }}
               disabled={!enterDraft.trim() || contactResolveBusy}
               onPress={confirmEnterDestination}
             >
-              <Text style={styles.primaryText}>{t("send.useDestination")}</Text>
-            </Pressable>
+              {t("send.useDestination")}
+            </Button>
 
             <TextInput
               value={contactQuery}
@@ -2259,10 +2257,9 @@ export function SendScreen() {
             </View>
           ) : null}
 
-          <Pressable
-            style={[styles.primary, (busy || sendBlocked || !!myWalletPeekId || (arkadeLnDest && !lnQuotePreview)) && { opacity: 0.6 }]}
+          <Button
+            busy={busy}
             disabled={
-              busy ||
               sendBlocked ||
               !!myWalletPeekId ||
               (arkadeLnDest &&
@@ -2275,14 +2272,8 @@ export function SendScreen() {
             }
             onPress={() => void onSend()}
           >
-            {busy ? (
-              <ActivityIndicator color="#000" />
-            ) : (
-              <Text style={styles.primaryText}>
-                {lines.length > 1 ? "Confirm multi-send" : "Confirm send"}
-              </Text>
-            )}
-          </Pressable>
+            {lines.length > 1 ? "Confirm multi-send" : "Confirm send"}
+          </Button>
         </ScrollView>
 
         <ScanQrModal
@@ -2414,17 +2405,14 @@ export function SendScreen() {
             style={[styles.input, { marginBottom: 12 }]}
           />
 
-          <Pressable
-            style={[
-              styles.primary,
-              { marginTop: 0 },
-              (!addDraftAddress.trim() || !addDraftAmount.trim()) && { opacity: 0.5 },
-            ]}
+          <Button
+            size="sheet"
+            style={{ marginTop: 0 }}
             disabled={!addDraftAddress.trim() || !addDraftAmount.trim()}
             onPress={confirmAddRecipient}
           >
-            <Text style={styles.primaryText}>{t("common.add")}</Text>
-          </Pressable>
+            {t("common.add")}
+          </Button>
           <Pressable onPress={closeAddRecipientSheet} hitSlop={8} style={{ marginTop: 14 }}>
             <Text style={[styles.sheetCaption, { marginBottom: 0 }]}>{t("common.cancel")}</Text>
           </Pressable>
@@ -2453,13 +2441,14 @@ export function SendScreen() {
             multiline
             style={[styles.input, styles.inputMulti, { marginBottom: 12 }]}
           />
-          <Pressable
-            style={[styles.primary, { marginTop: 0 }, !enterDraft.trim() && { opacity: 0.5 }]}
+          <Button
+            size="sheet"
+            style={{ marginTop: 0 }}
             disabled={!enterDraft.trim() || contactResolveBusy}
             onPress={confirmEnterDestination}
           >
-            <Text style={styles.primaryText}>{t("send.useDestination")}</Text>
-          </Pressable>
+            {t("send.useDestination")}
+          </Button>
 
           <TextInput
             value={contactQuery}
@@ -2904,18 +2893,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.caption,
     marginTop: 8,
-  },
-  primary: {
-    backgroundColor: colors.fg,
-    borderRadius: 10,
-    paddingVertical: 16,
-    alignItems: "center",
-    marginTop: 12,
-  },
-  primaryText: {
-    fontFamily: "JetBrainsMono_700Bold",
-    fontSize: 15,
-    color: "#000000",
   },
   scanWrap: {
     flex: 1,

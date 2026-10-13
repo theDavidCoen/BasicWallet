@@ -6,7 +6,6 @@ import {
   Alert,
   AppState,
   type AppStateStatus,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,11 +14,10 @@ import {
 import * as ScreenCapture from "expo-screen-capture";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, Caption, Hint, ScreenTitle } from "../components/ui";
 import { loadNostrKeyPairForCrypto } from "../nostr/identityStore";
 import { requireUserPresence } from "../security/userPresence";
 import { colors } from "../theme/colors";
-import { ui } from "../theme/ui";
-
 /** Penpot 05j — reveal nsec after biometrics; FLAG_SECURE. */
 export function ExportNsecRevealScreen() {
   const navigation = useNavigation<RootNav>();
@@ -105,13 +103,14 @@ export function ExportNsecRevealScreen() {
   return (
     <ScreenChrome logoScale={0.77}>
       <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
-        <Text style={ui.title}>YOUR NSEC</Text>
-        <Text style={ui.caption}>
-          Write it down · then leave this screen
-          {afterEnable
-            ? "\n\nKeep this nsec with your backup passphrase\nto restore Nostr / home packages later."
-            : ""}
-        </Text>
+        <ScreenTitle>YOUR NSEC</ScreenTitle>
+        <Caption>
+          {`Write it down · then leave this screen${
+            afterEnable
+              ? "\n\nKeep this nsec with your backup passphrase\nto restore Nostr / home packages later."
+              : ""
+          }`}
+        </Caption>
 
         {busy || !nsec ? (
           <ActivityIndicator color={colors.fg} style={{ marginTop: 40 }} />
@@ -125,18 +124,14 @@ export function ExportNsecRevealScreen() {
 
         {nsec ? (
           <>
-            <Pressable style={ui.primaryBtn} onPress={() => void onCopy()}>
-              <Text style={ui.primaryBtnText}>Copy nsec</Text>
-            </Pressable>
-            <Pressable style={ui.secondaryBtn} onPress={onDone}>
-              <Text style={ui.secondaryBtnText}>Done</Text>
-            </Pressable>
+            <Button onPress={() => void onCopy()}>Copy nsec</Button>
+            <Button variant="secondary" onPress={onDone}>
+              Done
+            </Button>
           </>
         ) : null}
 
-        <Text style={[ui.hint, { marginTop: 20 }]}>
-          Clipboard cleared when you leave.
-        </Text>
+        <Hint style={{ marginTop: 20 }}>Clipboard cleared when you leave.</Hint>
       </ScrollView>
     </ScreenChrome>
   );

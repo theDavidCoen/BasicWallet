@@ -1,19 +1,19 @@
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import { useState } from "react";
 import {
-  ActivityIndicator,
   Alert,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
+import { Button, Caption, EmptyStateCard, Hint, ScreenTitle } from "../components/ui";
 import { useI18n } from "../i18n";
 import { mnemonicFromEntropy, randomEntropy32 } from "../onboarding/mnemonicFromEntropy";
 import { requireUserPresence } from "../security/userPresence";
 import { colors } from "../theme/colors";
+import { fonts } from "../theme/typography";
 import { ui } from "../theme/ui";
 import { setMnemonicSource } from "../wallet/mnemonicMeta";
 import { useWallet } from "../wallet/WalletProvider";
@@ -84,35 +84,37 @@ export function TermsOfUseScreen() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={ui.title}>{t("onboarding.termsTitle")}</Text>
+        <ScreenTitle>{t("onboarding.termsTitle")}</ScreenTitle>
 
         {isPasskey ? (
-          <View style={ui.card}>
+          <EmptyStateCard variant="default">
             <Text style={ui.cardTitle}>{t("onboarding.termsAcrossTitle")}</Text>
-            <Text style={[ui.caption, styles.cardBody]}>
-              {t("onboarding.termsAcrossSync")}
-              {"\n"}
-              {t("onboarding.termsAcrossManagers")}
-            </Text>
-          </View>
+            <Caption align="left" style={styles.cardBody}>
+              {t("onboarding.termsAcrossSync") +
+                "\n" +
+                t("onboarding.termsAcrossManagers")}
+            </Caption>
+          </EmptyStateCard>
         ) : (
-          <View style={ui.cardMuted}>
+          <EmptyStateCard variant="muted">
             <Text style={ui.cardTitle}>{t("onboarding.termsDeviceOnlyTitle")}</Text>
-            <Text style={[ui.caption, styles.cardBody]}>
-              {t("onboarding.termsDeviceOnlyBody")}
-              {"\n"}
-              {t("onboarding.termsDeviceOnlyRisk")}
-            </Text>
-          </View>
+            <Caption align="left" style={styles.cardBody}>
+              {t("onboarding.termsDeviceOnlyBody") +
+                "\n" +
+                t("onboarding.termsDeviceOnlyRisk")}
+            </Caption>
+          </EmptyStateCard>
         )}
 
-        <View style={ui.card}>
+        <EmptyStateCard variant="default">
           <Text style={ui.cardTitle}>{t("onboarding.termsZkTitle")}</Text>
-          <Text style={[ui.caption, styles.cardBody]}>{zkBody}</Text>
-        </View>
+          <Caption align="left" style={styles.cardBody}>
+            {zkBody}
+          </Caption>
+        </EmptyStateCard>
 
         {isDev ? (
-          <Text style={[ui.hint, { marginTop: 12 }]}>{t("onboarding.termsDevHint")}</Text>
+          <Hint style={{ marginTop: 12 }}>{t("onboarding.termsDevHint")}</Hint>
         ) : null}
 
         <View style={styles.termsBlock}>
@@ -120,17 +122,13 @@ export function TermsOfUseScreen() {
           <Text style={styles.termsBody}>{responsibilitiesBody}</Text>
         </View>
 
-        <Pressable
-          style={[ui.primaryBtn, { marginTop: 28 }, busy && { opacity: 0.6 }]}
-          disabled={busy}
+        <Button
+          style={{ marginTop: 28 }}
+          busy={busy}
           onPress={() => void onContinue()}
         >
-          {busy ? (
-            <ActivityIndicator color="#000" />
-          ) : (
-            <Text style={ui.primaryBtnText}>{t("onboarding.termsContinue")}</Text>
-          )}
-        </Pressable>
+          {t("onboarding.termsContinue")}
+        </Button>
       </ScrollView>
     </View>
   );
@@ -149,14 +147,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   termsHeading: {
-    fontFamily: "JetBrainsMono_700Bold",
+    fontFamily: fonts.bold,
     fontSize: 14,
     color: colors.fg,
     marginBottom: 10,
     textAlign: "center",
   },
   termsBody: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 13,
     color: colors.caption,
     lineHeight: 20,

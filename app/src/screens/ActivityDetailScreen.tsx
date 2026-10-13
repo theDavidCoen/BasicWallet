@@ -37,6 +37,7 @@ import {
   setTxMeta,
 } from "../account/txMeta";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button } from "../components/ui";
 import { getNetworkConfig } from "../config/network";
 import { getCachedExitJobs } from "../exit/jobRunner";
 import { readRecoveryAddress } from "../exit/recoveryAddress";
@@ -866,17 +867,9 @@ export function ActivityDetailView({
             />
           </DetailRow>
 
-          <Pressable
-            style={[ui.primaryBtn, (!dirty || saving) && { opacity: 0.5 }]}
-            disabled={!dirty || saving}
-            onPress={() => void onSave()}
-          >
-            {saving ? (
-              <ActivityIndicator color="#000" />
-            ) : (
-              <Text style={ui.primaryBtnText}>Save</Text>
-            )}
-          </Pressable>
+          <Button busy={saving} disabled={!dirty || saving} onPress={() => void onSave()}>
+              Save
+            </Button>
           {saveHint ? <Text style={styles.saveHint}>{saveHint}</Text> : null}
 
           {isLn ? (

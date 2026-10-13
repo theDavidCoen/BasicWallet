@@ -6,9 +6,10 @@
 import { useFocusEffect, useNavigation, useRoute } from "@react-navigation/native";
 import type { RouteProp } from "@react-navigation/native";
 import { startTransition, useCallback, useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput } from "react-native";
+import { ScrollView, StyleSheet, Text, TextInput } from "react-native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button } from "../components/ui";
 import { ContactPickList } from "../components/contacts/ContactPickList";
 import { filterContacts } from "../contacts/contactSearch";
 import { syncContactsDirectoryNow } from "../contacts/contactsNostrSync";
@@ -107,16 +108,13 @@ export function ContactsListScreen() {
         <Text style={styles.count}>{countLabel}</Text>
       </ScrollView>
 
-      <Pressable
-        style={styles.add}
+      <Button
+        style={{ marginTop: 8, paddingVertical: 14 }}
         onPress={() => navigation.navigate("ContactEdit", {})}
-        accessibilityRole="button"
         accessibilityLabel={t("contacts.addContactA11y")}
       >
-        <Text style={styles.addText}>
-          {t("contacts.addContact")}
-        </Text>
-      </Pressable>
+        {t("contacts.addContact")}
+      </Button>
     </ScreenChrome>
   );
 }

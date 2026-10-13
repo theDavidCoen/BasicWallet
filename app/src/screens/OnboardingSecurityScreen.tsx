@@ -1,14 +1,9 @@
 import { useCallback, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { useFocusEffect, useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, Caption, Hint, ScreenTitle } from "../components/ui";
 import { useI18n } from "../i18n";
 import { hasAppPin } from "../security/appPin";
 import {
@@ -76,10 +71,8 @@ export function OnboardingSecurityScreen() {
 
   return (
     <ScreenChrome logoScale={0.77}>
-      <Text style={ui.title}>
-        {t("privacy.secureDeviceTitle")}
-      </Text>
-      <Text style={ui.caption}>{t("privacy.secureDeviceCaption")}</Text>
+      <ScreenTitle>{t("privacy.secureDeviceTitle")}</ScreenTitle>
+      <Caption>{t("privacy.secureDeviceCaption")}</Caption>
 
       <View style={ui.card}>
         <Text style={ui.cardTitle}>
@@ -91,14 +84,14 @@ export function OnboardingSecurityScreen() {
             : t("privacy.osBioNotEnabled")}
         </Text>
         {!bioAvailable ? (
-          <Pressable
-            style={styles.secondary}
+          <Button
+            variant="secondary"
+            style={{ marginTop: 0, paddingVertical: 12, borderColor: colors.fg }}
+            textStyle={{ fontSize: 14 }}
             onPress={() => void openOsSecuritySettings()}
           >
-            <Text style={styles.secondaryText}>
-              {t("privacy.openSystemSettings")}
-            </Text>
-          </Pressable>
+            {t("privacy.openSystemSettings")}
+          </Button>
         ) : null}
       </View>
 
@@ -116,8 +109,10 @@ export function OnboardingSecurityScreen() {
               : t("privacy.appPinRequiredBioOff")}
         </Text>
         {!pinSet ? (
-          <Pressable
-            style={styles.secondary}
+          <Button
+            variant="secondary"
+            style={{ marginTop: 0, paddingVertical: 12, borderColor: colors.fg }}
+            textStyle={{ fontSize: 14 }}
             onPress={() =>
               navigation.navigate("SetAppPin", {
                 intent: "onboarding",
@@ -125,51 +120,30 @@ export function OnboardingSecurityScreen() {
               })
             }
           >
-            <Text style={styles.secondaryText}>
-              {t("privacy.setAppPinCta")}
-            </Text>
-          </Pressable>
+            {t("privacy.setAppPinCta")}
+          </Button>
         ) : (
           <Text style={styles.ok}>{t("privacy.pinReady")}</Text>
         )}
       </View>
 
-      <Pressable
-        style={[ui.primaryBtn, { marginTop: 28 }, (busy || !canProceed) && { opacity: 0.5 }]}
-        disabled={busy || !canProceed}
+      <Button
+        busy={busy}
+        disabled={!canProceed}
+        style={{ marginTop: 28 }}
         onPress={() => void onContinue()}
       >
-        {busy ? (
-          <ActivityIndicator color="#000" />
-        ) : (
-          <Text style={ui.primaryBtnText}>
-            {t("common.continue")}
-          </Text>
-        )}
-      </Pressable>
+        {t("common.continue")}
+      </Button>
 
       {!canProceed ? (
-        <Text style={[ui.hint, { marginTop: 16 }]}>
-          {t("privacy.secureContinueHint")}
-        </Text>
+        <Hint style={{ marginTop: 16 }}>{t("privacy.secureContinueHint")}</Hint>
       ) : null}
     </ScreenChrome>
   );
 }
 
 const styles = StyleSheet.create({
-  secondary: {
-    borderWidth: 1,
-    borderColor: colors.fg,
-    borderRadius: 8,
-    paddingVertical: 12,
-    alignItems: "center",
-  },
-  secondaryText: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 14,
-    color: colors.fg,
-  },
   ok: {
     fontFamily: "JetBrainsMono_400Regular",
     fontSize: 13,

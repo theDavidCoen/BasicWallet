@@ -2,7 +2,8 @@
  * Node Status body for InteractiveBottomSheet — post-connect summary.
  */
 
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
+import { Button, Hint, ScreenTitle } from "../components/ui";
 import { colors } from "../theme/colors";
 import { sheetUi } from "../theme/sheetUi";
 import { ui } from "../theme/ui";
@@ -25,7 +26,7 @@ export function NodeStatusSheetContent({
 
   return (
     <View style={styles.root}>
-      <Text style={sheetUi.title}>NODE</Text>
+      <ScreenTitle style={sheetUi.title}>NODE</ScreenTitle>
       <View style={ui.card}>
         <Text style={styles.ok}>Connected · Lightning</Text>
         <Text style={styles.alias}>{alias?.trim() || "Lightning"}</Text>
@@ -38,14 +39,13 @@ export function NodeStatusSheetContent({
         ) : null}
       </View>
 
-      <Text style={[sheetUi.hint, { marginTop: 20 }]}>
-        Switcher row uses this balance on Home.{"\n"}
-        Send and receive Lightning invoices from this node. No channels UI.
-      </Text>
+      <Hint style={[sheetUi.hint, { marginTop: 20 }]}>
+        {"Switcher row uses this balance on Home.\nSend and receive Lightning invoices from this node. No channels UI."}
+      </Hint>
 
-      <Pressable style={sheetUi.primaryBtn} onPress={onDone}>
-        <Text style={sheetUi.primaryBtnText}>Done</Text>
-      </Pressable>
+      <Button size="sheet" onPress={onDone}>
+        Done
+      </Button>
     </View>
   );
 }

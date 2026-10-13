@@ -4,8 +4,9 @@
 
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import { useEffect } from "react";
-import { Text, View } from "react-native";
+import { View } from "react-native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
+import { Caption, Hint, ScreenTitle } from "../components/ui";
 import { useI18n } from "../i18n";
 import { armHomeTourIfNeeded } from "../home/homeTour";
 import { markWarmupSeen } from "../wallet/warmupSeen";
@@ -36,9 +37,9 @@ export function BackupEnabledSuccessScreen() {
 
   return (
     <View style={ui.centerRoot}>
-      <Text style={ui.title}>{t("backup.successTitle")}</Text>
-      <Text style={ui.caption}>{t("backup.successBody", { label })}</Text>
-      <Text style={[ui.hint, { marginTop: 24 }]}>{t("backup.openingHome")}</Text>
+      <ScreenTitle>{t("backup.successTitle")}</ScreenTitle>
+      <Caption>{t("backup.successBody", { label })}</Caption>
+      <Hint style={{ marginTop: 24 }}>{t("backup.openingHome")}</Hint>
     </View>
   );
 }

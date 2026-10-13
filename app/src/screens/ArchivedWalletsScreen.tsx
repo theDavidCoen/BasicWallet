@@ -16,6 +16,7 @@ import {
 } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button } from "../components/ui";
 import { useI18n } from "../i18n";
 import {
   listArchivedPasskeyChildren,
@@ -107,17 +108,15 @@ export function ArchivedWalletsScreen() {
                   {t("archived.index", { index: entry.index })}
                 </Text>
               </View>
-              <Pressable
-                style={[ui.secondaryBtn, busyIndex === entry.index && { opacity: 0.6 }]}
+              <Button
+                variant="secondary"
+                style={{ marginTop: 0, flexShrink: 0 }}
+                busy={busyIndex === entry.index}
                 disabled={busyIndex !== null}
                 onPress={() => void onRestore(entry)}
               >
-                {busyIndex === entry.index ? (
-                  <ActivityIndicator color={colors.fg} />
-                ) : (
-                  <Text style={ui.secondaryBtnText}>{t("archived.restore")}</Text>
-                )}
-              </Pressable>
+                {t("archived.restore")}
+              </Button>
             </View>
           ))
         )}

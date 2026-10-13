@@ -16,6 +16,7 @@ import {
 import type { RootNav } from "../navigation/types";
 import { BackupPassphraseSheet } from "../components/BackupPassphraseSheet";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, Caption, ScreenTitle } from "../components/ui";
 import {
   cancelPairBle,
   ensureBlePermissions,
@@ -266,8 +267,8 @@ export function PairBluetoothScreen() {
   return (
     <ScreenChrome logoScale={0.77}>
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
-        <Text style={ui.title}>{t("pair.title")}</Text>
-        <Text style={ui.caption}>{t("pair.caption")}</Text>
+        <ScreenTitle>{t("pair.title")}</ScreenTitle>
+        <Caption>{t("pair.caption")}</Caption>
 
         <View style={ui.cardMuted}>
           {[t("pair.step1"), t("pair.step2"), t("pair.step3")].map((line) => (
@@ -291,47 +292,31 @@ export function PairBluetoothScreen() {
 
         {confirming || approving || needingPassphrase ? (
           <>
-            <Pressable
-              style={[
-                ui.primaryBtn,
-                (approving || sending || needingPassphrase) && { opacity: 0.6 },
-              ]}
+            <Button
+              busy={approving || needingPassphrase}
               disabled={approving || sending || needingPassphrase}
               onPress={() => void onApprove()}
-              hitSlop={12}
             >
-              {approving || needingPassphrase ? (
-                <ActivityIndicator color="#000" />
-              ) : (
-                <Text style={ui.primaryBtnText}>{t("pair.approve")}</Text>
-              )}
-            </Pressable>
-            <Pressable
-              style={ui.secondaryBtn}
-              onPress={onCancel}
-              disabled={sending && !needingPassphrase}
-            >
-              <Text style={ui.secondaryBtnText}>{t("common.cancel")}</Text>
-            </Pressable>
+              {t("pair.approve")}
+            </Button>
+            <Button variant="secondary" disabled={sending && !needingPassphrase} onPress={onCancel}>
+              {t("common.cancel")}
+            </Button>
           </>
         ) : (
           <>
-            <Pressable
-              style={[ui.primaryBtn, busy && { opacity: 0.6 }]}
+            <Button
+              busy={scanning || sending}
               disabled={busy}
               onPress={() => void onStart()}
             >
-              {scanning || sending ? (
-                <ActivityIndicator color="#000" />
-              ) : (
-                <Text style={ui.primaryBtnText}>{t("pair.startScan")}</Text>
-              )}
-            </Pressable>
+              {t("pair.startScan")}
+            </Button>
 
             {scanning || sending ? (
-              <Pressable style={ui.secondaryBtn} onPress={onCancel}>
-                <Text style={ui.secondaryBtnText}>{t("common.cancel")}</Text>
-              </Pressable>
+              <Button variant="secondary" onPress={onCancel}>
+              {t("common.cancel")}
+            </Button>
             ) : null}
           </>
         )}

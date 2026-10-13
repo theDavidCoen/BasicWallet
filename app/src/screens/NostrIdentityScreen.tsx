@@ -15,6 +15,13 @@ import {
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
 import {
+  Button,
+  Caption,
+  Hint,
+  ScreenTitle,
+  SettingsRow,
+} from "../components/ui";
+import {
   readBackupMeta,
   type BackupPackageMeta,
 } from "../nostr/backupPackage";
@@ -28,6 +35,7 @@ import { saveAndPublishNostrProfile } from "../nostr/profileMetadata";
 import { midEllipsis } from "../nostr/keys";
 import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
+import { fonts } from "../theme/typography";
 import { ui } from "../theme/ui";
 
 /** Penpot 05d — Nostr identity hub. */
@@ -114,21 +122,18 @@ export function NostrIdentityScreen() {
     return (
       <ScreenChrome logoScale={0.77}>
         <ScrollView contentContainerStyle={styles.scroll}>
-          <Text style={ui.title}>{t("nostr.title")}</Text>
-          <Text style={ui.caption}>{t("nostr.caption")}</Text>
-          <Text style={[ui.hint, { marginTop: 24 }]}>{t("nostr.noIdentity")}</Text>
-          <Pressable
-            style={ui.primaryBtn}
-            onPress={() => navigation.navigate("GenerateIdentityWarning")}
-          >
-            <Text style={ui.primaryBtnText}>{t("nostr.generate")}</Text>
-          </Pressable>
-          <Pressable
-            style={ui.secondaryBtn}
+          <ScreenTitle>{t("nostr.title")}</ScreenTitle>
+          <Caption>{t("nostr.caption")}</Caption>
+          <Hint style={{ marginTop: 24 }}>{t("nostr.noIdentity")}</Hint>
+          <Button onPress={() => navigation.navigate("GenerateIdentityWarning")}>
+            {t("nostr.generate")}
+          </Button>
+          <Button
+            variant="secondary"
             onPress={() => navigation.navigate("ImportNsecWarning")}
           >
-            <Text style={ui.secondaryBtnText}>{t("nostr.importNsec")}</Text>
-          </Pressable>
+            {t("nostr.importNsec")}
+          </Button>
         </ScrollView>
       </ScreenChrome>
     );
@@ -137,8 +142,8 @@ export function NostrIdentityScreen() {
   return (
     <ScreenChrome logoScale={0.77}>
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        <Text style={ui.title}>{t("nostr.title")}</Text>
-        <Text style={ui.caption}>{t("nostr.caption")}</Text>
+        <ScreenTitle>{t("nostr.title")}</ScreenTitle>
+        <Caption>{t("nostr.caption")}</Caption>
 
         <Pressable
           style={styles.field}
@@ -189,34 +194,40 @@ export function NostrIdentityScreen() {
           placeholder={t("nostr.phWebsite")}
         />
 
-        <Pressable
-          style={[ui.secondaryBtn, saving && { opacity: 0.6 }]}
+        <Button
+          variant="secondary"
           disabled={saving}
+          style={saving ? { opacity: 0.6 } : undefined}
           onPress={() => void onSaveProfile()}
         >
-          <Text style={ui.secondaryBtnText}>
-            {saving ? t("nostr.saving") : t("nostr.saveProfile")}
-          </Text>
-        </Pressable>
-        <Text style={[ui.hint, { marginTop: 8 }]}>{t("nostr.saveHint")}</Text>
+          {saving ? t("nostr.saving") : t("nostr.saveProfile")}
+        </Button>
+        <Hint style={{ marginTop: 8 }}>{t("nostr.saveHint")}</Hint>
 
-        <NavRow
+        <SettingsRow
           label={t("nostr.exportNsec")}
           onPress={() => navigation.navigate("ExportNsecWarning")}
+          style={styles.navRow}
         />
-        <NavRow
+        <SettingsRow
           label={t("nostr.importNsec")}
           onPress={() => navigation.navigate("ImportNsecWarning")}
+          style={styles.navRow}
         />
-        <NavRow
+        <SettingsRow
           label={t("nostr.encryptedBackup")}
-          value={backup?.enabled ? t("nostr.backupOn") : t("nostr.backupOff")}
           onPress={() => navigation.navigate("AdvancedBackup")}
+          style={styles.navRow}
+          right={
+            <Text style={styles.navValue}>
+              {backup?.enabled ? t("nostr.backupOn") : t("nostr.backupOff")}
+            </Text>
+          }
         />
 
-        <Pressable style={[ui.primaryBtn, { marginTop: 16 }]} onPress={() => void onShareNpub()}>
-          <Text style={ui.primaryBtnText}>{t("nostr.shareNpub")}</Text>
-        </Pressable>
+        <Button style={{ marginTop: 16 }} onPress={() => void onShareNpub()}>
+          {t("nostr.shareNpub")}
+        </Button>
 
         <Text
           style={[ui.footerLink, { marginTop: 8 }]}
@@ -256,23 +267,6 @@ function Editable({
   );
 }
 
-function NavRow({
-  label,
-  value,
-  onPress,
-}: {
-  label: string;
-  value?: string;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable style={styles.navRow} onPress={onPress}>
-      <Text style={styles.navLabel}>{label}</Text>
-      <Text style={styles.navValue}>{value ?? "›"}</Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   scroll: { paddingBottom: 40 },
   field: {
@@ -284,44 +278,33 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   label: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 12,
     color: colors.hint,
     marginBottom: 6,
   },
   value: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 14,
     color: colors.fg,
   },
   copyHint: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 12,
     color: colors.hint,
     marginTop: 8,
   },
   input: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 14,
     color: colors.fg,
     padding: 0,
   },
   navRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
     marginTop: 4,
   },
-  navLabel: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 15,
-    color: colors.fg,
-  },
   navValue: {
-    fontFamily: "JetBrainsMono_400Regular",
+    fontFamily: fonts.regular,
     fontSize: 13,
     color: colors.hint,
   },

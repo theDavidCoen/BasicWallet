@@ -6,11 +6,9 @@
 import { useCallback, useState } from "react";
 import {
   Alert,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
 } from "react-native";
 import {
   useFocusEffect,
@@ -21,6 +19,7 @@ import {
 import { ExitStepHeader, EXIT_STEP } from "../components/ExitStepHeader";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button, Caption, Hint, ScreenTitle, TextField } from "../components/ui";
 import { getNetworkConfig } from "../config/network";
 import { scheduleAutoPrepareSoon } from "../exit/autoPrepare";
 import {
@@ -32,8 +31,6 @@ import { requireExitAuth } from "../exit/gates";
 import { useWallet } from "../wallet/WalletProvider";
 import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
-import { ui } from "../theme/ui";
-
 export function ExitRecoveryAddressScreen() {
   const navigation = useNavigation<RootNav>();
   const { t } = useI18n();
@@ -121,46 +118,39 @@ export function ExitRecoveryAddressScreen() {
           />
         ) : (
           <>
-            <Text style={ui.title}>{t("exit.recoveryTitle")}</Text>
-            <Text style={ui.caption}>{t("exit.recoveryCaption")}</Text>
+            <ScreenTitle>{t("exit.recoveryTitle")}</ScreenTitle>
+            <Caption>{t("exit.recoveryCaption")}</Caption>
           </>
         )}
 
-        <Text style={[ui.hint, { marginTop: inWizard ? 4 : 8 }]}>
+        <Hint style={{ marginTop: inWizard ? 4 : 8 }}>
           {t("exit.networkLabel", { network: network.label })}
-        </Text>
+        </Hint>
 
         <Text style={styles.warn}>
           {t("exit.recoveryWarn")}
         </Text>
 
         <Text style={styles.label}>{t("exit.onchainAddressLabel")}</Text>
-        <TextInput
+        <TextField
           value={draft}
           onChangeText={setDraft}
           autoCapitalize="none"
           autoCorrect={false}
           placeholder={network.id === "mainnet" ? "bc1…" : "tb1…"}
-          placeholderTextColor={colors.hint}
-          style={styles.input}
+          style={{ fontSize: 14, marginBottom: 0 }}
         />
 
-        <Pressable
-          style={[ui.primaryBtn, busy && { opacity: 0.6 }]}
-          disabled={busy}
-          onPress={() => void onSave()}
-        >
-          <Text style={ui.primaryBtnText}>
-            {inWizard ? t("exit.saveContinue") : t("exit.save")}
-          </Text>
-        </Pressable>
-        <Pressable
-          style={ui.secondaryBtn}
+        <Button busy={busy} onPress={() => void onSave()}>
+          {inWizard ? t("exit.saveContinue") : t("exit.save")}
+        </Button>
+        <Button
+          variant="secondary"
           disabled={busy}
           onPress={() => void onSave("")}
         >
-          <Text style={ui.secondaryBtnText}>{t("exit.clear")}</Text>
-        </Pressable>
+          {t("exit.clear")}
+        </Button>
       </ScrollView>
     </ScreenChrome>
   );
@@ -184,15 +174,5 @@ const styles = StyleSheet.create({
     color: colors.hint,
     marginTop: 20,
     marginBottom: 6,
-  },
-  input: {
-    fontFamily: "JetBrainsMono_400Regular",
-    fontSize: 14,
-    color: colors.fg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
   },
 });

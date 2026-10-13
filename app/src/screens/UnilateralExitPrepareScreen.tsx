@@ -8,7 +8,6 @@ import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -19,6 +18,7 @@ import type { ExitQuote } from "@arkade-os/sdk";
 import { ExitStepHeader, EXIT_STEP } from "../components/ExitStepHeader";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button } from "../components/ui";
 import { getNetworkConfig } from "../config/network";
 import { requireExitAuth } from "../exit/gates";
 import { bumpExitPrepareEpoch, scheduleAutoPrepareSoon } from "../exit/autoPrepare";
@@ -233,14 +233,14 @@ export function UnilateralExitPrepareScreen() {
             {t("exit.recoveryStep1", { addr: midEllipsis(sweep.trim()) })}
           </Text>
         ) : (
-          <Pressable
-            style={ui.secondaryBtn}
+          <Button
+            variant="secondary"
             onPress={() =>
               navigation.navigate("ExitRecoveryAddress", { from: "exit" })
             }
           >
-            <Text style={ui.secondaryBtnText}>{t("exit.setRecoveryAddress")}</Text>
-          </Pressable>
+            {t("exit.setRecoveryAddress")}
+          </Button>
         )}
 
         {packageReady && stored ? (
@@ -291,33 +291,25 @@ export function UnilateralExitPrepareScreen() {
 
         {packageReady ? (
           <>
-            <Pressable style={ui.primaryBtn} onPress={onContinueExisting}>
-              <Text style={ui.primaryBtnText}>{t("exit.continueFundFees")}</Text>
-            </Pressable>
-            <Pressable
-              style={ui.secondaryBtn}
+            <Button onPress={onContinueExisting}>{t("exit.continueFundFees")}</Button>
+            <Button
+              variant="secondary"
+              busy={phase === "estimating"}
               disabled={busy || !sweep.trim()}
               onPress={() => void onEstimate()}
             >
-              {phase === "estimating" ? (
-                <ActivityIndicator color={colors.fg} />
-              ) : (
-                <Text style={ui.secondaryBtnText}>{t("exit.rebuildEstimate")}</Text>
-              )}
-            </Pressable>
+              {t("exit.rebuildEstimate")}
+            </Button>
           </>
         ) : (
-          <Pressable
-            style={[ui.secondaryBtn, (busy || !sweep.trim()) && { opacity: 0.6 }]}
+          <Button
+            variant="secondary"
+            busy={phase === "estimating"}
             disabled={busy || !sweep.trim()}
             onPress={() => void onEstimate()}
           >
-            {phase === "estimating" ? (
-              <ActivityIndicator color={colors.fg} />
-            ) : (
-              <Text style={ui.secondaryBtnText}>{t("exit.estimate")}</Text>
-            )}
-          </Pressable>
+            {t("exit.estimate")}
+          </Button>
         )}
 
         {quote ? (
@@ -359,19 +351,13 @@ export function UnilateralExitPrepareScreen() {
         ) : null}
 
         {quote ? (
-          <Pressable
-            style={[ui.primaryBtn, busy && { opacity: 0.5 }]}
+          <Button
+            busy={phase === "preparing"}
             disabled={busy}
             onPress={() => void onPrepare()}
           >
-            {phase === "preparing" ? (
-              <ActivityIndicator color="#000" />
-            ) : (
-              <Text style={ui.primaryBtnText}>
-                {packageReady ? t("exit.replacePackage") : t("exit.preparePackageContinue")}
-              </Text>
-            )}
-          </Pressable>
+            {packageReady ? t("exit.replacePackage") : t("exit.preparePackageContinue")}
+          </Button>
         ) : null}
 
         <Text style={[ui.hint, { marginTop: 10 }]}>

@@ -3,6 +3,7 @@ import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { Button } from "../components/ui";
 import { useI18n } from "../i18n";
 import { clearAppPin, hasAppPin, setAppPin, validatePinFormat, verifyAppPin } from "../security/appPin";
 import { getOsBiometricsStatus } from "../security/osBiometrics";
@@ -230,15 +231,9 @@ export function SetAppPinScreen() {
       </View>
 
       {draft.length >= 4 && draft.length < 6 ? (
-        <Pressable
-          style={[ui.primaryBtn, { marginTop: 16 }, busy && { opacity: 0.6 }]}
-          disabled={busy}
-          onPress={() => void submit(draft)}
-        >
-          <Text style={ui.primaryBtnText}>
-            {t("common.continue")}
-          </Text>
-        </Pressable>
+        <Button busy={busy} style={{ marginTop: 16 }} onPress={() => void submit(draft)}>
+          {t("common.continue")}
+        </Button>
       ) : null}
     </ScreenChrome>
   );
@@ -340,14 +335,9 @@ export function UnlockPinPad({
       </View>
 
       {draft.length >= 4 && draft.length !== 6 ? (
-        <Pressable
-          style={[ui.primaryBtn, { marginTop: 12, alignSelf: "stretch" }]}
-          onPress={() => void tryPin(draft)}
-        >
-          <Text style={ui.primaryBtnText}>
-            {t("privacy.unlock")}
-          </Text>
-        </Pressable>
+        <Button style={{ marginTop: 12 }} onPress={() => void tryPin(draft)}>
+              {t("privacy.unlock")}
+            </Button>
       ) : null}
 
       <Pressable onPress={onCancel} style={{ marginTop: 16 }}>
