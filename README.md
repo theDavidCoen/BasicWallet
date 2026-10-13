@@ -21,7 +21,7 @@ Use at your own risk. There is no warranty.
 
 ## Download
 
-Latest release: **[v0.9.6](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.9.6)** (arm64-v8a APK + SHA256).
+Latest release: **[v0.9.7](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.9.7)** (arm64-v8a APK + SHA256).
 
 All builds: [Releases](https://github.com/theDavidCoen/BasicWallet/releases). Prefer verifying the checksum before install.
 
@@ -62,7 +62,7 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 - **Connect a Lightning node** (BTCPay LND REST, LNDHub) for node balance / LN flows; LND REST Activity + Send with preimage/memo; Receive / Send / POS Lightning UX
 - **Arkade Lightning** — from a Personal (Arkade seed) wallet: pay BOLT11 / LNURL / Lightning Address via the intents corridor (Confirm + biometrics, no auto-pay); Receive BIP21 may embed a minted `lightning=` invoice when a solver can mint for the amount
 - Collaborative offboard and **unilateral exit** related settings (escape hatches)
-- Set app PIN / biometrics gates for sensitive actions
+- Set app PIN / biometrics gates for sensitive actions; Unlock circle stays tappable after Home/recents warm resume (no auto-prompt)
 - Export recovery phrase only after presence checks (screen capture blocked where wired)
 - **Continue with passkey** (WebAuthn / Credential Manager PRF → Personal seed + Nostr identity); if no passkey manager is available, continue without passkey
 - **Pair with Bluetooth** — move wallets / nsec to a nearby phone on the welcome screen (lobby code + biometrics; passkeys stay on Device 1)

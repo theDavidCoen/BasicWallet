@@ -271,7 +271,7 @@ Switching network can reset wallet engine state — backup first.
 
 ## Get the APK
 
-Latest: **[v0.9.6](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.9.6)** (arm64-v8a).
+Latest: **[v0.9.7](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.9.7)** (arm64-v8a).
 
 All releases: [theDavidCoen/BasicWallet/releases](https://github.com/theDavidCoen/BasicWallet/releases). Prefer arm64-v8a builds + verify SHA256 (and PGP on the checksum when present).
 
