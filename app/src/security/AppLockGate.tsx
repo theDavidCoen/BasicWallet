@@ -303,8 +303,8 @@ export function AppLockGate({ children }: { children: ReactNode }) {
       }
 
       if (next === "background") {
-        // OS share / documents UI also backgrounds the app. Do not re-lock —
-        // dismissing Share with X must not feel like logout (Nostr Share npub).
+        // OS share / documents UI also backgrounds the app (and often delivers
+        // this event *after* Share.share resolves). Grace covers that race.
         if (isOsShareSheetActive()) {
           return;
         }
@@ -324,6 +324,8 @@ export function AppLockGate({ children }: { children: ReactNode }) {
       if (next === "active") {
         // Sheet still up: leave the in-flight auth alone.
         if (isPresencePromptInFlight()) return;
+        // Returning from OS share — stay unlocked (do not re-enter Unlock).
+        if (isOsShareSheetActive()) return;
 
         // Fresh interactive Unlock after Home/recents (clear grace + latches).
         abortStaleBioAuth();
