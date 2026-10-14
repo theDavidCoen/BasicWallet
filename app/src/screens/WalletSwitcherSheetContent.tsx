@@ -1,9 +1,10 @@
 /**
  * Wallet switcher body for InteractiveBottomSheet (no ScreenChrome).
- * Greeting + Share npub sit above a peek-scroll wallets list; CTAs are fixed chips.
+ * Greeting + Share npub above a flex-growing wallets list; CTAs are fixed chips.
+ * Visible wallet count follows display/sheet height (natural card size + peek).
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -11,6 +12,7 @@ import {
   StyleSheet,
   Text,
   View,
+  type LayoutChangeEvent,
 } from "react-native";
 import { Button, Caption, ScreenTitle, SectionHeader } from "../components/ui";
 import { useI18n } from "../i18n";
@@ -34,15 +36,9 @@ type Props = {
   onOpenNostrIdentity: () => void;
 };
 
-/**
- * Viewport for the wallets list only (cards keep natural height).
- * ~3 full rows + peek of the 4th so scroll is obvious.
- */
 const ROW_GAP = 8;
-/** Natural card height (padding + avatar/chevron) — do not squash rows. */
-const ROW_NATURAL_H = 72;
-const LIST_PEEK = 36;
-const LIST_MAX_H = ROW_NATURAL_H * 3 + ROW_GAP * 2 + LIST_PEEK;
+/** Floor so short phones still show ~2 cards + peek before chips. */
+const LIST_MIN_H = 72 * 2 + ROW_GAP + 36;
 
 /**
  * Prefer Display name, then NIP-05, then compressed npub.
@@ -68,6 +64,8 @@ export function WalletSwitcherSheetContent({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [identity, setIdentity] = useState<NostrPublicIdentity | null>(null);
   const [sharing, setSharing] = useState(false);
+  const [listH, setListH] = useState(0);
+  const [contentH, setContentH] = useState(0);
 
   useEffect(() => {
     refreshWalletList();
@@ -115,52 +113,63 @@ export function WalletSwitcherSheetContent({
     }
   }, [identity?.npub, sharing]);
 
+  const onListLayout = useCallback((e: LayoutChangeEvent) => {
+    const h = e.nativeEvent.layout.height;
+    if (h > 0) setListH(h);
+  }, []);
+
+  const onContentSizeChange = useCallback((_w: number, h: number) => {
+    if (h > 0) setContentH(h);
+  }, []);
+
+  // Overflow → scroll; last card peeks naturally in the flex viewport.
+  const listScrollEnabled = contentH > listH + 2;
+
   const display = greetingDisplay(identity);
   const canShare = Boolean(identity?.npub);
-  const listScrollEnabled = wallets.length > 3;
-  const listWrapStyle = useMemo(
-    () => (listScrollEnabled ? [styles.listWrap, styles.listWrapScroll] : styles.listWrap),
-    [listScrollEnabled],
-  );
 
   return (
     <View style={styles.root}>
-      <ScreenTitle style={sheetUi.title}>
-        {t("home.walletsHiTitle", { display })}
-      </ScreenTitle>
-      <Caption style={sheetUi.caption}>{t("home.walletsHiCaption")}</Caption>
-      <Pressable
-        onPress={onOpenNostrIdentity}
-        hitSlop={8}
-        accessibilityRole="link"
-        style={styles.identityLinkHit}
-      >
-        <Text style={styles.identityLink}>{t("home.walletsHiNostrLink")}</Text>
-      </Pressable>
+      <View style={styles.header}>
+        <ScreenTitle style={sheetUi.title}>
+          {t("home.walletsHiTitle", { display })}
+        </ScreenTitle>
+        <Caption style={sheetUi.caption}>{t("home.walletsHiCaption")}</Caption>
+        <Pressable
+          onPress={onOpenNostrIdentity}
+          hitSlop={8}
+          accessibilityRole="link"
+          style={styles.identityLinkHit}
+        >
+          <Text style={styles.identityLink}>{t("home.walletsHiNostrLink")}</Text>
+        </Pressable>
 
-      <Button
-        size="sheet"
-        variant="secondary"
-        disabled={!canShare || sharing}
-        onPress={() => void onShareNpub()}
-        style={styles.shareBtn}
-      >
-        {t("nostr.shareNpub")}
-      </Button>
+        <Button
+          size="sheet"
+          variant="secondary"
+          disabled={!canShare || sharing}
+          onPress={() => void onShareNpub()}
+          style={styles.shareBtn}
+        >
+          {t("nostr.shareNpub")}
+        </Button>
 
-      <SectionHeader first style={styles.walletsHeader}>
-        {t("home.walletsSection")}
-      </SectionHeader>
-      <Caption style={styles.walletsCaption}>{t("home.walletsSelectCaption")}</Caption>
+        <SectionHeader first style={styles.walletsHeader}>
+          {t("home.walletsSection")}
+        </SectionHeader>
+        <Caption style={styles.walletsCaption}>{t("home.walletsSelectCaption")}</Caption>
+      </View>
 
-      <View style={listWrapStyle}>
+      <View style={styles.listWrap} onLayout={onListLayout}>
         <FlatList
           data={wallets}
           keyExtractor={(item) => item.id}
+          style={styles.listFlex}
           scrollEnabled={listScrollEnabled}
           nestedScrollEnabled
           showsVerticalScrollIndicator={listScrollEnabled}
           contentContainerStyle={styles.list}
+          onContentSizeChange={onContentSizeChange}
           renderItem={({ item }) => {
             const selected = item.id === selectedWallet?.id;
             const busy = busyId === item.id;
@@ -228,6 +237,9 @@ export function WalletSwitcherSheetContent({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  header: {
+    flexShrink: 0,
+  },
   identityLinkHit: {
     alignSelf: "center",
     marginBottom: 12,
@@ -253,18 +265,23 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 12,
   },
+  /** Grows with sheet/display height — more wallets on tall phones. */
   listWrap: {
+    flex: 1,
+    minHeight: LIST_MIN_H,
     marginBottom: 12,
   },
-  listWrapScroll: {
-    maxHeight: LIST_MAX_H,
+  listFlex: {
+    flex: 1,
   },
   list: {
     gap: ROW_GAP,
     paddingBottom: 4,
+    flexGrow: 0,
   },
   chips: {
     flexDirection: "row",
+    flexShrink: 0,
     gap: 8,
     marginTop: 4,
     marginBottom: 8,
