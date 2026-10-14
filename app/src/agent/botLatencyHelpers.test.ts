@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import {
   BOT_WORKING_ACK,
+  BRIDGE_EVENT_WINDOW_MS,
   formatWorkingAckStatus,
+  findRecentLocalTurn,
   isBotWorkingAckBody,
   localBotTurnId,
   nextPollIntervalMs,
@@ -32,32 +34,46 @@ assert.equal(nextPollIntervalMs(45_000), 2_500);
 assert.equal(nextPollIntervalMs(0, 2_500), 2_500, "fixed interval wins");
 
 const now = Date.now();
-const nowSec = Math.floor(now / 1000);
 const turns: PendingLocalTurn[] = [
-  { localId: "m1", body: "ciao", at: now },
+  { localId: "m1", body: "buy €10 Amazon gift card", at: now },
 ];
 
-const stale = takePendingLocalTurn(turns, {
-  body: "ciao",
-  wrapCreatedAtSec: nowSec - 600,
-  now,
-});
-assert.equal(stale, null, "stale wrap does not take pending");
-assert.equal(turns.length, 1, "pending preserved after stale miss");
+// Simulate NIP-59 wrap.created_at (random up to 2 days back) — must NOT be used.
+// Bridge must use envelope/rumor time instead.
+const nip59FakeWrapMs = now - 36 * 3600 * 1000;
+assert.ok(
+  Math.abs(nip59FakeWrapMs - now) > BRIDGE_EVENT_WINDOW_MS,
+  "precondition: fake wrap time outside window",
+);
 
-const fresh = takePendingLocalTurn(turns, {
-  body: "ciao",
-  wrapCreatedAtSec: nowSec,
+const withEnvelopeTime = takePendingLocalTurn(turns, {
+  body: "buy €10 Amazon gift card",
+  eventTimeMs: now - 500, // envelope.sentAt ≈ local send
   now,
 });
-assert.ok(fresh);
-assert.equal(fresh?.localId, "m1");
+assert.ok(withEnvelopeTime, "envelope/rumor time bridges");
+assert.equal(withEnvelopeTime?.localId, "m1");
 assert.equal(turns.length, 0);
 
+turns.push({ localId: "m2", body: "ciao", at: now });
 assert.equal(
-  takePendingLocalTurn(turns, { body: "ciao", wrapCreatedAtSec: nowSec, now }),
+  takePendingLocalTurn(turns, {
+    body: "ciao",
+    eventTimeMs: nip59FakeWrapMs, // wrong: wrap.created_at style
+    now,
+  }),
   null,
-  "empty pending → null",
+  "randomized wrap-like timestamp must not bridge",
 );
+assert.equal(turns.length, 1, "pending preserved after bad eventTime");
+assert.ok(findRecentLocalTurn(turns, { body: "ciao", now }));
+
+const bridged = takePendingLocalTurn(turns, {
+  body: "ciao",
+  eventTimeMs: now,
+  now,
+});
+assert.ok(bridged);
+assert.equal(turns.length, 0);
 
 console.log("botLatencyHelpers.test.ts: ok");

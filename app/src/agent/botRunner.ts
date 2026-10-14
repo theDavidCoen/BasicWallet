@@ -18,6 +18,7 @@ import {
 import {
   BOT_WORKING_ACK,
   formatWorkingAckStatus,
+  findRecentLocalTurn,
   takePendingLocalTurn,
   type PendingLocalTurn,
 } from "./botLatencyHelpers";
@@ -47,6 +48,34 @@ let processedHydrated = false;
 
 /** Local fast-path turns waiting to bridge when the gift-wrap arrives. */
 const pendingLocalTurns: PendingLocalTurn[] = [];
+
+/**
+ * Bodies recently started via local fast-path (survive after pending is taken).
+ * Suppresses wrap re-enqueue if bridge raced or pending was already consumed.
+ */
+const recentLocalBodies = new Map<string, number>();
+const RECENT_LOCAL_BODY_TTL_MS = 180_000;
+
+function noteRecentLocalBody(body: string, at = Date.now()): void {
+  const key = body.trim();
+  if (!key) return;
+  recentLocalBodies.set(key, at);
+  // Opportunistic prune
+  for (const [b, t] of recentLocalBodies) {
+    if (at - t > RECENT_LOCAL_BODY_TTL_MS) recentLocalBodies.delete(b);
+  }
+}
+
+function wasRecentLocalBody(body: string, now = Date.now()): boolean {
+  const key = body.trim();
+  const at = recentLocalBodies.get(key);
+  if (at == null) return false;
+  if (now - at > RECENT_LOCAL_BODY_TTL_MS) {
+    recentLocalBodies.delete(key);
+    return false;
+  }
+  return true;
+}
 
 type ActiveCloudWork = {
   controller: AbortController;
@@ -139,6 +168,7 @@ export async function clearBotProcessedWraps(): Promise<void> {
   processedWrapIds.clear();
   processedHydrated = true;
   pendingLocalTurns.length = 0;
+  recentLocalBodies.clear();
   try {
     await AsyncStorage.removeItem(PROCESSED_KEY);
   } catch {
@@ -149,23 +179,42 @@ export async function clearBotProcessedWraps(): Promise<void> {
 /**
  * If this gift-wrap matches a local fast-path turn already enqueued/processed,
  * mark the wrap processed and skip a second Cloud run.
+ *
+ * IMPORTANT: pass envelope.sentAt or rumor.created_at — never kind-1059
+ * wrap.created_at (NIP-59 randomNow up to 2 days back; that broke P0a bridge).
+ *
  * @returns true when the caller should not enqueue again.
  */
 export function tryBridgeLocalBotTurn(opts: {
   body: string;
   wrapEventId: string;
-  /** Kind 1059 created_at (seconds). Rejects stale same-body catch-up. */
-  wrapCreatedAtSec?: number;
+  /** Envelope sentAt ms, or rumor.created_at*1000 — NOT wrap.created_at. */
+  eventTimeMs?: number;
 }): boolean {
   if (!opts.wrapEventId) return false;
+  const body = opts.body.trim();
+
   const taken = takePendingLocalTurn(pendingLocalTurns, {
-    body: opts.body,
-    wrapCreatedAtSec: opts.wrapCreatedAtSec,
+    body,
+    eventTimeMs: opts.eventTimeMs,
   });
-  if (!taken) return false;
-  markBotWrapProcessed(opts.wrapEventId);
-  // Local turn already marked / queued under local:<id> — never double-run.
-  return true;
+  if (taken) {
+    markBotWrapProcessed(opts.wrapEventId);
+    noteRecentLocalBody(body, taken.at);
+    return true;
+  }
+
+  // Belt: pending already consumed / race — still suppress if local fast-path
+  // recently owned this body (or a pending entry still exists by wall clock).
+  if (
+    wasRecentLocalBody(body) ||
+    findRecentLocalTurn(pendingLocalTurns, { body })
+  ) {
+    markBotWrapProcessed(opts.wrapEventId);
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -181,16 +230,28 @@ export function enqueueOwnerBotText(opts: {
 }): void {
   const body = opts.body.trim();
   if (opts.localMessageId) {
+    const at = Date.now();
     pendingLocalTurns.push({
       localId: opts.localMessageId,
       body,
-      at: Date.now(),
+      at,
     });
+    noteRecentLocalBody(body, at);
   }
   chain = chain
     .then(async () => {
       await hydrateBotProcessedWraps();
       if (wasBotWrapProcessed(opts.wrapEventId)) return;
+      // Wrap path: if a local fast-path already owns this body, do not run again
+      // even when tryBridge missed (e.g. watcher raced before pending push).
+      if (
+        !opts.localMessageId &&
+        (wasRecentLocalBody(body) ||
+          findRecentLocalTurn(pendingLocalTurns, { body }))
+      ) {
+        markBotWrapProcessed(opts.wrapEventId);
+        return;
+      }
       markBotWrapProcessed(opts.wrapEventId);
       await handleOwnerBotText(body);
     })
