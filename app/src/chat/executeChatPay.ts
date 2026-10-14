@@ -11,6 +11,7 @@ import type { ArkadeNetworkId } from "../config/network";
 import { getContact } from "../contacts/contactStore";
 import { requireUserPresence } from "../security/userPresence";
 import {
+  ASP_READ_TIMEOUT_MS,
   DEFAULT_MIN_VTXO_SATS,
   formatSendError,
   prepareDustSafeSend,
@@ -312,7 +313,8 @@ async function proveSpendDropped(
 ): Promise<boolean> {
   if (prevAvailable == null || !(prevAvailable > 0)) return false;
   // Xiaomi often times out short vtxo reads during ASP pause — retry (α77).
-  for (const ms of [5_000, 10_000]) {
+  // Align with ASP_READ_TIMEOUT_MS (AirVPN Max-send was dying at 8s).
+  for (const ms of [ASP_READ_TIMEOUT_MS, ASP_READ_TIMEOUT_MS]) {
     const avail = await readSpendableAvailable(wallet, { timeoutMs: ms });
     if (avail == null) continue;
     if (avail <= prevAvailable - payAmount + 1) return true;
@@ -442,8 +444,9 @@ export async function executeChatPay(opts: {
     }
 
     // Must have vtxo plan — never blind-send (Xiaomi dust errors after success).
+    // ASP_READ_TIMEOUT_MS (20s)×2 — old 5s→8s ladder failed Max-send under AirVPN.
     const plan = await prepareDustSafeSend(wallet, amount, dust, {
-      timeoutMs: 5_000,
+      timeoutMs: ASP_READ_TIMEOUT_MS,
       requireVtxos: true,
     });
     payAmount = plan.amount;
@@ -523,7 +526,7 @@ export async function executeChatPay(opts: {
       spendPollMs: 600,
       spendHitsRequired: 1,
       txidGraceMs: 400,
-      spendReadTimeoutMs: 5_000,
+      spendReadTimeoutMs: ASP_READ_TIMEOUT_MS,
       onRealTxid: (real) => {
         if (!real || real.startsWith("pending:")) return;
         recordSentFromThisDevice(networkId, walletId, real);
