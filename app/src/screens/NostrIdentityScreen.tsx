@@ -6,7 +6,6 @@ import {
   Alert,
   Pressable,
   ScrollView,
-  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -14,6 +13,7 @@ import {
 } from "react-native";
 import type { RootNav } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
+import { IdentityQrCard } from "../components/contacts/IdentityQrCard";
 import {
   Button,
   Caption,
@@ -21,6 +21,7 @@ import {
   ScreenTitle,
   SettingsRow,
 } from "../components/ui";
+import { encodeNostrIdentityQr } from "../contacts/contactQr";
 import {
   readBackupMeta,
   type BackupPackageMeta,
@@ -33,6 +34,7 @@ import {
 } from "../nostr/identityStore";
 import { saveAndPublishNostrProfile } from "../nostr/profileMetadata";
 import { midEllipsis } from "../nostr/keys";
+import { shareSafe } from "../security/shareSafe";
 import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 import { fonts } from "../theme/typography";
@@ -101,7 +103,7 @@ export function NostrIdentityScreen() {
   async function onShareNpub() {
     if (!identity?.npub) return;
     try {
-      await Share.share({ message: identity.npub });
+      await shareSafe({ message: identity.npub });
     } catch (e) {
       Alert.alert(
         t("nostr.shareFailed"),
@@ -144,6 +146,8 @@ export function NostrIdentityScreen() {
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <ScreenTitle>{t("nostr.title")}</ScreenTitle>
         <Caption>{t("nostr.caption")}</Caption>
+
+        <IdentityQrCard value={encodeNostrIdentityQr(identity.npub)} />
 
         <Pressable
           style={styles.field}

@@ -19,6 +19,7 @@ import {
 import type { RootNav, RootStackParamList } from "../navigation/types";
 import { ScreenChrome } from "../components/ScreenChrome";
 import { Button, ScreenTitle } from "../components/ui";
+import { IdentityQrCard } from "../components/contacts/IdentityQrCard";
 import {
   createContactDraft,
   createEmptyField,
@@ -27,6 +28,7 @@ import {
   getContact,
   upsertContact,
 } from "../contacts/contactStore";
+import { encodeContactQr } from "../contacts/contactQr";
 import { ShareContactSheet } from "../components/contacts/ShareContactSheet";
 import { resolveBip353ForContacts } from "../contacts/resolveBip353";
 import { resolveNip05 } from "../contacts/resolveNip05";
@@ -54,6 +56,8 @@ export function ContactEditScreen() {
   const isNew = !contactId;
 
   const [draft, setDraft] = useState<Contact>(() => createContactDraft());
+  /** QR reflects last saved snapshot — updates only after Save. */
+  const [savedQrValue, setSavedQrValue] = useState<string>("");
   const [kindPickerFor, setKindPickerFor] = useState<string | null>(null);
   const [verifyBusy, setVerifyBusy] = useState<string | null>(null);
   const [verifyMsg, setVerifyMsg] = useState<Record<string, string>>({});
@@ -61,9 +65,15 @@ export function ContactEditScreen() {
   const [profileSyncHint, setProfileSyncHint] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!contactId) return;
+    if (!contactId) {
+      setSavedQrValue("");
+      return;
+    }
     const existing = getContact(contactId);
-    if (existing) setDraft(existing);
+    if (existing) {
+      setDraft(existing);
+      setSavedQrValue(encodeContactQr(existing));
+    }
   }, [contactId]);
 
   // Pull public kind 0 for contacts with an npub. Never overwrites note / custom fields.
@@ -162,6 +172,7 @@ export function ContactEditScreen() {
   function onSave() {
     try {
       upsertContact(draft);
+      setSavedQrValue(encodeContactQr(draft));
       navigation.goBack();
     } catch (e) {
       Alert.alert(t("contacts.cannotSave"), e instanceof Error ? e.message : String(e));
@@ -264,6 +275,8 @@ export function ContactEditScreen() {
         contentContainerStyle={{ paddingBottom: 40 }}
         keyboardShouldPersistTaps="handled"
       >
+        {!isNew && savedQrValue ? <IdentityQrCard value={savedQrValue} /> : null}
+
         <Text style={styles.label}>{t("contacts.labelName")}</Text>
         <TextInput
           value={draft.name}

@@ -139,7 +139,7 @@ export function ScanQrView({
   onScan,
   parse = extractArkAddressFromScan,
   title = "SCAN",
-  idleHint = "Point at the QR code to pay",
+  idleHint = "Point at the QR code",
   rejectHint = "Not recognized — try again",
 }: ScanQrViewProps) {
   const insets = useSafeAreaInsets();

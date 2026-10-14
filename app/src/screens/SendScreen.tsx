@@ -1901,7 +1901,7 @@ export function SendScreen() {
             visible={scanOpen}
             onClose={() => setScanOpen(false)}
             title="SCAN"
-            idleHint="Point at the QR code to pay"
+            idleHint="Point at the QR code"
             rejectHint="Not a Lightning invoice / LNURL / address"
             parse={extractLightningPayFromScan}
             onScan={applyScannedPay}

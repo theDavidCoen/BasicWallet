@@ -27,6 +27,7 @@ import {
   resetPresencePrompt,
   subscribeAppUnlockFromPresence,
 } from "./presencePrompt";
+import { isOsShareSheetActive } from "./osShareSheet";
 import {
   flushEncryptedBackupAfterUnlock,
   lockBackupPassphraseSession,
@@ -302,6 +303,11 @@ export function AppLockGate({ children }: { children: ReactNode }) {
       }
 
       if (next === "background") {
+        // OS share / documents UI also backgrounds the app. Do not re-lock —
+        // dismissing Share with X must not feel like logout (Nostr Share npub).
+        if (isOsShareSheetActive()) {
+          return;
+        }
         // Always abort — hung authenticateAsync + presence grace were leaving
         // Unlock with unlockingRef/busy stuck after warm resume (Xiaomi).
         abortStaleBioAuth();

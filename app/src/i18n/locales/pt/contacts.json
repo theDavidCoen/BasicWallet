@@ -69,5 +69,14 @@
   "fieldFallback": "campo",
   "addContactCta": "Adicionar contato",
   "refuse": "Recusar",
-  "refuseA11y": "Recusar contato"
+  "refuseA11y": "Recusar contato",
+  "qrAddTitle": "ADICIONAR CONTATO?",
+  "qrAddCaption": "Adicionar este contato a partir do QR escaneado?",
+  "qrAddCaptionNamed": "Adicionar “%{name}” a partir do QR escaneado?",
+  "qrConfirm": "Confirmar",
+  "qrDeny": "Negar",
+  "qrAddedTitle": "Salvo",
+  "qrAddedBody": "%{name} adicionado aos contatos.",
+  "qrAlreadySavedTitle": "Já salvo",
+  "qrAlreadySavedBody": "Este identificador já está em “%{name}”."
 }

@@ -1,5 +1,6 @@
 /**
  * Wallet switcher body for InteractiveBottomSheet (no ScreenChrome).
+ * Greeting + Share npub sit above the existing Wallets list.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -11,9 +12,17 @@ import {
   Text,
   View,
 } from "react-native";
-import { Button, Caption, ScreenTitle } from "../components/ui";
+import { Button, Caption, ScreenTitle, SectionHeader } from "../components/ui";
+import { useI18n } from "../i18n";
+import {
+  readPublicIdentity,
+  type NostrPublicIdentity,
+} from "../nostr/identityStore";
+import { midEllipsis } from "../nostr/keys";
+import { shareSafe } from "../security/shareSafe";
 import { useWallet } from "../wallet/WalletProvider";
 import { colors } from "../theme/colors";
+import { fonts } from "../theme/typography";
 import { sheetUi } from "../theme/sheetUi";
 
 type Props = {
@@ -21,20 +30,43 @@ type Props = {
   onAddWallet: () => void;
   onEditWallet: (walletId: string) => void;
   onConnectNode: () => void;
+  onOpenNostrIdentity: () => void;
 };
+
+function greetingDisplay(id: NostrPublicIdentity | null): string {
+  const nip05 = id?.profile?.nip05?.trim();
+  if (nip05) return nip05;
+  if (id?.npub) return midEllipsis(id.npub, 5, 3);
+  return "…";
+}
 
 export function WalletSwitcherSheetContent({
   onClose,
   onAddWallet,
   onEditWallet,
   onConnectNode,
+  onOpenNostrIdentity,
 }: Props) {
+  const { t } = useI18n();
   const { wallets, selectedWallet, selectWallet, refreshWalletList } = useWallet();
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [identity, setIdentity] = useState<NostrPublicIdentity | null>(null);
+  const [sharing, setSharing] = useState(false);
 
   useEffect(() => {
     refreshWalletList();
   }, [refreshWalletList]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const id = await readPublicIdentity();
+      if (!cancelled) setIdentity(id);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const onSelect = useCallback(
     async (id: string) => {
@@ -55,10 +87,50 @@ export function WalletSwitcherSheetContent({
     [onClose, selectWallet, selectedWallet?.id],
   );
 
+  const onShareNpub = useCallback(async () => {
+    if (!identity?.npub || sharing) return;
+    setSharing(true);
+    try {
+      await shareSafe({ message: identity.npub });
+    } catch (e) {
+      console.warn("[basic] share npub failed", e);
+    } finally {
+      setSharing(false);
+    }
+  }, [identity?.npub, sharing]);
+
+  const display = greetingDisplay(identity);
+  const canShare = Boolean(identity?.npub);
+
   return (
     <View style={styles.root}>
-      <ScreenTitle style={sheetUi.title}>WALLETS</ScreenTitle>
-      <Caption style={sheetUi.caption}>Select your default wallet</Caption>
+      <ScreenTitle style={sheetUi.title}>
+        {t("home.walletsHiTitle", { display })}
+      </ScreenTitle>
+      <Caption style={sheetUi.caption}>{t("home.walletsHiCaption")}</Caption>
+      <Pressable
+        onPress={onOpenNostrIdentity}
+        hitSlop={8}
+        accessibilityRole="link"
+        style={styles.identityLinkHit}
+      >
+        <Text style={styles.identityLink}>{t("home.walletsHiNostrLink")}</Text>
+      </Pressable>
+
+      <Button
+        size="sheet"
+        variant="secondary"
+        disabled={!canShare || sharing}
+        onPress={() => void onShareNpub()}
+        style={styles.shareBtn}
+      >
+        {t("nostr.shareNpub")}
+      </Button>
+
+      <SectionHeader first style={styles.walletsHeader}>
+        {t("home.walletsSection")}
+      </SectionHeader>
+      <Caption style={styles.walletsCaption}>{t("home.walletsSelectCaption")}</Caption>
 
       <FlatList
         data={wallets}
@@ -67,10 +139,10 @@ export function WalletSwitcherSheetContent({
         ListFooterComponent={
           <View>
             <Button size="sheet" onPress={() => onAddWallet()}>
-              + Create wallet
+              {t("home.walletsCreate")}
             </Button>
             <Button size="sheet" onPress={() => onConnectNode()}>
-              Connect Lightning Node
+              {t("home.walletsConnectLn")}
             </Button>
           </View>
         }
@@ -94,7 +166,7 @@ export function WalletSwitcherSheetContent({
                   <Text style={styles.rowSub}>
                     {item.kind}
                     {item.tag ? ` · ${item.tag}` : ""}
-                    {selected ? " · selected" : ""}
+                    {selected ? ` · ${t("home.walletsSelected")}` : ""}
                   </Text>
                 </View>
                 {busy ? <ActivityIndicator color={colors.fg} /> : null}
@@ -119,6 +191,31 @@ export function WalletSwitcherSheetContent({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  identityLinkHit: {
+    alignSelf: "center",
+    marginBottom: 12,
+  },
+  identityLink: {
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    color: colors.fg,
+    textDecorationLine: "underline",
+    textAlign: "center",
+  },
+  shareBtn: {
+    marginTop: 0,
+    marginBottom: 8,
+  },
+  walletsHeader: {
+    marginTop: 8,
+    marginBottom: 0,
+    textAlign: "center",
+  },
+  walletsCaption: {
+    ...sheetUi.caption,
+    marginTop: 4,
+    marginBottom: 12,
+  },
   list: { paddingBottom: 24, gap: 8 },
   row: {
     flexDirection: "row",
