@@ -6,6 +6,8 @@
  * attached to their API key. Do not inject Bitrefill keys from Basic.
  */
 
+import { nextPollIntervalMs } from "./botLatencyHelpers";
+
 const API_BASE = "https://api.cursor.com";
 
 export type CursorMe = {
@@ -202,22 +204,40 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 /**
  * Poll Get A Run until terminal. Prefer poll over SSE for React Native v1.
  * Spike gap: Dashboard MCP tool visibility is not verified in this client.
+ *
+ * Default interval is adaptive (800ms → 1.5s → 2.5s). Pass `intervalMs` to
+ * force a fixed cadence (tests / callers that need determinism).
  */
 export async function waitForRunResult(
   apiKey: string,
   agentId: string,
   runId: string,
-  opts?: { timeoutMs?: number; intervalMs?: number; signal?: AbortSignal },
+  opts?: {
+    timeoutMs?: number;
+    intervalMs?: number;
+    signal?: AbortSignal;
+    onStatus?: (status: string) => void;
+  },
 ): Promise<CursorRun> {
   const timeoutMs = opts?.timeoutMs ?? 180_000;
-  const intervalMs = opts?.intervalMs ?? 2_500;
   const started = Date.now();
   let last: CursorRun | null = null;
+  let lastEmittedStatus = "";
   while (Date.now() - started < timeoutMs) {
     if (opts?.signal?.aborted) throw new Error("Cancelled.");
     last = await getAgentRun(apiKey, agentId, runId);
-    if (TERMINAL.has((last.status || "").toUpperCase())) return last;
-    await sleep(intervalMs, opts?.signal);
+    const status = (last.status || "").toUpperCase();
+    if (status && status !== lastEmittedStatus) {
+      lastEmittedStatus = status;
+      try {
+        opts?.onStatus?.(status);
+      } catch {
+        /* UI callbacks must not break the poll */
+      }
+    }
+    if (TERMINAL.has(status)) return last;
+    const elapsed = Date.now() - started;
+    await sleep(nextPollIntervalMs(elapsed, opts?.intervalMs), opts?.signal);
   }
   throw new Error(
     last
@@ -237,11 +257,24 @@ export async function runCursorPrompt(opts: {
   timeoutMs?: number;
   signal?: AbortSignal;
   onRunStarted?: (info: { agentId: string; runId: string }) => void;
-}): Promise<{ agentId: string; run: CursorRun; resultText: string }> {
+  onStatus?: (status: string) => void;
+}): Promise<{
+  agentId: string;
+  run: CursorRun;
+  resultText: string;
+  /** Wall time from POST create/follow-up until terminal run (poll wait). */
+  durationMs: number;
+  /** True when this turn created a new no-repo agent (vs follow-up). */
+  createdAgent: boolean;
+}> {
   const { apiKey, promptText } = opts;
   if (opts.signal?.aborted) throw new Error("Cancelled.");
   let agentId = opts.existingAgentId?.trim() || "";
   let run: CursorRun;
+  let createdAgent = false;
+  const turnStarted = Date.now();
+
+  opts.onStatus?.("CREATING");
 
   if (agentId) {
     try {
@@ -254,6 +287,7 @@ export async function runCursorPrompt(opts: {
         const created = await createNoRepoAgent(apiKey, promptText);
         agentId = created.agent.id;
         run = created.run;
+        createdAgent = true;
       } else {
         throw e;
       }
@@ -262,14 +296,29 @@ export async function runCursorPrompt(opts: {
     const created = await createNoRepoAgent(apiKey, promptText);
     agentId = created.agent.id;
     run = created.run;
+    createdAgent = true;
   }
 
   opts.onRunStarted?.({ agentId, runId: run.id });
+  opts.onStatus?.(run.status || "RUNNING");
 
   const finished = await waitForRunResult(apiKey, agentId, run.id, {
     timeoutMs: opts.timeoutMs,
     signal: opts.signal,
+    onStatus: opts.onStatus,
   });
+  const durationMs = Date.now() - turnStarted;
+  // Telemetry only — never log prompt / result body (PII).
+  console.info(
+    "[basic] cursor run",
+    JSON.stringify({
+      agentId,
+      runId: finished.id,
+      status: finished.status,
+      createdAgent,
+      durationMs,
+    }),
+  );
   const status = (finished.status || "").toUpperCase();
   if (status === "CANCELLED") {
     throw new Error("Cancelled.");
@@ -284,5 +333,7 @@ export async function runCursorPrompt(opts: {
     agentId,
     run: finished,
     resultText: typeof finished.result === "string" ? finished.result : "",
+    durationMs,
+    createdAgent,
   };
 }

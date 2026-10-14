@@ -1,9 +1,13 @@
 /**
  * Owner text → Cursor Cloud Agents → bot reply (text and/or pay_request).
  * Serializes work so one Cursor run runs at a time.
+ *
+ * P0 latency: local fast-path enqueue (no relay wait), local-only working ack,
+ * adaptive Cloud poll + status updates on the ack bubble.
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { updateChatMessage } from "../chat/chatStore";
 import { loadCursorApiKey } from "../settings/cursorAgentCredentials";
 import {
   buildAgentUserPrompt,
@@ -11,7 +15,13 @@ import {
   parseAgentInvoice,
   stripInvoiceJsonFromText,
 } from "./agentInvoiceParse";
-import { botReplyPayRequest, botReplyText } from "./botReply";
+import {
+  BOT_WORKING_ACK,
+  formatWorkingAckStatus,
+  takePendingLocalTurn,
+  type PendingLocalTurn,
+} from "./botLatencyHelpers";
+import { botReplyPayRequest, botReplyText, botReplyTextLocal } from "./botReply";
 import {
   isBotEnabled,
   loadStoredCursorAgentId,
@@ -21,21 +31,30 @@ import {
 import { matchBotSlashCommand } from "./botSlashCommands";
 import { cancelAgentRun, runCursorPrompt } from "./cursorCloud";
 
+export {
+  BOT_WORKING_ACK,
+  isBotWorkingAckBody,
+  localBotTurnId,
+} from "./botLatencyHelpers";
+
 const PROCESSED_KEY = "basic.wallet.cursor.bot.processed.v1";
 const PROCESSED_MAX = 400;
-
-/** Ack shown while Cloud is working — matched locally for /stop UX. */
-export const BOT_WORKING_ACK = "Working on it…";
+const STATUS_UI_MIN_MS = 1_000;
 
 let chain: Promise<void> = Promise.resolve();
 const processedWrapIds = new Set<string>();
 let processedHydrated = false;
+
+/** Local fast-path turns waiting to bridge when the gift-wrap arrives. */
+const pendingLocalTurns: PendingLocalTurn[] = [];
 
 type ActiveCloudWork = {
   controller: AbortController;
   apiKey: string;
   agentId: string | null;
   runId: string | null;
+  workingAckMessageId: string | null;
+  lastStatusUiAt: number;
 };
 
 let activeCloudWork: ActiveCloudWork | null = null;
@@ -119,6 +138,7 @@ export function wasBotWrapProcessed(wrapEventId: string): boolean {
 export async function clearBotProcessedWraps(): Promise<void> {
   processedWrapIds.clear();
   processedHydrated = true;
+  pendingLocalTurns.length = 0;
   try {
     await AsyncStorage.removeItem(PROCESSED_KEY);
   } catch {
@@ -127,23 +147,69 @@ export async function clearBotProcessedWraps(): Promise<void> {
 }
 
 /**
- * Handle an owner chat.text already validated by botWatch (owner-only).
+ * If this gift-wrap matches a local fast-path turn already enqueued/processed,
+ * mark the wrap processed and skip a second Cloud run.
+ * @returns true when the caller should not enqueue again.
+ */
+export function tryBridgeLocalBotTurn(opts: {
+  body: string;
+  wrapEventId: string;
+  /** Kind 1059 created_at (seconds). Rejects stale same-body catch-up. */
+  wrapCreatedAtSec?: number;
+}): boolean {
+  if (!opts.wrapEventId) return false;
+  const taken = takePendingLocalTurn(pendingLocalTurns, {
+    body: opts.body,
+    wrapCreatedAtSec: opts.wrapCreatedAtSec,
+  });
+  if (!taken) return false;
+  markBotWrapProcessed(opts.wrapEventId);
+  // Local turn already marked / queued under local:<id> — never double-run.
+  return true;
+}
+
+/**
+ * Handle an owner chat.text already validated by botWatch (owner-only),
+ * or enqueued immediately from sendChatText on the bot contact (P0a).
  * Does not re-ingest the owner's message (already stored as outbound).
  */
 export function enqueueOwnerBotText(opts: {
   body: string;
   wrapEventId: string;
+  /** Outbound local message id when enqueueing before Nostr round-trip. */
+  localMessageId?: string;
 }): void {
+  const body = opts.body.trim();
+  if (opts.localMessageId) {
+    pendingLocalTurns.push({
+      localId: opts.localMessageId,
+      body,
+      at: Date.now(),
+    });
+  }
   chain = chain
     .then(async () => {
       await hydrateBotProcessedWraps();
       if (wasBotWrapProcessed(opts.wrapEventId)) return;
       markBotWrapProcessed(opts.wrapEventId);
-      await handleOwnerBotText(opts.body);
+      await handleOwnerBotText(body);
     })
     .catch((e) => {
       console.warn("[basic] bot runner failed", e);
     });
+}
+
+function pushWorkingAckStatus(work: ActiveCloudWork, status: string): void {
+  const id = work.workingAckMessageId;
+  if (!id) return;
+  const now = Date.now();
+  if (now - work.lastStatusUiAt < STATUS_UI_MIN_MS) return;
+  work.lastStatusUiAt = now;
+  try {
+    updateChatMessage(id, { bodyText: formatWorkingAckStatus(status) });
+  } catch (e) {
+    console.warn("[basic] working ack status update failed", e);
+  }
 }
 
 async function handleOwnerBotText(bodyRaw: string): Promise<void> {
@@ -161,7 +227,8 @@ async function handleOwnerBotText(bodyRaw: string): Promise<void> {
     return;
   }
 
-  await botReplyText(BOT_WORKING_ACK);
+  // P0b: progress ack is local-only (no gift-wrap publish).
+  const ack = botReplyTextLocal(BOT_WORKING_ACK);
 
   const controller = new AbortController();
   const work: ActiveCloudWork = {
@@ -169,8 +236,11 @@ async function handleOwnerBotText(bodyRaw: string): Promise<void> {
     apiKey,
     agentId: null,
     runId: null,
+    workingAckMessageId: ack?.messageId ?? null,
+    lastStatusUiAt: 0,
   };
   activeCloudWork = work;
+  pushWorkingAckStatus(work, "CREATING");
 
   try {
     const existingAgentId = await loadStoredCursorAgentId();
@@ -183,6 +253,9 @@ async function handleOwnerBotText(bodyRaw: string): Promise<void> {
       onRunStarted: (info) => {
         work.agentId = info.agentId;
         work.runId = info.runId;
+      },
+      onStatus: (status) => {
+        pushWorkingAckStatus(work, status);
       },
     });
     await storeCursorAgentId(agentId);

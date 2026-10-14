@@ -14,6 +14,7 @@ import { mergeNostrRelays, readBackupMeta } from "../nostr/backupPackage";
 import {
   enqueueOwnerBotText,
   hydrateBotProcessedWraps,
+  tryBridgeLocalBotTurn,
   wasBotWrapProcessed,
 } from "./botRunner";
 import { resumePendingBotFulfills } from "./botFulfill";
@@ -76,6 +77,17 @@ async function handleBotWrap(ev: Event, botSk: Uint8Array, meta: BotMeta): Promi
   if (!chat) return;
 
   if (chat.type === "basic.wallet.chat.text") {
+    // P0a: wrap may arrive after local fast-path already enqueued this turn.
+    if (
+      tryBridgeLocalBotTurn({
+        body: chat.body,
+        wrapEventId: ev.id,
+        wrapCreatedAtSec:
+          typeof ev.created_at === "number" ? ev.created_at : undefined,
+      })
+    ) {
+      return;
+    }
     enqueueOwnerBotText({ body: chat.body, wrapEventId: ev.id });
   }
   // Other envelope types from owner (receipts, etc.) ignored for bot runner v1.
