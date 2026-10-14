@@ -557,6 +557,30 @@ export function dropOptimisticArkadeReceive(
   return preferred.id;
 }
 
+/**
+ * True when Activity still has a local-recv placeholder for this amount
+ * (no real ark txid). Used to heal rc.9 chat-receipt phantom Home after
+ * process death wiped in-memory credit notes.
+ */
+export function hasUnsettledLocalReceiveForAmount(
+  networkId: ArkadeNetworkId,
+  walletId: string,
+  amountSats: number,
+  maxAgeMs = 7 * 24 * 60 * 60_000,
+): boolean {
+  const abs = Math.abs(Math.floor(amountSats));
+  if (!walletId || !(abs > 0)) return false;
+  const now = Date.now();
+  for (const r of readLocalPendingReceiveRows(networkId, walletId)) {
+    if (Math.abs(r.amount - abs) > 1) continue;
+    if (r.createdAt > 0 && now - r.createdAt > maxAgeMs) continue;
+    const ark = (r.txs[0]?.arkTxid || "").trim();
+    if (ark && /^[0-9a-fA-F]{64}$/.test(ark)) continue;
+    return true;
+  }
+  return false;
+}
+
 /** Snapshot optimistic / pending receives so rematerialize does not wipe them. */
 function readLocalPendingReceiveRows(
   networkId: ArkadeNetworkId,

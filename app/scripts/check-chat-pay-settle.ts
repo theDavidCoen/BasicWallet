@@ -3,6 +3,7 @@
  */
 import {
   activityRowMatchesOutboundBubble,
+  pendingStampMatchesFailedBubble,
   pickAlreadySettledOutbound,
   shouldRecordChatPayOptimisticActivity,
 } from "../src/chat/chatPaySettle";
@@ -220,6 +221,90 @@ console.log("chatPaySettle scenarios\n");
     "already-settled / prior hang → no optimistic",
     shouldRecordChatPayOptimisticActivity({ skipLocalSpend: true }) === false,
   );
+}
+
+{
+  console.log("\n7) sending + pending-stamp alone must NOT settle (false You sent)");
+  const now = 1_700_000_000_000;
+  const bubbleAt = now - 2_000;
+  const picked = pickAlreadySettledOutbound({
+    amountSats: 1349,
+    contactId: "c1",
+    now,
+    candidates: [
+      {
+        id: "m_send",
+        contactId: "c1",
+        amountSats: 1349,
+        createdAt: bubbleAt,
+        paymentId: "pay",
+        status: "sending",
+      },
+    ],
+    activityRows: [],
+    // Stamp written before wallet.send — same as Xiaomi 1349/674 false paid.
+    pendingStampAt: bubbleAt + 50,
+  });
+  assert("sending + stamp only → no skip", picked === null);
+}
+
+{
+  console.log("\n8) Max retry stamp must not resurrect older failed 5966 bubbles");
+  const now = 1_700_000_000_000;
+  const fail48 = now - 9 * 60_000;
+  const fail49 = now - 8 * 60_000;
+  const retryStamp = now - 5_000;
+  assert(
+    "stamp 9min after failed bubble → no match",
+    pendingStampMatchesFailedBubble({
+      bubbleCreatedAt: fail48,
+      pendingStampAt: retryStamp,
+      now,
+    }) === false,
+  );
+  assert(
+    "stamp within same attempt → match",
+    pendingStampMatchesFailedBubble({
+      bubbleCreatedAt: fail48,
+      pendingStampAt: fail48 + 2_000,
+      now: fail48 + 30_000,
+    }) === true,
+  );
+  const picked = pickAlreadySettledOutbound({
+    amountSats: 5966,
+    contactId: "c1",
+    excludeMessageId: "m_retry",
+    now,
+    candidates: [
+      {
+        id: "m_fail48",
+        contactId: "c1",
+        amountSats: 5966,
+        createdAt: fail48,
+        paymentId: "pay_a",
+        status: "failed",
+      },
+      {
+        id: "m_fail49",
+        contactId: "c1",
+        amountSats: 5966,
+        createdAt: fail49,
+        paymentId: "pay_b",
+        status: "failed",
+      },
+      {
+        id: "m_retry",
+        contactId: "c1",
+        amountSats: 5966,
+        createdAt: now - 3_000,
+        paymentId: "pay_c",
+        status: "sending",
+      },
+    ],
+    activityRows: [],
+    pendingStampAt: retryStamp,
+  });
+  assert("late Max stamp → do not settle old fails", picked === null);
 }
 
 if (failed > 0) {

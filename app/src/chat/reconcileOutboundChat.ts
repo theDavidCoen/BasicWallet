@@ -13,10 +13,12 @@ import {
   listOutboundPaymentsByStatus,
   updateChatMessage,
   getChatMessage,
+  markPayRequestPaid,
 } from "./chatStore";
 import { publishPaymentReceipt } from "./chatActions";
 import {
   activityRowMatchesOutboundBubble,
+  pendingStampMatchesFailedBubble,
   pickAlreadySettledOutbound,
   type ChatSettleActivityRow,
 } from "./chatPaySettle";
@@ -73,7 +75,11 @@ export function reconcileOutboundChatPayments(opts: {
     newerThanMs,
   );
   let n = 0;
-  for (const m of msgs) {
+  // Newest first so a same-attempt failed bubble wins before older Max fails.
+  const ordered = [...msgs].sort((a, b) => b.createdAt - a.createdAt);
+  /** One stamp-only recovery per amount — never resurrect a stack of Max fails. */
+  const stampRecoveredAmounts = new Set<number>();
+  for (const m of ordered) {
     if (m.amountSats == null || !(m.amountSats > 0)) continue;
     const pending = findPendingSendStamp(
       opts.networkId,
@@ -87,32 +93,46 @@ export function reconcileOutboundChatPayments(opts: {
       m.amountSats,
       m.createdAt,
     );
+    // pendingSend is pre-send. Never use it for status=sending (false You sent).
+    // For failed: stamp must be from the *same* attempt (near bubble createdAt).
+    // A later Max retry stamp must not flip 3:48/3:49 fails + republish×N (5966).
+    const amountKey = Math.floor(m.amountSats);
     const pendingOk =
-      pending != null &&
-      pending.at >= m.createdAt - 5_000 &&
-      Date.now() - pending.at <= 20 * 60_000;
+      m.status === "failed" &&
+      !stampRecoveredAmounts.has(amountKey) &&
+      pendingStampMatchesFailedBubble({
+        bubbleCreatedAt: m.createdAt,
+        pendingStampAt: pending?.at ?? null,
+        now: Date.now(),
+      });
     if (!hit && !pendingOk) continue;
-    // Avoid claiming a still-in-flight convert as paid without activity evidence.
-    if (m.status === "converting" && !hit) continue;
+    // Converting / sending: require activity evidence — never stamp-only.
+    if ((m.status === "converting" || m.status === "sending") && !hit) continue;
 
     const was = m.status;
+    const via = hit ? "activity" : "pending-stamp-failed";
     updateChatMessage(m.id, { status: "paid" });
+    // Payment bubbles share request_id with the request card — settle it too
+    // (α77 hang path used to flip "You sent" while Request stayed pending).
+    markPayRequestPaid(m.contactId, m.requestId);
+    if (!hit) stampRecoveredAmounts.add(amountKey);
     n += 1;
     console.warn("[basic] reconcile outbound chat → paid", {
       id: m.id.slice(0, 12),
       amount: m.amountSats,
       was,
-      via: hit ? "activity" : "pending-stamp",
+      via,
     });
 
-    // Stuck Sending never published a receipt — peer may only have Ark notify (α77).
-    if (opts.republishReceipt !== false && m.paymentId) {
+    // Only republish when activity proves settle. Stamp-only recovery has no
+    // proof the peer should get a receipt (failed Max never spent).
+    if (opts.republishReceipt !== false && m.paymentId && hit) {
       void publishPaymentReceipt({
         contactId: m.contactId,
         paymentId: m.paymentId,
         amountSats: m.amountSats,
         memo: m.memo ?? undefined,
-        txid: hit?.id,
+        txid: hit.id,
         rail: "arkade",
         relatedRequestId: m.requestId ?? undefined,
       }).catch((e) => {
@@ -194,5 +214,9 @@ export function findAlreadySettledOutbound(opts: {
   if (!picked) return null;
 
   updateChatMessage(picked.messageId, { status: "paid" });
+  const paidMsg = getChatMessage(picked.messageId);
+  if (paidMsg?.requestId) {
+    markPayRequestPaid(paidMsg.contactId, paidMsg.requestId);
+  }
   return picked;
 }

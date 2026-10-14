@@ -55,6 +55,7 @@ import {
   updateChatMessage,
 } from "../chat/chatStore";
 import { reconcileOutboundChatPayments } from "../chat/reconcileOutboundChat";
+import { reconcilePaidPayRequests } from "../chat/reconcilePaidRequests";
 import { setChatThreadFocused } from "../chat/chatThreadFocus";
 import type { ChatMessage } from "../chat/types";
 import { newChatId } from "../chat/types";
@@ -212,6 +213,12 @@ export function ChatThreadScreen() {
         console.warn("[basic] reconcileOutboundChatPayments skipped", e);
       }
     }
+    // Pre-rc.9: You sent paid but Request · pending + Pay/Decline still live.
+    try {
+      reconcilePaidPayRequests(contactId);
+    } catch (e) {
+      console.warn("[basic] reconcilePaidPayRequests skipped", e);
+    }
     // Ghost Converting/Sending only after send soft-timeout window (4 min).
     failStaleOutboundPayments({ olderThanMs: 4 * 60_000 });
     const task = InteractionManager.runAfterInteractions(() => {
@@ -220,7 +227,7 @@ export function ChatThreadScreen() {
     return () => {
       task.cancel();
     };
-  }, [reloadLight, selectedWallet?.id, network.id]);
+  }, [reloadLight, selectedWallet?.id, network.id, contactId]);
 
   // α77: while Sending/Converting, poll reconcile so ASP settle flips You sent
   // even when wallet.send hangs (Xiaomi).

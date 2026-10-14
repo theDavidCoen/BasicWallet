@@ -11,6 +11,7 @@ import type { ArkadeNetworkId } from "../config/network";
 import { getContact } from "../contacts/contactStore";
 import { requireUserPresence } from "../security/userPresence";
 import {
+  ASP_READ_TIMEOUT_MS,
   DEFAULT_MIN_VTXO_SATS,
   formatSendError,
   prepareDustSafeSend,
@@ -36,6 +37,7 @@ import {
 import {
   insertChatMessage,
   findMessageByRequestId,
+  markPayRequestPaid,
   updateChatMessage,
   getChatMessage,
 } from "./chatStore";
@@ -277,10 +279,7 @@ function finalizeChatPayPaid(opts: {
     });
   }
 
-  if (opts.requestId) {
-    const req = findMessageByRequestId(opts.contactId, opts.requestId);
-    if (req) updateChatMessage(req.id, { status: "paid" });
-  }
+  markPayRequestPaid(opts.contactId, opts.requestId);
 
   if (!opts.skipReceipt) {
     void (async () => {
@@ -314,7 +313,8 @@ async function proveSpendDropped(
 ): Promise<boolean> {
   if (prevAvailable == null || !(prevAvailable > 0)) return false;
   // Xiaomi often times out short vtxo reads during ASP pause — retry (α77).
-  for (const ms of [5_000, 10_000]) {
+  // Align with ASP_READ_TIMEOUT_MS (AirVPN Max-send was dying at 8s).
+  for (const ms of [ASP_READ_TIMEOUT_MS, ASP_READ_TIMEOUT_MS]) {
     const avail = await readSpendableAvailable(wallet, { timeoutMs: ms });
     if (avail == null) continue;
     if (avail <= prevAvailable - payAmount + 1) return true;
@@ -421,6 +421,20 @@ export async function executeChatPay(opts: {
   let settledTxid: string | null = null;
   let recordedOptimistic = false;
   try {
+    // Warm ASP getInfo after bio unlock / VPN stall so wallet.send does not
+    // fail on the first cold /v1/info (Xiaomi rc.11: Ark getInfo unavailable).
+    try {
+      const anyW = wallet as BasicWallet & {
+        arkProvider?: { getInfo?: () => Promise<unknown> };
+      };
+      if (typeof anyW.arkProvider?.getInfo === "function") {
+        await anyW.arkProvider.getInfo();
+      }
+    } catch (e) {
+      console.warn("[basic] chat pay getInfo warm failed", e);
+      // Continue — prepare/send may still use cached arkInfoSnapshot.
+    }
+
     const dust = await readMinVtxoSats(wallet);
     if (amount < dust) {
       throw new Error(`Minimum send is ${dust} sats (ASP dust / min vtxo).`);
@@ -430,8 +444,9 @@ export async function executeChatPay(opts: {
     }
 
     // Must have vtxo plan — never blind-send (Xiaomi dust errors after success).
+    // ASP_READ_TIMEOUT_MS (20s)×2 — old 5s→8s ladder failed Max-send under AirVPN.
     const plan = await prepareDustSafeSend(wallet, amount, dust, {
-      timeoutMs: 5_000,
+      timeoutMs: ASP_READ_TIMEOUT_MS,
       requireVtxos: true,
     });
     payAmount = plan.amount;
@@ -511,7 +526,7 @@ export async function executeChatPay(opts: {
       spendPollMs: 600,
       spendHitsRequired: 1,
       txidGraceMs: 400,
-      spendReadTimeoutMs: 5_000,
+      spendReadTimeoutMs: ASP_READ_TIMEOUT_MS,
       onRealTxid: (real) => {
         if (!real || real.startsWith("pending:")) return;
         recordSentFromThisDevice(networkId, walletId, real);
@@ -541,12 +556,22 @@ export async function executeChatPay(opts: {
   } catch (e) {
     if (opts.localMessageId) {
       const already = getChatMessage(opts.localMessageId);
-      if (already?.status === "paid") {
+      // Only trust paid if THIS attempt settled. α69/α77 reconcile used to flip
+      // Sending→paid from pendingSend stamp alone (pre-send) while wallet.send
+      // still failed — returning here skipped applyLocalSpend and lied You sent.
+      if (already?.status === "paid" && settledTxid) {
         return {
-          txid: settledTxid ?? `pending:${Date.now()}`,
+          txid: settledTxid,
           paymentId,
           address: dest.address,
         };
+      }
+      if (already?.status === "paid" && !settledTxid) {
+        console.warn(
+          "[basic] chat pay paid without settle — treating as still open",
+          { amount: payAmount },
+        );
+        updateChatMessage(opts.localMessageId, { status: "sending" });
       }
     }
 

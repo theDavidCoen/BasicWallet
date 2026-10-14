@@ -30,7 +30,14 @@ const restoreDone = new Set<string>();
 const pendingRestore = new Set<string>();
 const restorePromises = new Map<string, Promise<void>>();
 
-const GET_INFO_TIMEOUT_MS = 8_000;
+/**
+ * SDK RestArkProvider uses INFO_FETCH_TIMEOUT_MS=12s; wallet ops budget
+ * GET_ARKADE_INFO at 20s. Our old 8s wrapper aborted live fetches under VPN
+ * (Xiaomi AirVPN: chat send → "Ark getInfo unavailable" while ASP /v1/info
+ * was fine from the workstation).
+ */
+const GET_INFO_TIMEOUT_MS = 20_000;
+const GET_INFO_RETRY_MS = 400;
 const CREATE_TIMEOUT_MS = 45_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -49,13 +56,32 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 class TimedExpoArkProvider extends ExpoArkProvider {
   override async getInfo() {
-    try {
-      return await withTimeout(super.getInfo(), GET_INFO_TIMEOUT_MS, "getInfo");
-    } catch (cause) {
-      throw new ProviderUnavailableError("Ark getInfo unavailable", { cause });
+    let lastCause: unknown;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        return await withTimeout(super.getInfo(), GET_INFO_TIMEOUT_MS, "getInfo");
+      } catch (cause) {
+        lastCause = cause;
+        const msg = cause instanceof Error ? cause.message : String(cause ?? "");
+        console.warn("[basic] ark getInfo failed", {
+          attempt,
+          msg: msg.slice(0, 120),
+        });
+        if (attempt < 2) {
+          await sleepMs(GET_INFO_RETRY_MS);
+          continue;
+        }
+      }
     }
+    throw new ProviderUnavailableError("Ark getInfo unavailable", {
+      cause: lastCause,
+    });
   }
 }
 

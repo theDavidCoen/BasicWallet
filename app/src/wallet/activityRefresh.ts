@@ -19,6 +19,7 @@ export type OptimisticReceiveSource =
   | "funds-notice"
   | "persist-adopt"
   | "notify-credit"
+  | "chat-receipt-credit"
   | "notify-skip-change"
   | "home-post-send"
   | "change-hold";

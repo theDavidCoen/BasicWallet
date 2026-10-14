@@ -8,6 +8,27 @@ export const CHAT_SETTLE_WINDOW_MS = 20 * 60_000;
 export const CHAT_SETTLE_MAX_AGE_MS = 30 * 60_000;
 /** Activity may lead the bubble by a few seconds (clock / insert race). */
 export const CHAT_SETTLE_PREDATE_SKEW_MS = 5_000;
+/**
+ * pendingSend stamp may recover a *failed* bubble only if the stamp was written
+ * for that same attempt (near bubble createdAt). A later Max retry's stamp must
+ * not flip older failed rows to You sent + republish receipts (Xiaomi 5966×3).
+ */
+export const CHAT_STAMP_RECOVER_AFTER_BUBBLE_MS = 3 * 60_000;
+
+/** True when a pre-send stamp is evidence for this failed bubble (same attempt). */
+export function pendingStampMatchesFailedBubble(input: {
+  bubbleCreatedAt: number;
+  pendingStampAt: number | null;
+  now: number;
+}): boolean {
+  const pendingAt = input.pendingStampAt;
+  const bubbleAt = input.bubbleCreatedAt;
+  if (pendingAt == null || !(pendingAt > 0) || !(bubbleAt > 0)) return false;
+  if (pendingAt < bubbleAt - CHAT_SETTLE_PREDATE_SKEW_MS) return false;
+  if (pendingAt > bubbleAt + CHAT_STAMP_RECOVER_AFTER_BUBBLE_MS) return false;
+  if (input.now - pendingAt > CHAT_SETTLE_WINDOW_MS) return false;
+  return true;
+}
 
 export type ChatSettleActivityRow = {
   id: string;
@@ -114,20 +135,24 @@ export function pickAlreadySettledOutbound(input: {
         }),
       ) ?? null;
 
-    const pendingAt = input.pendingStampAt;
+    // Stamp is pre-send — only recover failed bubbles from the *same* attempt.
     const pendingOk =
-      pendingAt != null &&
-      pendingAt > 0 &&
-      pendingAt >= open.createdAt - CHAT_SETTLE_PREDATE_SKEW_MS &&
-      input.now - pendingAt <= CHAT_SETTLE_WINDOW_MS;
+      open.status === "failed" &&
+      pendingStampMatchesFailedBubble({
+        bubbleCreatedAt: open.createdAt,
+        pendingStampAt: input.pendingStampAt,
+        now: input.now,
+      });
 
     if (!hit && !pendingOk) continue;
-    // Converting without activity: still mid Fiat convert — do not claim paid.
-    if (open.status === "converting" && !hit) continue;
+    // Converting / sending: require activity evidence.
+    if ((open.status === "converting" || open.status === "sending") && !hit) {
+      continue;
+    }
 
     return {
       messageId: open.id,
-      txid: hit?.id ?? `pending:${pendingAt ?? input.now}`,
+      txid: hit?.id ?? `pending:${input.pendingStampAt ?? input.now}`,
       paymentId: open.paymentId,
     };
   }

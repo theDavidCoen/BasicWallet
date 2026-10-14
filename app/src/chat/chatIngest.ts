@@ -11,9 +11,12 @@ import {
   consumeRecentInboundFiatSettle,
   isAutoInboundBusy,
 } from "./chatInboundFiat";
+import { ensureChatInboundHomeCredit } from "./chatInboundHomeCredit";
 import {
   dismissClassicFundsNoticeIfChat,
+  INBOUND_AMOUNT_DEDUPE_MS,
   noteChatInboundReceiptHint,
+  tryClaimInboundBubble,
 } from "./chatInboundPrefer";
 import {
   ensureInboundPeerContact,
@@ -27,6 +30,7 @@ import {
   findMessageByRequestId,
   findRecentInboundPaymentByAmount,
   insertChatMessage,
+  markPayRequestPaid,
   updateChatMessage,
 } from "./chatStore";
 import { freezeFiatCaptionFromSats } from "./formatChatAmount";
@@ -256,7 +260,8 @@ export async function ingestChatEnvelope(opts: {
         fiatCaption = await freezeCaptionIfFiat(envelope.amountSats);
         status = "paid";
       }
-      // One bubble per payment — merge by paymentId, else same amount in window (α77).
+      // One bubble per payment — merge by paymentId, else same amount in window.
+      // Distinct paymentIds from false reconcile republish (5966×3) must merge too.
       if (direction === "in" && envelope.amountSats > 0) {
         const abs = Math.floor(envelope.amountSats);
         const byPid = envelope.paymentId
@@ -265,7 +270,7 @@ export async function ingestChatEnvelope(opts: {
         const recentAmt = findRecentInboundPaymentByAmount(
           contactId,
           abs,
-          90_000,
+          INBOUND_AMOUNT_DEDUPE_MS,
         );
         // Always merge recent same-amount inbound (notify placeholder OR prior receipt).
         const recent = byPid ?? recentAmt;
@@ -277,16 +282,39 @@ export async function ingestChatEnvelope(opts: {
             nostrEventId: wrapEventId,
             fiatCaption: fiatCaption ?? recent.fiatCaption,
           });
-          if (envelope.relatedRequestId) {
-            const req = findMessageByRequestId(
-              contactId,
-              envelope.relatedRequestId,
-            );
-            if (req) updateChatMessage(req.id, { status: "paid" });
-          }
+          markPayRequestPaid(contactId, envelope.relatedRequestId);
           noteChatInboundReceiptHint(contactId, abs);
           dismissClassicFundsNoticeIfChat(abs);
-          // Home balance: ASP notify only (receipt must not double-apply — α76).
+          // Home: credit once from receipt when notify is late/missing (Samsung).
+          // Dedupe window + catch-up seed prevent double-apply with ASP notify.
+          ensureChatInboundHomeCredit(abs);
+          return true;
+        }
+        // Parallel gift-wraps: only one insert; losers merge or skip.
+        if (!tryClaimInboundBubble(contactId, abs)) {
+          const raced = findRecentInboundPaymentByAmount(
+            contactId,
+            abs,
+            INBOUND_AMOUNT_DEDUPE_MS,
+          );
+          if (raced) {
+            updateChatMessage(raced.id, {
+              status,
+              memo: envelope.memo ?? raced.memo,
+              paymentId: envelope.paymentId || raced.paymentId,
+              nostrEventId: wrapEventId,
+              fiatCaption: fiatCaption ?? raced.fiatCaption,
+            });
+          } else {
+            console.warn("[basic] inbound receipt claim lost — skip insert", {
+              amount: abs,
+              paymentId: envelope.paymentId?.slice(0, 12),
+            });
+          }
+          markPayRequestPaid(contactId, envelope.relatedRequestId);
+          noteChatInboundReceiptHint(contactId, abs);
+          dismissClassicFundsNoticeIfChat(abs);
+          ensureChatInboundHomeCredit(abs);
           return true;
         }
       } else if (envelope.paymentId) {
@@ -315,14 +343,12 @@ export async function ingestChatEnvelope(opts: {
         fiatCaption,
         bumpUnread: true,
       });
-      if (envelope.relatedRequestId) {
-        const req = findMessageByRequestId(contactId, envelope.relatedRequestId);
-        if (req) updateChatMessage(req.id, { status: "paid" });
-      }
+      markPayRequestPaid(contactId, envelope.relatedRequestId);
       // Hard rule: chat pay → chat bubble only; clear mistaken classic toast (α70).
       if (direction === "in" && envelope.amountSats > 0) {
         noteChatInboundReceiptHint(contactId, envelope.amountSats);
         dismissClassicFundsNoticeIfChat(envelope.amountSats);
+        ensureChatInboundHomeCredit(envelope.amountSats);
       }
       return true;
     }

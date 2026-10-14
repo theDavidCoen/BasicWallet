@@ -22,8 +22,8 @@ import { loadLndRestCredentials } from "../lightning/lndCredentials";
 import { lndPayInvoice } from "../lightning/lndRest";
 import type { BasicWallet } from "../wallet/hdWallet";
 import {
-  findMessageByRequestId,
   insertChatMessage,
+  markPayRequestPaid,
   updateChatMessage,
   getChatMessage,
 } from "./chatStore";
@@ -175,10 +175,7 @@ export async function executeChatLightningPay(opts: {
       localId = local.id;
     }
 
-    if (opts.requestId) {
-      const req = findMessageByRequestId(opts.contactId, opts.requestId);
-      if (req) updateChatMessage(req.id, { status: "paid" });
-    }
+    markPayRequestPaid(opts.contactId, opts.requestId);
 
     void publishPaymentReceipt({
       contactId: opts.contactId,

@@ -253,6 +253,8 @@ export function notePendingSendFromThisDevice(
     walletId: walletId.slice(0, 8),
     amountSats: abs,
     nDest: dests.length,
+    // Truncated dest for forensics (false You-sent / wrong peer).
+    dest: (dests[0]?.address ?? address ?? "").slice(0, 20),
   });
 }
 

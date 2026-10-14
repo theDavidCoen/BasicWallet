@@ -10,9 +10,10 @@ import {
   listChatMessages,
   listChatThreads,
   updateChatMessage,
-  findMessageByRequestId,
   findRecentInboundPaymentByAmount,
+  markPayRequestPaid,
 } from "./chatStore";
+import { ensureChatInboundHomeCredit } from "./chatInboundHomeCredit";
 import {
   getFocusedChatContactId,
   isChatThreadFocused,
@@ -173,21 +174,34 @@ function hasRecentInboundPaymentBubble(
 
 /** Sync claim so Ark notify + gift-wrap cannot both insert the same amount. */
 const inboundBubbleClaims = new Map<string, number>();
-/** Longer than α74 — same chat pay can race notify/receipt across ~1 min. */
-const INBOUND_CLAIM_TTL_MS = 90_000;
+/** Cover multi-receipt fan-out from false reconcile republish (5966×3 ~1 min). */
+const INBOUND_CLAIM_TTL_MS = 180_000;
+/** Same-amount inbound merge window (notify + N receipts). */
+export const INBOUND_AMOUNT_DEDUPE_MS = 180_000;
 
 function inboundClaimKey(contactId: string, amountSats: number): string {
   return `${contactId}:${Math.floor(amountSats)}`;
 }
 
-function tryClaimInboundBubble(contactId: string, amountSats: number): boolean {
+/**
+ * Claim the single inbound bubble slot for this contact+amount.
+ * False → merge into existing / skip insert (parallel gift-wrap race).
+ */
+export function tryClaimInboundBubble(
+  contactId: string,
+  amountSats: number,
+): boolean {
   const key = inboundClaimKey(contactId, amountSats);
   const now = Date.now();
   for (const [k, at] of inboundBubbleClaims) {
     if (now - at > INBOUND_CLAIM_TTL_MS) inboundBubbleClaims.delete(k);
   }
   // Any recent inbound of this amount — merge, never a second bubble (α77).
-  const existing = findRecentInboundPaymentByAmount(contactId, amountSats, 90_000);
+  const existing = findRecentInboundPaymentByAmount(
+    contactId,
+    amountSats,
+    INBOUND_AMOUNT_DEDUPE_MS,
+  );
   if (existing) {
     inboundBubbleClaims.set(key, now);
     return false;
@@ -210,7 +224,11 @@ export function ensureChatInboundBubble(opts: {
 }): boolean {
   const abs = Math.floor(opts.amountSats);
   if (!opts.contactId || !(abs > 0)) return false;
-  const existing = findRecentInboundPaymentByAmount(opts.contactId, abs, 90_000);
+  const existing = findRecentInboundPaymentByAmount(
+    opts.contactId,
+    abs,
+    INBOUND_AMOUNT_DEDUPE_MS,
+  );
   if (existing) {
     // Upgrade placeholder / fill paymentId — do not insert a duplicate.
     if (
@@ -224,11 +242,11 @@ export function ensureChatInboundBubble(opts: {
     } else if (opts.status && opts.status !== existing.status) {
       updateChatMessage(existing.id, { status: opts.status });
     }
-    if (opts.requestId) {
-      const req = findMessageByRequestId(opts.contactId, opts.requestId);
-      if (req) updateChatMessage(req.id, { status: "paid" });
-    }
+    markPayRequestPaid(opts.contactId, opts.requestId);
     noteChatInboundReceiptHint(opts.contactId, abs);
+    if ((opts.status ?? "paid") === "paid") {
+      ensureChatInboundHomeCredit(abs);
+    }
     return true;
   }
   if (!tryClaimInboundBubble(opts.contactId, abs)) {
@@ -246,9 +264,9 @@ export function ensureChatInboundBubble(opts: {
     requestId: opts.requestId ?? null,
     bumpUnread: focused !== opts.contactId,
   });
-  if (opts.requestId) {
-    const req = findMessageByRequestId(opts.contactId, opts.requestId);
-    if (req) updateChatMessage(req.id, { status: "paid" });
+  markPayRequestPaid(opts.contactId, opts.requestId);
+  if ((opts.status ?? "paid") === "paid") {
+    ensureChatInboundHomeCredit(abs);
   }
   noteChatInboundReceiptHint(opts.contactId, abs);
   console.warn("[basic] chat inbound bubble (prefer over classic)", {

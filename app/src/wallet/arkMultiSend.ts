@@ -6,6 +6,13 @@ import type { BasicWallet } from "./hdWallet";
 
 export const DEFAULT_MIN_VTXO_SATS = 330;
 export const MAX_SEND_RECIPIENTS = 10;
+/**
+ * ASP read budget under VPN / post-unlock congestion (Xiaomi AirVPN).
+ * Matches TimedExpoArkProvider getInfo (20s) — do not leave chat-pay vtxo
+ * reads at the old 5s/8s floors.
+ */
+export const ASP_READ_TIMEOUT_MS = 20_000;
+export const ASP_READ_RETRY_GAP_MS = 400;
 
 /**
  * Fiat/ASP leftover carriers are exactly min vtxo or 2×min (idle sync).
@@ -152,7 +159,10 @@ function vtxoHasAssets(v: SpendableVtxo): boolean {
 }
 
 export type PrepareDustSafeSendOpts = {
-  /** Per-attempt vtxo read timeout (default 2500). Chat uses 5000. */
+  /**
+   * Per-attempt vtxo read timeout.
+   * Default 2500 (classic Send). Chat / requireVtxos uses ASP_READ_TIMEOUT_MS.
+   */
   timeoutMs?: number;
   /**
    * When true, never return a blind plan without selectedVtxos.
@@ -173,8 +183,11 @@ export async function prepareDustSafeSend(
   dust: number,
   opts?: PrepareDustSafeSendOpts,
 ): Promise<DustSafeSendPlan> {
-  const timeoutMs = opts?.timeoutMs ?? 2_500;
   const requireVtxos = !!opts?.requireVtxos;
+  // requireVtxos (chat Max-send): never use the old 5s→8s ladder under VPN.
+  const timeoutMs = requireVtxos
+    ? Math.max(opts?.timeoutMs ?? ASP_READ_TIMEOUT_MS, ASP_READ_TIMEOUT_MS)
+    : (opts?.timeoutMs ?? 2_500);
 
   if (typeof w.getSpendableVtxos !== "function") {
     if (requireVtxos) {
@@ -187,10 +200,14 @@ export async function prepareDustSafeSend(
 
   let list: SpendableVtxo[] | null = null;
   let lastErr: unknown = null;
-  // One retry when first budget is short — Xiaomi often times out during ASP load.
-  // Deduped so timeoutMs >= 8s stays a single attempt; classic Send uses 6s→8s.
-  const attemptMs = [...new Set([timeoutMs, Math.max(timeoutMs, 8_000)])];
-  for (const ms of attemptMs) {
+  // requireVtxos: two full ASP_READ attempts (Xiaomi AirVPN Max-send 8s fail).
+  // Classic: short then floor (legacy 6s→8s style, floor raised to 12s).
+  const classicFloor = 12_000;
+  const attemptMs = requireVtxos
+    ? [timeoutMs, timeoutMs]
+    : [...new Set([timeoutMs, Math.max(timeoutMs, classicFloor)])];
+  for (let i = 0; i < attemptMs.length; i++) {
+    const ms = attemptMs[i];
     try {
       list = await withTimeout(w.getSpendableVtxos(), ms, "getSpendableVtxos");
       lastErr = null;
@@ -198,6 +215,13 @@ export async function prepareDustSafeSend(
     } catch (e) {
       lastErr = e;
       list = null;
+      console.warn("[basic] getSpendableVtxos attempt failed", {
+        attempt: i + 1,
+        ms,
+        requireVtxos,
+        msg: e instanceof Error ? e.message.slice(0, 120) : String(e),
+      });
+      if (i < attemptMs.length - 1) await sleep(ASP_READ_RETRY_GAP_MS);
     }
   }
 
@@ -323,6 +347,19 @@ export function formatSendError(e: unknown, dust = DEFAULT_MIN_VTXO_SATS): strin
     return (
       `This amount would leave change below the network minimum (${dust} sats). ` +
       `Try a slightly different amount, or send enough to spend a whole coin.`
+    );
+  }
+  if (/Ark getInfo unavailable/i.test(msg) || /getInfo timed out/i.test(msg)) {
+    return (
+      "Could not reach the Ark server (getInfo). Check Wi-Fi/VPN, wait a moment, and try again."
+    );
+  }
+  if (
+    /getSpendableVtxos timed out/i.test(msg) ||
+    /Could not read spendable coins/i.test(msg)
+  ) {
+    return (
+      "Could not read spendable coins from the Ark server. Check Wi-Fi/VPN, wait a moment, and try again."
     );
   }
   return msg;
