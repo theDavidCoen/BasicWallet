@@ -5,7 +5,7 @@
  */
 
 import { AppState, type AppStateStatus } from "react-native";
-import { getSharedPool } from "../nostr/sharedPool";
+import { getSharedPool, noteSharedPoolUrls } from "../nostr/sharedPool";
 import { enqueueCatchUp } from "../nostr/catchUpQueue";
 import { type SimplePool, type SubCloser } from "nostr-tools/pool";
 import { unwrapEvent } from "nostr-tools/nip17";
@@ -113,6 +113,7 @@ export function startBotWatch(): void {
       if (!meta?.enabled || !pair) return;
 
       const urls = await resolveRelays();
+      noteSharedPoolUrls(urls);
       const pool = getSharedPool();
       const since = Math.floor(Date.now() / 1000) - 60 * 60 * 24 * 7;
       const closer = pool.subscribe(
@@ -165,6 +166,7 @@ export async function catchUpBotWatch(opts?: { force?: boolean }): Promise<void>
         if (!meta?.enabled || !pair) return;
 
         const urls = await resolveRelays();
+        noteSharedPoolUrls(urls);
         const pool = getSharedPool();
         const since = Math.floor(Date.now() / 1000) - CATCH_UP_LOOKBACK_SEC;
         const filter = {

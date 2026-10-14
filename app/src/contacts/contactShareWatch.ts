@@ -7,7 +7,7 @@
 
 import { AppState, type AppStateStatus } from "react-native";
 import { type SimplePool, type SubCloser } from "nostr-tools/pool";
-import { getSharedPool } from "../nostr/sharedPool";
+import { getSharedPool, noteSharedPoolUrls } from "../nostr/sharedPool";
 import { enqueueCatchUp } from "../nostr/catchUpQueue";
 import { unwrapEvent } from "nostr-tools/nip17";
 import type { Event } from "nostr-tools/core";
@@ -92,6 +92,7 @@ export function startContactShareWatch(): void {
       if (!pair) return;
 
       const urls = await resolveRelays();
+      noteSharedPoolUrls(urls);
       const pool = getSharedPool();
       const since = Math.floor(Date.now() / 1000) - 60 * 60 * 24 * 7; // 7d lookback
       const closer = pool.subscribe(
@@ -145,6 +146,7 @@ export async function catchUpContactShares(opts?: { force?: boolean }): Promise<
         if (!pair) return;
 
         const urls = await resolveRelays();
+        noteSharedPoolUrls(urls);
         const pool = getSharedPool();
         const since = Math.floor(Date.now() / 1000) - CATCH_UP_LOOKBACK_SEC;
         const filter = {
@@ -198,6 +200,7 @@ export async function catchUpGiftWrapByEventId(eventId: string): Promise<void> {
       "wss://relay.davidcoen.it",
       ...(meta?.relays ?? []),
     ]);
+    noteSharedPoolUrls(urls);
     const pool = getSharedPool();
     try {
       const batches = await Promise.all(

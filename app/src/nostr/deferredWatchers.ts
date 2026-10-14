@@ -6,36 +6,53 @@
 import { InteractionManager } from "react-native";
 
 let scheduled = false;
-let started = false;
+/** True only after a successful boot attempt that invoked queue*Boot. */
+let booted = false;
+let bootInFlight: Promise<void> | null = null;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
 const IDLE_DELAY_MS = 1_500;
 
 async function bootWatchers(): Promise<void> {
-  if (started) return;
-  started = true;
-  try {
-    const { queueContactShareWatchBoot } = await import(
-      "../contacts/contactShareWatch"
-    );
-    queueContactShareWatchBoot();
-  } catch (e) {
-    console.warn("[deferredWatchers] contact share boot failed", e);
-  }
-  try {
-    const { queueBotWatchBoot } = await import("../agent/botWatch");
-    queueBotWatchBoot();
-  } catch (e) {
-    console.warn("[deferredWatchers] bot boot failed", e);
-  }
-  console.log("[deferredWatchers] watchers started");
+  if (booted) return;
+  if (bootInFlight) return bootInFlight;
+  bootInFlight = (async () => {
+    let contactOk = false;
+    let botOk = false;
+    try {
+      const { queueContactShareWatchBoot } = await import(
+        "../contacts/contactShareWatch"
+      );
+      queueContactShareWatchBoot();
+      contactOk = true;
+    } catch (e) {
+      console.warn("[deferredWatchers] contact share boot failed", e);
+    }
+    try {
+      const { queueBotWatchBoot } = await import("../agent/botWatch");
+      queueBotWatchBoot();
+      botOk = true;
+    } catch (e) {
+      console.warn("[deferredWatchers] bot boot failed", e);
+    }
+    // Latch only if at least one boot entrypoint ran — Chat can retry via ensure*.
+    if (contactOk || botOk) {
+      booted = true;
+      console.log("[deferredWatchers] watchers started", { contactOk, botOk });
+    } else {
+      console.warn("[deferredWatchers] boot failed; will retry on ensure*");
+    }
+  })().finally(() => {
+    bootInFlight = null;
+  });
+  return bootInFlight;
 }
 
 /**
  * Call after unlock / Home ready. Coalesces; runs after interactions + idle delay.
  */
 export function scheduleDeferredWatchers(): void {
-  if (started || scheduled) return;
+  if (booted || scheduled) return;
   scheduled = true;
   InteractionManager.runAfterInteractions(() => {
     if (idleTimer != null) clearTimeout(idleTimer);
@@ -46,11 +63,31 @@ export function scheduleDeferredWatchers(): void {
   });
 }
 
-/** Chat stack focus — start immediately if not yet. */
+/** Chat stack focus — start immediately; retries if prior boot failed. */
 export function ensureChatWatchers(): void {
   if (idleTimer != null) {
     clearTimeout(idleTimer);
     idleTimer = null;
+  }
+  if (booted) {
+    // Already latched — resume live sub after stop / background.
+    void (async () => {
+      try {
+        const { resumeContactShareWatch } = await import(
+          "../contacts/contactShareWatch"
+        );
+        resumeContactShareWatch();
+      } catch {
+        /* ignore */
+      }
+      try {
+        const { syncBotWatchWithEnabledState } = await import("../agent/botWatch");
+        await syncBotWatchWithEnabledState();
+      } catch {
+        /* ignore */
+      }
+    })();
+    return;
   }
   void bootWatchers();
 }
@@ -63,7 +100,8 @@ export function ensureContactsWatchers(): void {
 /** Factory reset / logout — allow re-schedule on next session. */
 export function resetDeferredWatchersLatch(): void {
   scheduled = false;
-  started = false;
+  booted = false;
+  bootInFlight = null;
   if (idleTimer != null) {
     clearTimeout(idleTimer);
     idleTimer = null;

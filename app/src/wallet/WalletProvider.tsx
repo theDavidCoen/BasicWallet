@@ -1020,6 +1020,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const bumpActivity = useCallback(() => {
+    const wid = selectedIdRef.current;
+    if (wid) markActivityDirty(wid, "other");
     setActivityEpoch((n) => n + 1);
   }, []);
 
@@ -2690,17 +2692,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const walletId = selectedIdRef.current;
     if (!walletId) return;
     // Open Activity: rematerialize only when dirty / force (pull / resync).
-    if (!opts?.force) {
-      if (!isActivityDirty(walletId)) {
-        console.log(
-          `[activityDirty] skip rematerialize wallet=${walletId.slice(0, 8)}`,
-        );
-        return;
-      }
-      consumeActivityDirty(walletId);
-    } else {
-      markActivityDirty(walletId, "force");
-      consumeActivityDirty(walletId);
+    // Do not consume dirty until we actually start (or join) work — cool-down
+    // / pause early-returns must leave the flag set for the next open.
+    if (!opts?.force && !isActivityDirty(walletId)) {
+      console.log(
+        `[activityDirty] skip rematerialize wallet=${walletId.slice(0, 8)}`,
+      );
+      return;
     }
     // Cooldown after timeouts — stacked rematerialize froze Xiaomi (α70). Per wallet.
     // User force-resync (Home pull) bypasses cool-down.
@@ -2727,8 +2725,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         inFlightSettled: inFlight.settled,
       })
     ) {
+      // Joining in-flight counts as consuming dirty for this open.
+      consumeActivityDirty(walletId);
       return inFlight.promise;
     }
+    consumeActivityDirty(walletId);
     const networkId = getNetworkConfig().id;
     const historyFetchStartedAt = Date.now();
     const startedGen = ++activityMaterializeGenRef.current;
@@ -3378,6 +3379,18 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const applyFactoryReset = useCallback(async () => {
     clearCatchUpPolls();
     clearOpenWallet();
+    try {
+      const { stopContactShareWatch } = await import("../contacts/contactShareWatch");
+      stopContactShareWatch();
+    } catch {
+      /* optional */
+    }
+    try {
+      const { stopBotWatch } = await import("../agent/botWatch");
+      stopBotWatch();
+    } catch {
+      /* optional */
+    }
     closeSharedPool();
     resetDeferredWatchersLatch();
     pendingPollBalanceRef.current = null;
@@ -4067,12 +4080,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     return subscribeUiBusyIdle(() => {
       const pending = pendingPollBalanceRef.current;
+      pendingPollBalanceRef.current = null;
       if (pending && pending.walletId === selectedIdRef.current) {
-        pendingPollBalanceRef.current = null;
-        void persistBalanceRef.current(pending.walletId, pending.bal);
+        void persistBalanceRef.current(pending.walletId, pending.bal).catch(() => {
+          pullBalanceNowRef.current();
+        });
         return;
       }
-      pendingPollBalanceRef.current = null;
       pullBalanceNowRef.current();
     });
   }, []);
