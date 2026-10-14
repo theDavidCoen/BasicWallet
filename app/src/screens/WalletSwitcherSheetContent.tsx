@@ -34,11 +34,15 @@ type Props = {
   onOpenNostrIdentity: () => void;
 };
 
-/** ~row height incl. gap — 3 full rows + peek of 4th. */
-const ROW_H = 60;
+/**
+ * Viewport for the wallets list only (cards keep natural height).
+ * ~3 full rows + peek of the 4th so scroll is obvious.
+ */
 const ROW_GAP = 8;
-const LIST_PEEK = 28;
-const LIST_MAX_H = ROW_H * 3 + ROW_GAP * 2 + LIST_PEEK;
+/** Natural card height (padding + avatar/chevron) — do not squash rows. */
+const ROW_NATURAL_H = 72;
+const LIST_PEEK = 36;
+const LIST_MAX_H = ROW_NATURAL_H * 3 + ROW_GAP * 2 + LIST_PEEK;
 
 /**
  * Prefer Display name, then NIP-05, then compressed npub.
@@ -114,14 +118,10 @@ export function WalletSwitcherSheetContent({
   const display = greetingDisplay(identity);
   const canShare = Boolean(identity?.npub);
   const listScrollEnabled = wallets.length > 3;
-  const listHeight = useMemo(() => {
-    if (wallets.length <= 3) {
-      // Fit content; still leave a little room so layout matches peek mode.
-      const n = Math.max(wallets.length, 1);
-      return n * ROW_H + Math.max(0, n - 1) * ROW_GAP;
-    }
-    return LIST_MAX_H;
-  }, [wallets.length]);
+  const listWrapStyle = useMemo(
+    () => (listScrollEnabled ? [styles.listWrap, styles.listWrapScroll] : styles.listWrap),
+    [listScrollEnabled],
+  );
 
   return (
     <View style={styles.root}>
@@ -153,7 +153,7 @@ export function WalletSwitcherSheetContent({
       </SectionHeader>
       <Caption style={styles.walletsCaption}>{t("home.walletsSelectCaption")}</Caption>
 
-      <View style={[styles.listWrap, { height: listHeight }]}>
+      <View style={listWrapStyle}>
         <FlatList
           data={wallets}
           keyExtractor={(item) => item.id}
@@ -256,6 +256,9 @@ const styles = StyleSheet.create({
   listWrap: {
     marginBottom: 12,
   },
+  listWrapScroll: {
+    maxHeight: LIST_MAX_H,
+  },
   list: {
     gap: ROW_GAP,
     paddingBottom: 4,
@@ -291,7 +294,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingLeft: 12,
     paddingVertical: 4,
-    height: ROW_H - 4,
   },
   rowOn: { borderColor: colors.fg },
   rowMain: {
