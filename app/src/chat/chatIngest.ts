@@ -27,6 +27,7 @@ import {
   findMessageByRequestId,
   findRecentInboundPaymentByAmount,
   insertChatMessage,
+  markPayRequestPaid,
   updateChatMessage,
 } from "./chatStore";
 import { freezeFiatCaptionFromSats } from "./formatChatAmount";
@@ -277,13 +278,7 @@ export async function ingestChatEnvelope(opts: {
             nostrEventId: wrapEventId,
             fiatCaption: fiatCaption ?? recent.fiatCaption,
           });
-          if (envelope.relatedRequestId) {
-            const req = findMessageByRequestId(
-              contactId,
-              envelope.relatedRequestId,
-            );
-            if (req) updateChatMessage(req.id, { status: "paid" });
-          }
+          markPayRequestPaid(contactId, envelope.relatedRequestId);
           noteChatInboundReceiptHint(contactId, abs);
           dismissClassicFundsNoticeIfChat(abs);
           // Home balance: ASP notify only (receipt must not double-apply — α76).
@@ -315,10 +310,7 @@ export async function ingestChatEnvelope(opts: {
         fiatCaption,
         bumpUnread: true,
       });
-      if (envelope.relatedRequestId) {
-        const req = findMessageByRequestId(contactId, envelope.relatedRequestId);
-        if (req) updateChatMessage(req.id, { status: "paid" });
-      }
+      markPayRequestPaid(contactId, envelope.relatedRequestId);
       // Hard rule: chat pay → chat bubble only; clear mistaken classic toast (α70).
       if (direction === "in" && envelope.amountSats > 0) {
         noteChatInboundReceiptHint(contactId, envelope.amountSats);

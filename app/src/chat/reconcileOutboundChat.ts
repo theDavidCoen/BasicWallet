@@ -13,6 +13,7 @@ import {
   listOutboundPaymentsByStatus,
   updateChatMessage,
   getChatMessage,
+  markPayRequestPaid,
 } from "./chatStore";
 import { publishPaymentReceipt } from "./chatActions";
 import {
@@ -97,6 +98,9 @@ export function reconcileOutboundChatPayments(opts: {
 
     const was = m.status;
     updateChatMessage(m.id, { status: "paid" });
+    // Payment bubbles share request_id with the request card — settle it too
+    // (α77 hang path used to flip "You sent" while Request stayed pending).
+    markPayRequestPaid(m.contactId, m.requestId);
     n += 1;
     console.warn("[basic] reconcile outbound chat → paid", {
       id: m.id.slice(0, 12),
@@ -194,5 +198,9 @@ export function findAlreadySettledOutbound(opts: {
   if (!picked) return null;
 
   updateChatMessage(picked.messageId, { status: "paid" });
+  const paidMsg = getChatMessage(picked.messageId);
+  if (paidMsg?.requestId) {
+    markPayRequestPaid(paidMsg.contactId, paidMsg.requestId);
+  }
   return picked;
 }

@@ -196,15 +196,35 @@ export function findMessageByNostrEventId(eventId: string): ChatMessage | null {
   return row ? rowToMessage(row) : null;
 }
 
+/**
+ * Locate the pay-request row for a requestId.
+ * Outbound payment bubbles also store the same request_id — without kind='request'
+ * LIMIT 1 can return the payment and leave the request stuck on pending (buttons live).
+ */
 export function findMessageByRequestId(
   contactId: string,
   requestId: string,
 ): ChatMessage | null {
   const row = db().getFirstSync<MessageRow>(
-    `SELECT * FROM chat_message WHERE contact_id = ? AND request_id = ? LIMIT 1`,
+    `SELECT * FROM chat_message
+     WHERE contact_id = ? AND request_id = ? AND kind = 'request'
+     LIMIT 1`,
     [contactId, requestId],
   );
   return row ? rowToMessage(row) : null;
+}
+
+/** Flip linked inbound/outbound request card to paid after a payment settles. */
+export function markPayRequestPaid(
+  contactId: string,
+  requestId: string | null | undefined,
+): void {
+  const id = requestId?.trim();
+  if (!id) return;
+  const req = findMessageByRequestId(contactId, id);
+  if (!req) return;
+  if (req.status === "paid" || req.status === "declined") return;
+  updateChatMessage(req.id, { status: "paid" });
 }
 
 export function findMessageByPaymentId(paymentId: string): ChatMessage | null {

@@ -10,8 +10,8 @@ import {
   listChatMessages,
   listChatThreads,
   updateChatMessage,
-  findMessageByRequestId,
   findRecentInboundPaymentByAmount,
+  markPayRequestPaid,
 } from "./chatStore";
 import {
   getFocusedChatContactId,
@@ -224,10 +224,7 @@ export function ensureChatInboundBubble(opts: {
     } else if (opts.status && opts.status !== existing.status) {
       updateChatMessage(existing.id, { status: opts.status });
     }
-    if (opts.requestId) {
-      const req = findMessageByRequestId(opts.contactId, opts.requestId);
-      if (req) updateChatMessage(req.id, { status: "paid" });
-    }
+    markPayRequestPaid(opts.contactId, opts.requestId);
     noteChatInboundReceiptHint(opts.contactId, abs);
     return true;
   }
@@ -246,10 +243,7 @@ export function ensureChatInboundBubble(opts: {
     requestId: opts.requestId ?? null,
     bumpUnread: focused !== opts.contactId,
   });
-  if (opts.requestId) {
-    const req = findMessageByRequestId(opts.contactId, opts.requestId);
-    if (req) updateChatMessage(req.id, { status: "paid" });
-  }
+  markPayRequestPaid(opts.contactId, opts.requestId);
   noteChatInboundReceiptHint(opts.contactId, abs);
   console.warn("[basic] chat inbound bubble (prefer over classic)", {
     contactId: opts.contactId.slice(0, 10),

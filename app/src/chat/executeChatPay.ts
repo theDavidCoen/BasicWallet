@@ -36,6 +36,7 @@ import {
 import {
   insertChatMessage,
   findMessageByRequestId,
+  markPayRequestPaid,
   updateChatMessage,
   getChatMessage,
 } from "./chatStore";
@@ -277,10 +278,7 @@ function finalizeChatPayPaid(opts: {
     });
   }
 
-  if (opts.requestId) {
-    const req = findMessageByRequestId(opts.contactId, opts.requestId);
-    if (req) updateChatMessage(req.id, { status: "paid" });
-  }
+  markPayRequestPaid(opts.contactId, opts.requestId);
 
   if (!opts.skipReceipt) {
     void (async () => {
