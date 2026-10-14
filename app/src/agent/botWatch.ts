@@ -14,6 +14,7 @@ import { mergeNostrRelays, readBackupMeta } from "../nostr/backupPackage";
 import {
   enqueueOwnerBotText,
   hydrateBotProcessedWraps,
+  tryBridgeLocalBotTurn,
   wasBotWrapProcessed,
 } from "./botRunner";
 import { resumePendingBotFulfills } from "./botFulfill";
@@ -76,6 +77,24 @@ async function handleBotWrap(ev: Event, botSk: Uint8Array, meta: BotMeta): Promi
   if (!chat) return;
 
   if (chat.type === "basic.wallet.chat.text") {
+    // P0a: wrap may arrive after local fast-path already enqueued this turn.
+    // Use envelope.sentAt / rumor.created_at — NEVER wrap.created_at (NIP-59
+    // randomNow up to 2 days back; that caused double Cloud runs in 0.9.8-rc.1).
+    const eventTimeMs =
+      typeof chat.sentAt === "number" && chat.sentAt > 0
+        ? chat.sentAt
+        : typeof rumor.created_at === "number"
+          ? rumor.created_at * 1000
+          : undefined;
+    if (
+      tryBridgeLocalBotTurn({
+        body: chat.body,
+        wrapEventId: ev.id,
+        eventTimeMs,
+      })
+    ) {
+      return;
+    }
     enqueueOwnerBotText({ body: chat.body, wrapEventId: ev.id });
   }
   // Other envelope types from owner (receipts, etc.) ignored for bot runner v1.

@@ -85,8 +85,8 @@ import { catchUpGiftWraps } from "../contacts/contactShareWatch";
 import { isCursorBotContact } from "../agent/botContact";
 import { enqueueBotFulfillAfterPay } from "../agent/botFulfill";
 import {
-  BOT_WORKING_ACK,
   cancelActiveBotCloudWork,
+  isBotWorkingAckBody,
   resetBotCloudSession,
 } from "../agent/botRunner";
 import {
@@ -413,7 +413,7 @@ export function ChatThreadScreen() {
         if (
           m.kind === "text" &&
           m.direction === "in" &&
-          m.bodyText === BOT_WORKING_ACK
+          isBotWorkingAckBody(m.bodyText)
         ) {
           updateChatMessage(m.id, { bodyText: t("chat.workingStopped") });
           break;

@@ -3,6 +3,12 @@
  * Queues to outbox on relay failure (honest pending_out).
  */
 
+import {
+  enqueueOwnerBotText,
+  localBotTurnId,
+} from "../agent/botRunner";
+import { isCursorBotContact } from "../agent/botContact";
+import { matchBotSlashCommand } from "../agent/botSlashCommands";
 import { getContact } from "../contacts/contactStore";
 import { hasNostrIdentity } from "../nostr/identityStore";
 import { contactDisplayName } from "../contacts/types";
@@ -113,6 +119,17 @@ export async function sendChatText(
     bodyText: body,
     status: "pending",
   });
+
+  // P0a: on Ask Cursor contact, start Cloud work immediately — do not wait
+  // for the gift-wrap to round-trip the relay. Slash cmds stay UI-only.
+  if (isCursorBotContact(contact) && !matchBotSlashCommand(body)) {
+    enqueueOwnerBotText({
+      body,
+      wrapEventId: localBotTurnId(local.id),
+      localMessageId: local.id,
+    });
+  }
+
   const status = await publishOrQueue({
     contactId,
     recipientPubkey: peer.pubkeyHex,

@@ -41,9 +41,37 @@ async function publishAsBot(envelope: ChatEnvelope): Promise<string> {
   return pub.eventId;
 }
 
-export async function botReplyText(body: string): Promise<void> {
+/**
+ * Insert an inbound bot text bubble locally only (no Nostr publish).
+ * Used for progress ack / status so relays are not on the critical path.
+ */
+export function botReplyTextLocal(body: string): { messageId: string } | null {
+  const text = body.trim().slice(0, 2000);
+  if (!text) return null;
+  // Thread peer pubkey may be unknown briefly; ensureChatThread tolerates omit.
+  ensureChatThread(CURSOR_BOT_CONTACT_ID);
+  const msg = insertChatMessage({
+    contactId: CURSOR_BOT_CONTACT_ID,
+    kind: "text",
+    direction: "in",
+    bodyText: text,
+    status: "sent",
+    bumpUnread: true,
+  });
+  return { messageId: msg.id };
+}
+
+export async function botReplyText(
+  body: string,
+  opts?: { publish?: boolean },
+): Promise<void> {
   const text = body.trim();
   if (!text) return;
+  const publish = opts?.publish !== false;
+  if (!publish) {
+    botReplyTextLocal(text);
+    return;
+  }
   const meta = await readBotMeta();
   if (!meta) return;
   ensureChatThread(CURSOR_BOT_CONTACT_ID, meta.botPubkey);
