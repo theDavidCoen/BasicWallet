@@ -26,6 +26,7 @@ import {
   resolveActivityRecipients,
   type StoredActivity,
 } from "../account/activityStore";
+import { paintThen } from "../runtime/paintThen";
 import { looksLikePaymentAddress } from "../account/sendDestinations";
 import { findContactByIdentifierValue } from "../contacts/contactStore";
 import { canOfferSaveToContacts } from "../contacts/detectKind";
@@ -312,10 +313,10 @@ export function ActivityDetailView({
     // Seed already on screen — hydrate stamps/meta without blanking the UI.
     if (paintedFromSeedRef.current || rowRef.current) {
       paintedFromSeedRef.current = false;
-      const t = requestAnimationFrame(() => {
+      paintThen(() => {
         load({ background: true });
       });
-      return () => cancelAnimationFrame(t);
+      return;
     }
     setLoading(true);
     load();

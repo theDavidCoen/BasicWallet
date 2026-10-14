@@ -4,6 +4,7 @@
  */
 
 import { useFocusEffect, useNavigation, useRoute } from "@react-navigation/native";
+import { ensureContactsWatchers } from "../nostr/deferredWatchers";
 import type { RouteProp } from "@react-navigation/native";
 import { startTransition, useCallback, useMemo, useState } from "react";
 import { ScrollView, StyleSheet, Text, TextInput } from "react-native";
@@ -21,6 +22,12 @@ import { colors } from "../theme/colors";
 import { ui } from "../theme/ui";
 
 export function ContactsListScreen() {
+  useFocusEffect(
+    useCallback(() => {
+      ensureContactsWatchers();
+    }, []),
+  );
+
   const navigation = useNavigation<RootNav>();
   const route = useRoute<RouteProp<RootStackParamList, "Contacts">>();
   const { t } = useI18n();

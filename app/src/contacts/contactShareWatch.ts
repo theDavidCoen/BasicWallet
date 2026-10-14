@@ -6,7 +6,9 @@
  */
 
 import { AppState, type AppStateStatus } from "react-native";
-import { SimplePool, type SubCloser } from "nostr-tools/pool";
+import { type SimplePool, type SubCloser } from "nostr-tools/pool";
+import { getSharedPool } from "../nostr/sharedPool";
+import { enqueueCatchUp } from "../nostr/catchUpQueue";
 import { unwrapEvent } from "nostr-tools/nip17";
 import type { Event } from "nostr-tools/core";
 import { mergeNostrRelays, readBackupMeta } from "../nostr/backupPackage";
@@ -43,7 +45,6 @@ let state: WatchState | null = null;
 let startInFlight: Promise<void> | null = null;
 let lastCatchUpAt = 0;
 let appStateBound = false;
-let catchUpInFlight: Promise<void> | null = null;
 
 async function handleWrap(ev: Event, sk: Uint8Array): Promise<void> {
   if (ev.kind !== CONTACT_SHARE_KIND) return;
@@ -91,7 +92,7 @@ export function startContactShareWatch(): void {
       if (!pair) return;
 
       const urls = await resolveRelays();
-      const pool = new SimplePool({ enableReconnect: true });
+      const pool = getSharedPool();
       const since = Math.floor(Date.now() / 1000) - 60 * 60 * 24 * 7; // 7d lookback
       const closer = pool.subscribe(
         urls,
@@ -124,11 +125,7 @@ export function stopContactShareWatch(): void {
   } catch {
     /* ignore */
   }
-  try {
-    s.pool.close(s.urls);
-  } catch {
-    /* ignore */
-  }
+  // Shared pool stays open for other features (closeSharedPool on logout).
 }
 
 /**
@@ -138,27 +135,25 @@ export function stopContactShareWatch(): void {
 export async function catchUpContactShares(opts?: { force?: boolean }): Promise<void> {
   const now = Date.now();
   if (!opts?.force && now - lastCatchUpAt < CATCH_UP_MIN_MS) return;
-  if (catchUpInFlight) return catchUpInFlight;
-
   lastCatchUpAt = now;
-  catchUpInFlight = (async () => {
-    try {
-      if (!(await hasNostrIdentity())) return;
-      const pair = await loadNostrKeyPairForCrypto();
-      if (!pair) return;
-
-      const urls = await resolveRelays();
-      const pool = new SimplePool();
-      const since = Math.floor(Date.now() / 1000) - CATCH_UP_LOOKBACK_SEC;
-      const filter = {
-        kinds: [CONTACT_SHARE_KIND],
-        "#p": [pair.pubkey],
-        since,
-        limit: CATCH_UP_LIMIT,
-      };
-
+  return enqueueCatchUp(
+    "contact-share",
+    async () => {
       try {
-        // Parallel per-relay — sequential maxWait×N stalled Xiaomi JS (α71).
+        if (!(await hasNostrIdentity())) return;
+        const pair = await loadNostrKeyPairForCrypto();
+        if (!pair) return;
+
+        const urls = await resolveRelays();
+        const pool = getSharedPool();
+        const since = Math.floor(Date.now() / 1000) - CATCH_UP_LOOKBACK_SEC;
+        const filter = {
+          kinds: [CONTACT_SHARE_KIND],
+          "#p": [pair.pubkey],
+          since,
+          limit: CATCH_UP_LIMIT,
+        };
+
         const batches = await Promise.all(
           urls.map(async (url) => {
             try {
@@ -179,18 +174,13 @@ export async function catchUpContactShares(opts?: { force?: boolean }): Promise<
             await handleWrap(ev, pair.sk);
           }
         }
-      } finally {
-        pool.close(urls);
+        void flushChatOutbox();
+      } catch (e) {
+        console.warn("[basic] gift-wrap catch-up failed", e);
       }
-      void flushChatOutbox();
-    } catch (e) {
-      console.warn("[basic] gift-wrap catch-up failed", e);
-    } finally {
-      catchUpInFlight = null;
-    }
-  })();
-
-  return catchUpInFlight;
+    },
+    { force: opts?.force === true },
+  );
 }
 
 /**
@@ -208,7 +198,7 @@ export async function catchUpGiftWrapByEventId(eventId: string): Promise<void> {
       "wss://relay.davidcoen.it",
       ...(meta?.relays ?? []),
     ]);
-    const pool = new SimplePool();
+    const pool = getSharedPool();
     try {
       const batches = await Promise.all(
         urls.map(async (url) => {
@@ -224,8 +214,8 @@ export async function catchUpGiftWrapByEventId(eventId: string): Promise<void> {
           if (ev?.id === id) await handleWrap(ev, pair.sk);
         }
       }
-    } finally {
-      pool.close(urls);
+    } catch (inner) {
+      throw inner;
     }
   } catch (e) {
     console.warn("[basic] gift-wrap by-id catch-up failed", e);

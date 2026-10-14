@@ -20,9 +20,7 @@ import {
   summarizeUnreadChatActivity,
   type UnreadChatSummary,
 } from "../chat/chatStore";
-import {
-  queueContactShareWatchBoot,
-} from "../contacts/contactShareWatch";
+import { scheduleDeferredWatchers } from "../nostr/deferredWatchers";
 import { useHomeTourUiOpen } from "../home/useHomeTourUiOpen";
 import { useWallet } from "../wallet/WalletProvider";
 import { useSheets } from "./SheetHost";
@@ -117,10 +115,7 @@ export function ChatUnreadBanner({
       return;
     }
     // Gift-wrap demux (contact share + chat) — same boot as ContactShareReminder.
-    queueContactShareWatchBoot();
-    void import("../agent/botWatch")
-      .then((m) => m.queueBotWatchBoot())
-      .catch(() => {});
+    scheduleDeferredWatchers();
     refresh();
     return subscribeChatStore(refresh);
   }, [hasWallet, refresh]);

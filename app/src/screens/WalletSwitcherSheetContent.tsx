@@ -1,3 +1,4 @@
+import { paintThen } from "../runtime/paintThen";
 /**
  * Wallet switcher body for InteractiveBottomSheet (no ScreenChrome).
  * Greeting + Share npub above a flex-growing wallets list; CTAs are fixed chips.
@@ -22,7 +23,7 @@ import {
 } from "../nostr/identityStore";
 import { midEllipsis } from "../nostr/keys";
 import { shareSafe } from "../security/shareSafe";
-import { useWallet } from "../wallet/WalletProvider";
+import { useWalletList } from "../wallet/WalletProvider";
 import { colors } from "../theme/colors";
 import { fonts } from "../theme/typography";
 import { radii } from "../theme/radii";
@@ -60,7 +61,7 @@ export function WalletSwitcherSheetContent({
   onOpenNostrIdentity,
 }: Props) {
   const { t } = useI18n();
-  const { wallets, selectedWallet, selectWallet, refreshWalletList } = useWallet();
+  const { wallets, selectedWallet, selectWallet, refreshWalletList } = useWalletList();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [identity, setIdentity] = useState<NostrPublicIdentity | null>(null);
   const [sharing, setSharing] = useState(false);
@@ -68,7 +69,7 @@ export function WalletSwitcherSheetContent({
   const [contentH, setContentH] = useState(0);
 
   useEffect(() => {
-    refreshWalletList();
+    paintThen(() => { refreshWalletList(); });
   }, [refreshWalletList]);
 
   useEffect(() => {

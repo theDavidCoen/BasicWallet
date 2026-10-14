@@ -2,6 +2,8 @@
 
 Grounded in `main` @ `257ae12` (post #38). Companion analysis: Project Agent Store `internal/basic-js-thread-lag.md` (Basic JS-thread lag).
 
+**Implementation status (this branch):** steps 1–8 landed in `0.9.8-rc.8` (uiBusyGate, homeIdleScheduler, paintThen, deferredWatchers, activityDirty, WalletProvider slices, sharedPool/catchUpQueue, rematerializeQueue). Validate on Xiaomi/Samsung.
+
 Goal: keep taps / sheets / Home fluid on Xiaomi by reducing JS-thread contention. No Arkade WASM required for steps 1–8.
 
 **Measure first (every PR):** extend `app/src/home/homeTourPerf.ts` (or add `app/src/diagnostics/jsThreadMarkers.ts`) with:

@@ -5,6 +5,24 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { AppState, type AppStateStatus, InteractionManager } from "react-native";
+import { registerHomeIdleTask } from "../home/homeIdleScheduler";
+import {
+  closeSharedPool,
+} from "../nostr/sharedPool";
+import {
+  resetDeferredWatchersLatch,
+  scheduleDeferredWatchers,
+} from "../nostr/deferredWatchers";
+import {
+  isUiBusy,
+  subscribeUiBusyIdle,
+} from "../runtime/uiBusyGate";
+import {
+  consumeActivityDirty,
+  isActivityDirty,
+  markActivityDirty,
+} from "./activityDirty";
+import { enqueueRematerialize } from "./rematerializeQueue";
 import { Ramps } from "@arkade-os/sdk";
 import {
   commitArkadeActivityRows,
@@ -282,6 +300,39 @@ type WalletContextValue = {
 };
 
 const WalletContext = createContext<WalletContextValue | null>(null);
+
+export type WalletBalanceSlice = {
+  balanceSats: number | null;
+  balance: BalanceBreakdown | null;
+  balanceStatus: BalanceStatus;
+  balanceHidden: boolean;
+  toggleBalanceHidden: () => void;
+  refreshBalanceOnly: () => Promise<void>;
+  setPosUiHold: (on: boolean) => void;
+  setIncomingWatchBoost: (on: boolean) => void;
+};
+
+export type WalletListSlice = {
+  wallets: WalletRecord[];
+  selectedWallet: WalletRecord | null;
+  avatarLabel: string;
+  selectWallet: (walletId: string) => Promise<void>;
+  refreshWalletList: () => void;
+};
+
+export type WalletFundsNoticeSlice = {
+  fundsNotice: FundsNotice | null;
+  clearFundsNotice: () => void;
+  notifyFundsReceived: (
+    amount: number,
+    kind: FundsNotice["kind"],
+  ) => "shown" | "busy" | "blocked" | "deferred";
+};
+
+const WalletBalanceContext = createContext<WalletBalanceSlice | null>(null);
+const WalletListContext = createContext<WalletListSlice | null>(null);
+const WalletFundsNoticeContext = createContext<WalletFundsNoticeSlice | null>(null);
+
 
 const RELOAD_DEBOUNCE_MS = 1_000;
 /** After SDK notifyIncomingFunds — shorter so POS receives feel live. */
@@ -728,6 +779,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const activityRefreshInFlightRef = useRef<
     Record<string, { promise: Promise<void>; gen: number; settled: boolean }>
   >({});
+  /** Balance from poll while uiBusy — flush on idle. */
+  const pendingPollBalanceRef = useRef<{
+    walletId: string;
+    bal: BalanceBreakdown;
+  } | null>(null);
+  const persistBalanceRef = useRef<
+    (walletId: string, bal: BalanceBreakdown) => Promise<void>
+  >(async () => {});
   /** Skip seeding credit after a catch-up-while-away toast (funds predate subscribe). */
   const skipShownCatchUpCreditRef = useRef(false);
   /** Boost-on debounce delivered an epoch bump — only then remount on boost-off. */
@@ -957,6 +1016,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     });
     setBalanceStatus("ready");
     outboundSendRef.current = null;
+    markActivityDirty(walletId, "local_send");
   }, []);
 
   const bumpActivity = useCallback(() => {
@@ -1254,6 +1314,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       return next;
     });
     setBalanceStatus("ready");
+    if (walletId) markActivityDirty(walletId, "local_receive");
   }, []);
 
   /** Floor Home balance at totalSats (no double-add when estimate + notify both fire). */
@@ -2081,6 +2142,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     balanceBaselineReadyRef.current = true;
   }
 
+  persistBalanceRef.current = persistBalance;
+
   const loadBalance = useCallback(
     async (w: BasicWallet, walletId: string) => {
       if (aspPollPausedRef.current > 0) {
@@ -2128,6 +2191,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           return null;
         }
         if (aspPollPausedRef.current > 0) return null;
+        // Sheet/tour/pan busy — stash; flush on uiBusy idle (no mid-gesture setState).
+        if (isUiBusy()) {
+          pendingPollBalanceRef.current = { walletId, bal };
+          console.log(
+            `[uiBusyGate] stash balance poll wallet=${walletId.slice(0, 8)}`,
+          );
+          return bal;
+        }
+        pendingPollBalanceRef.current = null;
         // POS opened mid-flight: still adopt the result so we don't stick on "syncing…".
         // Skip boarding rotate under the keypad (ensureBoardingRotatedAfterClear is heavier).
         if (posUiHoldRef.current > 0) {
@@ -2428,6 +2500,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setSelectedWalletId(networkId, walletId);
       setSelectedWallet(record);
       selectedIdRef.current = walletId;
+      markActivityDirty(walletId, "wallet_switch");
       // Keep switcher in sync after restore / create paths that insert outside setWallets.
       setWallets(listWallets(networkId));
       setHasWallet(true);
@@ -2616,6 +2689,19 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     if (aspPollPausedRef.current > 0) return;
     const walletId = selectedIdRef.current;
     if (!walletId) return;
+    // Open Activity: rematerialize only when dirty / force (pull / resync).
+    if (!opts?.force) {
+      if (!isActivityDirty(walletId)) {
+        console.log(
+          `[activityDirty] skip rematerialize wallet=${walletId.slice(0, 8)}`,
+        );
+        return;
+      }
+      consumeActivityDirty(walletId);
+    } else {
+      markActivityDirty(walletId, "force");
+      consumeActivityDirty(walletId);
+    }
     // Cooldown after timeouts — stacked rematerialize froze Xiaomi (α70). Per wallet.
     // User force-resync (Home pull) bypasses cool-down.
     if (
@@ -2675,10 +2761,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         const w = getOpenWallet() ?? wallet;
         if (!w) return;
         try {
-          const rows = await withTimeout(
-            loadActivityRows(w),
-            12_000,
-            "materializeFromArkadeWallet",
+          const rows = await enqueueRematerialize(
+            walletId,
+            () =>
+              withTimeout(
+                loadActivityRows(w),
+                12_000,
+                "materializeFromArkadeWallet",
+              ),
+            { force: opts?.force === true },
           );
           if (
             !shouldCommitWalletWork({
@@ -3287,6 +3378,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const applyFactoryReset = useCallback(async () => {
     clearCatchUpPolls();
     clearOpenWallet();
+    closeSharedPool();
+    resetDeferredWatchersLatch();
+    pendingPollBalanceRef.current = null;
     selectedIdRef.current = null;
     lastAckRef.current = null;
     prevBalanceRef.current = null;
@@ -3406,11 +3500,18 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       if (AppState.currentState === "background") return;
       if (selectedIdRef.current !== walletId) return;
       if (posUiHoldRef.current > 0) return;
+      if (isUiBusy()) return;
       void loadBalance(w, walletId);
     };
-    // One immediate pull on focus / effect start — then interval (notify-first).
+    // One immediate pull on focus / effect start — then shared Home scheduler.
     tick();
-    const t = setInterval(tick, intervalMs);
+    const unregister = registerHomeIdleTask({
+      id: "balance-poll",
+      intervalMs,
+      run: tick,
+      paused: () =>
+        posUiHoldRef.current > 0 || selectedIdRef.current !== walletId,
+    });
     const onApp = (next: AppStateStatus) => {
       if (next === "active" || (next === "inactive" && incomingWatchBoostRef.current > 0)) {
         tick();
@@ -3418,7 +3519,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     };
     const sub = AppState.addEventListener("change", onApp);
     return () => {
-      clearInterval(t);
+      unregister();
       sub.remove();
     };
   }, [
@@ -3957,7 +4058,24 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (sessionPhase !== "live") return;
     queueContactsDirectoryBootSync();
+    scheduleDeferredWatchers();
+    const wid = selectedIdRef.current;
+    if (wid) markActivityDirty(wid, "other");
   }, [sessionPhase]);
+
+  // Flush poll balance stashed during sheet/tour/pan.
+  useEffect(() => {
+    return subscribeUiBusyIdle(() => {
+      const pending = pendingPollBalanceRef.current;
+      if (pending && pending.walletId === selectedIdRef.current) {
+        pendingPollBalanceRef.current = null;
+        void persistBalanceRef.current(pending.walletId, pending.bal);
+        return;
+      }
+      pendingPollBalanceRef.current = null;
+      pullBalanceNowRef.current();
+    });
+  }, []);
 
   // Debounced background exit package when recovery address is set.
   useEffect(() => {
@@ -4079,11 +4197,82 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     ],
   );
 
-  return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;
+  const balanceSlice = useMemo<WalletBalanceSlice>(
+    () => ({
+      balanceSats,
+      balance,
+      balanceStatus,
+      balanceHidden,
+      toggleBalanceHidden,
+      refreshBalanceOnly,
+      setPosUiHold,
+      setIncomingWatchBoost,
+    }),
+    [
+      balanceSats,
+      balance,
+      balanceStatus,
+      balanceHidden,
+      toggleBalanceHidden,
+      refreshBalanceOnly,
+      setPosUiHold,
+      setIncomingWatchBoost,
+    ],
+  );
+
+  const listSlice = useMemo<WalletListSlice>(
+    () => ({
+      wallets,
+      selectedWallet,
+      avatarLabel,
+      selectWallet,
+      refreshWalletList,
+    }),
+    [wallets, selectedWallet, avatarLabel, selectWallet, refreshWalletList],
+  );
+
+  const fundsNoticeSlice = useMemo<WalletFundsNoticeSlice>(
+    () => ({
+      fundsNotice,
+      clearFundsNotice,
+      notifyFundsReceived,
+    }),
+    [fundsNotice, clearFundsNotice, notifyFundsReceived],
+  );
+
+  return (
+    <WalletContext.Provider value={value}>
+      <WalletBalanceContext.Provider value={balanceSlice}>
+        <WalletListContext.Provider value={listSlice}>
+          <WalletFundsNoticeContext.Provider value={fundsNoticeSlice}>
+            {children}
+          </WalletFundsNoticeContext.Provider>
+        </WalletListContext.Provider>
+      </WalletBalanceContext.Provider>
+    </WalletContext.Provider>
+  );
 }
 
 export function useWallet(): WalletContextValue {
   const ctx = useContext(WalletContext);
   if (!ctx) throw new Error("useWallet outside WalletProvider");
+  return ctx;
+}
+
+export function useWalletBalance(): WalletBalanceSlice {
+  const ctx = useContext(WalletBalanceContext);
+  if (!ctx) throw new Error("useWalletBalance outside WalletProvider");
+  return ctx;
+}
+
+export function useWalletList(): WalletListSlice {
+  const ctx = useContext(WalletListContext);
+  if (!ctx) throw new Error("useWalletList outside WalletProvider");
+  return ctx;
+}
+
+export function useFundsNotice(): WalletFundsNoticeSlice {
+  const ctx = useContext(WalletFundsNoticeContext);
+  if (!ctx) throw new Error("useFundsNotice outside WalletProvider");
   return ctx;
 }

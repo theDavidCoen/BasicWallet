@@ -117,7 +117,7 @@ export function ActivitySheetContent({ active = true, onOpenDetail }: Props) {
     if (!refreshArmed) return;
     setRefreshing(true);
     try {
-      await refreshActivity();
+      await refreshActivity({ force: true });
       loadFromDb();
     } catch (e) {
       console.warn("[basic] activity sheet pull refresh failed", e);

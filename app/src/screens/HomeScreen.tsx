@@ -45,7 +45,13 @@ import {
   SPOT_RATE_TTL_MS,
   type DisplayCurrencyCode,
 } from "../settings/displayCurrencies";
-import { useWallet } from "../wallet/WalletProvider";
+import {
+  useWallet,
+  useWalletBalance,
+  useWalletList,
+} from "../wallet/WalletProvider";
+import { isUiBusy, beginUiBusy, endUiBusy } from "../runtime/uiBusyGate";
+import { registerHomeIdleTask } from "../home/homeIdleScheduler";
 import { formatSatsAmount, formatSatsLabel } from "../wallet/formatSats";
 import { colors } from "../theme/colors";
 import { useFiatMode } from "../fiat/FiatModeProvider";
@@ -99,11 +105,9 @@ export function HomeScreen() {
     balanceStatus,
     balanceHidden,
     toggleBalanceHidden,
-    selectedWallet,
-    avatarLabel,
-    bumpActivity,
-    forceResync,
-  } = useWallet();
+  } = useWalletBalance();
+  const { selectedWallet, avatarLabel } = useWalletList();
+  const { bumpActivity, forceResync } = useWallet();
   const {
     fiatMode,
     depixDisplay,
@@ -466,19 +470,16 @@ export function HomeScreen() {
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
-      let timer: ReturnType<typeof setInterval> | null = null;
+      let codesRef: DisplayCurrencyCode[] = [];
 
       const pull = async (codes: DisplayCurrencyCode[]) => {
         if (codes.length === 0 || cancelled) return;
-        // Skip starting a new pull while tour is open (JS contention).
-        // If a pull is already in flight, still apply when it returns.
-        const blockedStart = tourOpenRef.current;
-        if (blockedStart) {
-          console.log("[HomeTourRates] poll skip start (tour open)");
+        if (tourOpenRef.current || isUiBusy()) {
+          console.log("[HomeTourRates] poll skip start (busy/tour)");
           return;
         }
         const rates = await fetchSpotRates(codes);
-        if (cancelled) return;
+        if (cancelled || tourOpenRef.current || isUiBusy()) return;
         if (Object.keys(rates).length > 0) {
           setFiatRates(rates);
           console.log(
@@ -491,16 +492,20 @@ export function HomeScreen() {
         const s = await readDisplayCurrencies();
         if (cancelled) return;
         setFiatCodes(s.enabled);
+        codesRef = s.enabled;
         await pull(s.enabled);
-        if (cancelled) return;
-        timer = setInterval(() => {
-          void pull(s.enabled);
-        }, SPOT_RATE_TTL_MS);
       })();
+
+      const unregister = registerHomeIdleTask({
+        id: "home-spot-rates",
+        intervalMs: SPOT_RATE_TTL_MS,
+        run: () => pull(codesRef),
+        paused: () => tourOpenRef.current || cancelled,
+      });
 
       return () => {
         cancelled = true;
-        if (timer) clearInterval(timer);
+        unregister();
       };
     }, []),
   );
@@ -511,31 +516,37 @@ export function HomeScreen() {
 
       let cancelled = false;
       let inFlight = false;
-      let timer: ReturnType<typeof setInterval> | null = null;
       const url = network.arkServerUrl;
 
       const probe = async () => {
-        if (cancelled || inFlight || tourOpenRef.current) return;
+        if (cancelled || inFlight || tourOpenRef.current || isUiBusy()) return;
         inFlight = true;
         try {
           const provider = new RestArkProvider(url);
           await withTimeout(provider.getInfo(), ASP_PROBE_MS, "getInfo");
-          if (!cancelled && !tourOpenRef.current) setMutinynetOnline(true);
+          if (!cancelled && !tourOpenRef.current && !isUiBusy()) {
+            setMutinynetOnline(true);
+          }
         } catch {
-          if (!cancelled && !tourOpenRef.current) setMutinynetOnline(false);
+          if (!cancelled && !tourOpenRef.current && !isUiBusy()) {
+            setMutinynetOnline(false);
+          }
         } finally {
           inFlight = false;
         }
       };
 
       void probe();
-      timer = setInterval(() => {
-        void probe();
-      }, ASP_POLL_MS);
+      const unregister = registerHomeIdleTask({
+        id: "home-asp-probe",
+        intervalMs: ASP_POLL_MS,
+        run: () => probe(),
+        paused: () => tourOpenRef.current || cancelled,
+      });
 
       return () => {
         cancelled = true;
-        if (timer) clearInterval(timer);
+        unregister();
       };
     }, [network.id, network.arkServerUrl]),
   );
@@ -584,12 +595,15 @@ export function HomeScreen() {
     measureHandle();
     setHomeDraggingLocal(true);
     setHomeDragging(true);
+    beginUiBusy("drag:home-activity");
     beginActivityDrag();
   }, [beginActivityDrag, measureHandle, setHomeDragging]);
 
   const clearHomeDragJS = useCallback(() => {
     setHomeDraggingLocal(false);
     setHomeDragging(false);
+    endUiBusy("drag:home-activity");
+    endUiBusy("drag:activity");
   }, [setHomeDragging]);
 
   const finishDismissJS = useCallback(() => {

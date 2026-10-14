@@ -17,6 +17,8 @@ import {
   type RefObject,
 } from "react";
 import { BackHandler, Dimensions, StyleSheet, View } from "react-native";
+import { beginUiBusy, endUiBusy } from "../runtime/uiBusyGate";
+import { markFirstPaint, markTapStart } from "../diagnostics/jsThreadMarkers";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useSharedValue } from "react-native-reanimated";
 import {
@@ -277,11 +279,14 @@ export function SheetHost({ children }: { children: ReactNode }) {
     setActivityOpen(false);
     setActivitySkipEnter(false);
     resetActivityFlow();
+    endUiBusy("sheet:activity");
+    endUiBusy("drag:activity");
   }, [resetActivityFlow]);
 
   const dismissWalletSwitcher = useCallback(() => {
     setWalletOpen(false);
     resetWalletFlow();
+    endUiBusy("sheet:wallet");
   }, [resetWalletFlow]);
 
   const dismissAddWallet = useCallback(() => {
@@ -312,11 +317,15 @@ export function SheetHost({ children }: { children: ReactNode }) {
   const dismissPosSheet = useCallback(() => {
     setPosOpen(false);
     setPosSkipEnter(false);
+    endUiBusy("sheet:pos");
+    endUiBusy("drag:pos");
   }, []);
 
   const dismissScanSheet = useCallback(() => {
     setScanOpen(false);
     setScanSkipEnter(false);
+    endUiBusy("sheet:scan");
+    endUiBusy("drag:scan");
   }, []);
 
   const dismissActivityAnimated = useCallback(() => {
@@ -389,7 +398,10 @@ export function SheetHost({ children }: { children: ReactNode }) {
       if (step !== "import") setImportReturnStep("list");
       if (!isConnectWalletStep(step)) setNodeStatusPayload(null);
       setWalletStep(step);
+      markTapStart("wallet-sheet");
+      beginUiBusy("sheet:wallet");
       setWalletOpen(true);
+      requestAnimationFrame(() => markFirstPaint("wallet-sheet"));
     },
     [prepareWalletSheet],
   );
@@ -412,7 +424,10 @@ export function SheetHost({ children }: { children: ReactNode }) {
     );
     setActivitySkipEnter(false);
     resetActivityFlow();
+    markTapStart("activity-sheet");
+    beginUiBusy("sheet:activity");
     setActivityOpen(true);
+    requestAnimationFrame(() => markFirstPaint("activity-sheet"));
   }, [clearFundsNotice, resetActivityFlow, resetWalletFlow]);
 
   const openWalletSwitcher = useCallback(() => {
@@ -588,6 +603,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
     );
     setActivitySkipEnter(true);
     resetActivityFlow();
+    beginUiBusy("drag:activity");
+    beginUiBusy("sheet:activity");
     setActivityOpen(true);
     setHomeDragging(true);
   }, [clearFundsNotice, resetActivityFlow, resetWalletFlow]);
@@ -614,11 +631,14 @@ export function SheetHost({ children }: { children: ReactNode }) {
     // Home gesture already drives translateX — do not snap off mid-drag.
     // Keep skipEnter true until settlePosOpen so Home stays touchable mid-swipe.
     setPosSkipEnter(true);
+    beginUiBusy("drag:pos");
+    beginUiBusy("sheet:pos");
     setPosOpen(true);
   }, [activityOpen, clearFundsNotice, resetWalletFlow, scanOpen]);
 
   const settlePosOpen = useCallback(() => {
     setPosSkipEnter(false);
+    endUiBusy("drag:pos");
   }, []);
 
   const beginScanDrag = useCallback(() => {
@@ -642,11 +662,14 @@ export function SheetHost({ children }: { children: ReactNode }) {
       clearFundsNotice,
     );
     setScanSkipEnter(true);
+    beginUiBusy("drag:scan");
+    beginUiBusy("sheet:scan");
     setScanOpen(true);
   }, [activityOpen, clearFundsNotice, posOpen, resetWalletFlow, scanOpen]);
 
   const settleScanOpen = useCallback(() => {
     setScanSkipEnter(false);
+    endUiBusy("drag:scan");
   }, []);
 
   const openPosSheet = useCallback(() => {
