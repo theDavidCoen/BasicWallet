@@ -11,6 +11,7 @@ import {
   consumeRecentInboundFiatSettle,
   isAutoInboundBusy,
 } from "./chatInboundFiat";
+import { ensureChatInboundHomeCredit } from "./chatInboundHomeCredit";
 import {
   dismissClassicFundsNoticeIfChat,
   noteChatInboundReceiptHint,
@@ -281,7 +282,9 @@ export async function ingestChatEnvelope(opts: {
           markPayRequestPaid(contactId, envelope.relatedRequestId);
           noteChatInboundReceiptHint(contactId, abs);
           dismissClassicFundsNoticeIfChat(abs);
-          // Home balance: ASP notify only (receipt must not double-apply — α76).
+          // Home: credit once from receipt when notify is late/missing (Samsung).
+          // Dedupe window + catch-up seed prevent double-apply with ASP notify.
+          ensureChatInboundHomeCredit(abs);
           return true;
         }
       } else if (envelope.paymentId) {
@@ -315,6 +318,7 @@ export async function ingestChatEnvelope(opts: {
       if (direction === "in" && envelope.amountSats > 0) {
         noteChatInboundReceiptHint(contactId, envelope.amountSats);
         dismissClassicFundsNoticeIfChat(envelope.amountSats);
+        ensureChatInboundHomeCredit(envelope.amountSats);
       }
       return true;
     }

@@ -69,6 +69,10 @@ import {
   preferChatInboundOverClassic,
   registerClassicFundsNoticeDismiss,
 } from "../chat/chatInboundPrefer";
+import {
+  noteChatInboundHomeCredited,
+  registerChatInboundHomeCreditHook,
+} from "../chat/chatInboundHomeCredit";
 import { isPresencePromptInFlight } from "../security/presencePrompt";
 import { friendlyNetworkError } from "../util/friendlyNetworkError";
 import {
@@ -1255,6 +1259,47 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     });
     setBalanceStatus("ready");
   }, []);
+
+  // Chat inbound receipt → Home credit when ASP notify is late/missing (Samsung).
+  useEffect(() => {
+    registerChatInboundHomeCreditHook((amountSats) => {
+      if (isFiatModeActiveGate()) {
+        console.warn(
+          "[basic] chat inbound home credit skipped (fiat mode)",
+          amountSats,
+        );
+        return;
+      }
+      const walletId = selectedIdRef.current;
+      applyLocalReceive(amountSats);
+      if (walletId) {
+        setCatchUpCreditForWallet(
+          catchUpCreditByWalletRef.current,
+          walletId,
+          seedPollAdoptCatchUpCredit(
+            getCatchUpCreditForWallet(
+              catchUpCreditByWalletRef.current,
+              walletId,
+            ),
+            amountSats,
+            { noticeSettled: true },
+          ),
+        );
+        try {
+          recordOptimisticArkadeReceive(getNetworkConfig().id, walletId, {
+            amountSats,
+            source: "chat-receipt-credit",
+          });
+          setActivityEpoch((n) => n + 1);
+        } catch (e) {
+          console.warn("[basic] chat receipt optimistic receive failed", e);
+        }
+      }
+      // Soft heal when ASP already knows the funds; empty live is ignored vs ack.
+      pullBalanceNowRef.current();
+    });
+    return () => registerChatInboundHomeCreditHook(null);
+  }, [applyLocalReceive]);
 
   /** Floor Home balance at totalSats (no double-add when estimate + notify both fire). */
   const ensureBalanceAtLeast = useCallback((totalSats: number) => {
@@ -3744,6 +3789,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                     beginClassicChatDefer(credit);
                     acknowledgeIncomingAmount(credit);
                     applyLocalReceive(credit);
+                    noteChatInboundHomeCredited(credit);
                     try {
                       recordOptimisticArkadeReceive(
                         getNetworkConfig().id,
@@ -3862,11 +3908,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                       },
                     );
                   }
-                  if (applyAmount > 0) {
+                    if (applyAmount > 0) {
                     if (selectedIdRef.current !== walletId) return;
                     acknowledgeIncomingAmount(applyAmount);
-                    // ASP notify owns Maxi Home balance (receipt must not also add — α76).
+                    // ASP notify owns Maxi Home balance when it wins the race.
+                    // Note credit so a later chat receipt does not double-add.
                     applyLocalReceive(applyAmount);
+                    noteChatInboundHomeCredited(applyAmount);
                     try {
                       recordOptimisticArkadeReceive(
                         getNetworkConfig().id,

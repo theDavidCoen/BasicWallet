@@ -13,6 +13,7 @@ import {
   findRecentInboundPaymentByAmount,
   markPayRequestPaid,
 } from "./chatStore";
+import { ensureChatInboundHomeCredit } from "./chatInboundHomeCredit";
 import {
   getFocusedChatContactId,
   isChatThreadFocused,
@@ -226,6 +227,9 @@ export function ensureChatInboundBubble(opts: {
     }
     markPayRequestPaid(opts.contactId, opts.requestId);
     noteChatInboundReceiptHint(opts.contactId, abs);
+    if ((opts.status ?? "paid") === "paid") {
+      ensureChatInboundHomeCredit(abs);
+    }
     return true;
   }
   if (!tryClaimInboundBubble(opts.contactId, abs)) {
@@ -244,6 +248,9 @@ export function ensureChatInboundBubble(opts: {
     bumpUnread: focused !== opts.contactId,
   });
   markPayRequestPaid(opts.contactId, opts.requestId);
+  if ((opts.status ?? "paid") === "paid") {
+    ensureChatInboundHomeCredit(abs);
+  }
   noteChatInboundReceiptHint(opts.contactId, abs);
   console.warn("[basic] chat inbound bubble (prefer over classic)", {
     contactId: opts.contactId.slice(0, 10),
