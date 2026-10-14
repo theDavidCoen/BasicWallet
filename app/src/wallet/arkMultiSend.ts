@@ -325,6 +325,11 @@ export function formatSendError(e: unknown, dust = DEFAULT_MIN_VTXO_SATS): strin
       `Try a slightly different amount, or send enough to spend a whole coin.`
     );
   }
+  if (/Ark getInfo unavailable/i.test(msg) || /getInfo timed out/i.test(msg)) {
+    return (
+      "Could not reach the Ark server (getInfo). Check Wi-Fi/VPN, wait a moment, and try again."
+    );
+  }
   return msg;
 }
 

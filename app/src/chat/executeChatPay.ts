@@ -419,6 +419,20 @@ export async function executeChatPay(opts: {
   let settledTxid: string | null = null;
   let recordedOptimistic = false;
   try {
+    // Warm ASP getInfo after bio unlock / VPN stall so wallet.send does not
+    // fail on the first cold /v1/info (Xiaomi rc.11: Ark getInfo unavailable).
+    try {
+      const anyW = wallet as BasicWallet & {
+        arkProvider?: { getInfo?: () => Promise<unknown> };
+      };
+      if (typeof anyW.arkProvider?.getInfo === "function") {
+        await anyW.arkProvider.getInfo();
+      }
+    } catch (e) {
+      console.warn("[basic] chat pay getInfo warm failed", e);
+      // Continue — prepare/send may still use cached arkInfoSnapshot.
+    }
+
     const dust = await readMinVtxoSats(wallet);
     if (amount < dust) {
       throw new Error(`Minimum send is ${dust} sats (ASP dust / min vtxo).`);
