@@ -14,7 +14,9 @@ import {
 import { ensureChatInboundHomeCredit } from "./chatInboundHomeCredit";
 import {
   dismissClassicFundsNoticeIfChat,
+  INBOUND_AMOUNT_DEDUPE_MS,
   noteChatInboundReceiptHint,
+  tryClaimInboundBubble,
 } from "./chatInboundPrefer";
 import {
   ensureInboundPeerContact,
@@ -258,7 +260,8 @@ export async function ingestChatEnvelope(opts: {
         fiatCaption = await freezeCaptionIfFiat(envelope.amountSats);
         status = "paid";
       }
-      // One bubble per payment — merge by paymentId, else same amount in window (α77).
+      // One bubble per payment — merge by paymentId, else same amount in window.
+      // Distinct paymentIds from false reconcile republish (5966×3) must merge too.
       if (direction === "in" && envelope.amountSats > 0) {
         const abs = Math.floor(envelope.amountSats);
         const byPid = envelope.paymentId
@@ -267,7 +270,7 @@ export async function ingestChatEnvelope(opts: {
         const recentAmt = findRecentInboundPaymentByAmount(
           contactId,
           abs,
-          90_000,
+          INBOUND_AMOUNT_DEDUPE_MS,
         );
         // Always merge recent same-amount inbound (notify placeholder OR prior receipt).
         const recent = byPid ?? recentAmt;
@@ -284,6 +287,33 @@ export async function ingestChatEnvelope(opts: {
           dismissClassicFundsNoticeIfChat(abs);
           // Home: credit once from receipt when notify is late/missing (Samsung).
           // Dedupe window + catch-up seed prevent double-apply with ASP notify.
+          ensureChatInboundHomeCredit(abs);
+          return true;
+        }
+        // Parallel gift-wraps: only one insert; losers merge or skip.
+        if (!tryClaimInboundBubble(contactId, abs)) {
+          const raced = findRecentInboundPaymentByAmount(
+            contactId,
+            abs,
+            INBOUND_AMOUNT_DEDUPE_MS,
+          );
+          if (raced) {
+            updateChatMessage(raced.id, {
+              status,
+              memo: envelope.memo ?? raced.memo,
+              paymentId: envelope.paymentId || raced.paymentId,
+              nostrEventId: wrapEventId,
+              fiatCaption: fiatCaption ?? raced.fiatCaption,
+            });
+          } else {
+            console.warn("[basic] inbound receipt claim lost — skip insert", {
+              amount: abs,
+              paymentId: envelope.paymentId?.slice(0, 12),
+            });
+          }
+          markPayRequestPaid(contactId, envelope.relatedRequestId);
+          noteChatInboundReceiptHint(contactId, abs);
+          dismissClassicFundsNoticeIfChat(abs);
           ensureChatInboundHomeCredit(abs);
           return true;
         }
