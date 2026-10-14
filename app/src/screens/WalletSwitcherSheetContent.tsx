@@ -14,7 +14,7 @@ import {
   View,
   type LayoutChangeEvent,
 } from "react-native";
-import { Button, Caption, ScreenTitle, SectionHeader } from "../components/ui";
+import { Button, Caption, ScreenTitle } from "../components/ui";
 import { useI18n } from "../i18n";
 import {
   readPublicIdentity,
@@ -154,9 +154,9 @@ export function WalletSwitcherSheetContent({
           {t("nostr.shareNpub")}
         </Button>
 
-        <SectionHeader first style={styles.walletsHeader}>
+        <ScreenTitle style={styles.walletsHeader}>
           {t("home.walletsSection")}
-        </SectionHeader>
+        </ScreenTitle>
         <Caption style={styles.walletsCaption}>{t("home.walletsSelectCaption")}</Caption>
       </View>
 
@@ -256,6 +256,8 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   walletsHeader: {
+    fontSize: 16,
+    color: colors.fg,
     marginTop: 8,
     marginBottom: 0,
     textAlign: "center",
