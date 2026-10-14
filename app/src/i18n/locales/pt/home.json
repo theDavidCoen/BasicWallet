@@ -42,5 +42,14 @@
   "tourAddWalletTitle": "Adicionar carteira",
   "tourAddWalletBody": "Toque no avatar (canto superior esquerdo) para trocar de carteira ou adicionar uma nova.",
   "tourFiatTitle": "Modo Fiat",
-  "tourFiatBody": "Toque em R$ (canto superior direito) para entrar no Modo Fiat nesta carteira Arkade."
+  "tourFiatBody": "Toque em R$ (canto superior direito) para entrar no Modo Fiat nesta carteira Arkade.",
+  "walletsHiTitle": "Olá, %{display}!",
+  "walletsHiCaption": "Você pode alterar o nome de exibição em Identidade Nostr.",
+  "walletsHiNostrLink": "Identidade Nostr",
+  "walletsSection": "Carteiras",
+  "walletsSelectCaption": "Selecione sua carteira padrão",
+  "walletsCreate": "+ Criar carteira",
+  "walletsConnectLn": "Conectar nó Lightning",
+  "walletsSelected": "selecionada",
+  "scanIdleHint": "Aponte para o código QR"
 }

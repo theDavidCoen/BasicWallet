@@ -55,8 +55,14 @@ import { findRecentReceiveActivityId, findActivityIdByTxid, findRecentSendActivi
 import { getNetworkConfig } from "../config/network";
 import { FundsSentView } from "../screens/FundsSentView";
 import { SaveToContactsSheet } from "../components/contacts/SaveToContactsSheet";
+import { AddContactFromQrSheet } from "../components/contacts/AddContactFromQrSheet";
 import { findContactByIdentifierValue } from "../contacts/contactStore";
 import { canOfferSaveToContacts } from "../contacts/detectKind";
+import {
+  contactQrScanToken,
+  extractContactOrNostrFromScan,
+  isContactOrNostrScanToken,
+} from "../contacts/contactQr";
 import { HomePosSheetContent } from "../screens/HomePosSheetContent";
 import {
   ScanQrView,
@@ -240,6 +246,8 @@ export function SheetHost({ children }: { children: ReactNode }) {
   );
   const [saveContactOpen, setSaveContactOpen] = useState(false);
   const [saveContactDest, setSaveContactDest] = useState("");
+  const [addContactQrOpen, setAddContactQrOpen] = useState(false);
+  const [addContactQrToken, setAddContactQrToken] = useState("");
   const [fiatModeSheet, setFiatModeSheet] = useState<"enter" | "exit" | null>(null);
   const [activitySkipEnter, setActivitySkipEnter] = useState(false);
   const [activityAnchorY, setActivityAnchorYState] = useState<number | null>(null);
@@ -889,22 +897,35 @@ export function SheetHost({ children }: { children: ReactNode }) {
 
   const parseHomeQr = useCallback(
     (raw: string) => {
+      const contactHit = extractContactOrNostrFromScan(raw);
+      if (contactHit) return contactQrScanToken(contactHit);
       if (isLightning) return extractLightningPayFromScan(raw);
       return extractArkAddressFromScan(raw) ?? extractLightningPayFromScan(raw);
     },
     [isLightning],
   );
 
+  const openAddContactFromQr = useCallback((token: string) => {
+    const t = token.trim();
+    if (!t) return;
+    setAddContactQrToken(t);
+    setAddContactQrOpen(true);
+  }, []);
+
   const onHomeScanned = useCallback(
     (value: string, raw?: string) => {
       dismissScanSheet();
+      if (isContactOrNostrScanToken(value) || isContactOrNostrScanToken(raw ?? "")) {
+        openAddContactFromQr(value || (raw ?? ""));
+        return;
+      }
       const intent = resolvePayIntent(raw ?? value, isLightning ? "lightning" : "arkade");
       navigation.navigate("Send", {
         to: intent?.destination ?? value,
         ...(intent?.amountSats != null ? { amountSats: intent.amountSats } : {}),
       });
     },
-    [dismissScanSheet, isLightning, navigation],
+    [dismissScanSheet, isLightning, navigation, openAddContactFromQr],
   );
 
   const api = useMemo<SheetsApi>(
@@ -1095,7 +1116,7 @@ export function SheetHost({ children }: { children: ReactNode }) {
             onScan={onHomeScanned}
             parse={parseHomeQr}
             title="SCAN"
-            idleHint="Point at the QR code to pay"
+            idleHint="Point at the QR code"
             rejectHint="Not recognized — try again"
           />
         </InteractiveSideSheet>
@@ -1118,6 +1139,12 @@ export function SheetHost({ children }: { children: ReactNode }) {
               onConnectNode={() => {
                 setNodeStatusPayload(null);
                 setWalletStep("connect-menu");
+              }}
+              onOpenNostrIdentity={() => {
+                dismissWalletSwitcher();
+                requestAnimationFrame(() => {
+                  navigation.navigate("NostrIdentity");
+                });
               }}
             />
           ) : null}
@@ -1156,6 +1183,12 @@ export function SheetHost({ children }: { children: ReactNode }) {
               onConnectNode={() => {
                 setNodeStatusPayload(null);
                 setWalletStep("connect-menu");
+              }}
+              onOpenNostrIdentity={() => {
+                dismissWalletSwitcher();
+                requestAnimationFrame(() => {
+                  navigation.navigate("NostrIdentity");
+                });
               }}
             />
           ) : null}
@@ -1295,6 +1328,15 @@ export function SheetHost({ children }: { children: ReactNode }) {
           onDismiss={() => {
             setSaveContactOpen(false);
             setSaveContactDest("");
+          }}
+        />
+
+        <AddContactFromQrSheet
+          open={addContactQrOpen}
+          scanToken={addContactQrToken}
+          onDismiss={() => {
+            setAddContactQrOpen(false);
+            setAddContactQrToken("");
           }}
         />
 

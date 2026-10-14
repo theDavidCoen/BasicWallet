@@ -69,5 +69,14 @@
   "fieldFallback": "field",
   "addContactCta": "Add contact",
   "refuse": "Refuse",
-  "refuseA11y": "Refuse contact"
+  "refuseA11y": "Refuse contact",
+  "qrAddTitle": "ADD CONTACT?",
+  "qrAddCaption": "Add this contact from the scanned QR?",
+  "qrAddCaptionNamed": "Add “%{name}” from the scanned QR?",
+  "qrConfirm": "Confirm",
+  "qrDeny": "Deny",
+  "qrAddedTitle": "Saved",
+  "qrAddedBody": "%{name} added to contacts.",
+  "qrAlreadySavedTitle": "Already saved",
+  "qrAlreadySavedBody": "This identifier is already on “%{name}”."
 }

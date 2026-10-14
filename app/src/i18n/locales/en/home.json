@@ -42,5 +42,14 @@
   "tourAddWalletTitle": "Add Wallet",
   "tourAddWalletBody": "Tap the avatar (top left) to switch wallets or add a new one.",
   "tourFiatTitle": "Fiat mode",
-  "tourFiatBody": "Tap R$ (top right) to enter Fiat Mode on this Arkade wallet."
+  "tourFiatBody": "Tap R$ (top right) to enter Fiat Mode on this Arkade wallet.",
+  "walletsHiTitle": "Hi, %{display}!",
+  "walletsHiCaption": "You can change your Display name in Nostr Identity.",
+  "walletsHiNostrLink": "Nostr Identity",
+  "walletsSection": "Wallets",
+  "walletsSelectCaption": "Select your default wallet",
+  "walletsCreate": "+ Create wallet",
+  "walletsConnectLn": "Connect Lightning Node",
+  "walletsSelected": "selected",
+  "scanIdleHint": "Point at the QR code"
 }

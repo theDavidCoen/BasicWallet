@@ -27,6 +27,7 @@ import {
   resetPresencePrompt,
   subscribeAppUnlockFromPresence,
 } from "./presencePrompt";
+import { isOsShareSheetActive } from "./osShareSheet";
 import {
   flushEncryptedBackupAfterUnlock,
   lockBackupPassphraseSession,
@@ -302,6 +303,11 @@ export function AppLockGate({ children }: { children: ReactNode }) {
       }
 
       if (next === "background") {
+        // OS share / documents UI also backgrounds the app (and often delivers
+        // this event *after* Share.share resolves). Grace covers that race.
+        if (isOsShareSheetActive()) {
+          return;
+        }
         // Always abort — hung authenticateAsync + presence grace were leaving
         // Unlock with unlockingRef/busy stuck after warm resume (Xiaomi).
         abortStaleBioAuth();
@@ -318,6 +324,8 @@ export function AppLockGate({ children }: { children: ReactNode }) {
       if (next === "active") {
         // Sheet still up: leave the in-flight auth alone.
         if (isPresencePromptInFlight()) return;
+        // Returning from OS share — stay unlocked (do not re-enter Unlock).
+        if (isOsShareSheetActive()) return;
 
         // Fresh interactive Unlock after Home/recents (clear grace + latches).
         abortStaleBioAuth();
