@@ -1,10 +1,12 @@
 /**
- * Credit Home when chat shows an inbound payment, without waiting for ASP notify.
+ * Inbound chat receipt ↔ Home balance coordination.
  *
- * α76 kept receipt from double-adding when notify already applied. On devices
- * where notify/push is dead (or getBalance stays 0), chat could show
- * "You received" while Home stayed at 0. Receipt path now ensures one Home
- * credit; notify path notes the same window so it does not double-apply.
+ * rc.9 briefly applied applyLocalReceive from the Nostr receipt. That painted
+ * Home while ASP getSpendableVtxos stayed empty (Samsung: You received +
+ * "No spendable sats"). Receipt is not settlement proof — only ASP notify /
+ * live getBalance may credit Home. This module still:
+ * - notes amounts so notify/receipt races do not double-apply
+ * - asks WalletProvider to refresh / boost watch (no phantom credit)
  */
 
 type CreditHint = { amountSats: number; at: number };
@@ -12,6 +14,7 @@ type CreditHint = { amountSats: number; at: number };
 const CREDIT_TTL_MS = 3 * 60_000;
 const recentCredits: CreditHint[] = [];
 
+/** Refresh/boost only — must not applyLocalReceive (phantom Home). */
 type HomeCreditHook = (amountSats: number) => void;
 let homeCreditHook: HomeCreditHook | null = null;
 
@@ -54,24 +57,28 @@ export function wasChatInboundHomeCredited(
 }
 
 /**
- * Ensure Home reflects an inbound chat payment once.
- * Returns true when the hook ran (new credit).
+ * After an inbound chat receipt: note the amount (notify dedupe) and refresh
+ * ASP balance. Does not invent spendable sats.
+ * Returns true when the refresh hook ran.
  */
 export function ensureChatInboundHomeCredit(amountSats: number): boolean {
   const abs = Math.abs(Math.floor(amountSats));
   if (!(abs > 0)) return false;
-  if (wasChatInboundHomeCredited(abs)) return false;
-  noteChatInboundHomeCredited(abs);
+  const already = wasChatInboundHomeCredited(abs);
+  if (!already) noteChatInboundHomeCredited(abs);
   if (!homeCreditHook) {
-    console.warn("[basic] chat inbound home credit skipped (no hook)", abs);
+    console.warn("[basic] chat inbound home refresh skipped (no hook)", abs);
     return false;
   }
   try {
     homeCreditHook(abs);
-    console.warn("[basic] chat inbound home credit", { amount: abs });
+    console.warn("[basic] chat inbound home refresh", {
+      amount: abs,
+      noted: !already,
+    });
     return true;
   } catch (e) {
-    console.warn("[basic] chat inbound home credit failed", e);
+    console.warn("[basic] chat inbound home refresh failed", e);
     return false;
   }
 }

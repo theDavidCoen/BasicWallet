@@ -72,6 +72,7 @@ import {
 import {
   noteChatInboundHomeCredited,
   registerChatInboundHomeCreditHook,
+  wasChatInboundHomeCredited,
 } from "../chat/chatInboundHomeCredit";
 import { isPresencePromptInFlight } from "../security/presencePrompt";
 import { friendlyNetworkError } from "../util/friendlyNetworkError";
@@ -1260,46 +1261,29 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setBalanceStatus("ready");
   }, []);
 
-  // Chat inbound receipt → Home credit when ASP notify is late/missing (Samsung).
+  // Chat inbound receipt → refresh ASP only (no phantom applyLocalReceive).
+  // Samsung rc.9: receipt credit painted Home while getSpendableVtxos stayed [].
   useEffect(() => {
     registerChatInboundHomeCreditHook((amountSats) => {
       if (isFiatModeActiveGate()) {
         console.warn(
-          "[basic] chat inbound home credit skipped (fiat mode)",
+          "[basic] chat inbound home refresh skipped (fiat mode)",
           amountSats,
         );
         return;
       }
-      const walletId = selectedIdRef.current;
-      applyLocalReceive(amountSats);
-      if (walletId) {
-        setCatchUpCreditForWallet(
-          catchUpCreditByWalletRef.current,
-          walletId,
-          seedPollAdoptCatchUpCredit(
-            getCatchUpCreditForWallet(
-              catchUpCreditByWalletRef.current,
-              walletId,
-            ),
-            amountSats,
-            { noticeSettled: true },
-          ),
-        );
-        try {
-          recordOptimisticArkadeReceive(getNetworkConfig().id, walletId, {
-            amountSats,
-            source: "chat-receipt-credit",
-          });
-          setActivityEpoch((n) => n + 1);
-        } catch (e) {
-          console.warn("[basic] chat receipt optimistic receive failed", e);
-        }
-      }
-      // Soft heal when ASP already knows the funds; empty live is ignored vs ack.
+      // Boost short polls so a real vtxo shows up without inventing sats.
+      incomingWatchBoostRef.current = Math.max(
+        incomingWatchBoostRef.current,
+        Date.now() + 45_000,
+      );
       pullBalanceNowRef.current();
+      console.warn("[basic] chat inbound ASP refresh armed", {
+        amount: amountSats,
+      });
     });
     return () => registerChatInboundHomeCreditHook(null);
-  }, [applyLocalReceive]);
+  }, []);
 
   /** Floor Home balance at totalSats (no double-add when estimate + notify both fire). */
   const ensureBalanceAtLeast = useCallback((totalSats: number) => {
@@ -1573,7 +1557,39 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
       // Failed/empty live must not zero a positive ack — next real pull would
       // emit FundsReceived for the entire wallet (log: ack 2497 → 0 → notice 3832).
+      // Exception: rc.9 chat-receipt phantom (ack from applyLocalReceive while ASP
+      // vtxos stay empty) — heal so Send is not offered against fake spendable.
       if (bal.total === 0 && ack && ack.total > 0) {
+        const credit = getCatchUpCreditForWallet(
+          catchUpCreditByWalletRef.current,
+          walletId,
+        );
+        const phantomChatCredit =
+          !suppressed &&
+          (wasChatInboundHomeCredited(ack.total, 10 * 60_000) ||
+            (credit != null &&
+              credit.exactMatchTtlMs != null &&
+              Math.abs(credit.sats - ack.total) <= CATCH_UP_CREDIT_EPS));
+        if (phantomChatCredit) {
+          console.warn("[basic] persistBalance heal chat-receipt phantom", {
+            ackTotal: ack.total,
+            creditSats: credit?.sats ?? null,
+          });
+          const zero = { available: 0, boarding: 0, total: 0 };
+          lastAckRef.current = zero;
+          prevBalanceRef.current = zero;
+          lastNotifyFloorRef.current = null;
+          setCatchUpCreditForWallet(
+            catchUpCreditByWalletRef.current,
+            walletId,
+            null,
+          );
+          setBalance(zero);
+          void writeLastAckBalance(networkId, walletId, zero);
+          void writeCachedBalance(networkId, walletId, zero);
+          setBalanceStatus("ready");
+          return;
+        }
         console.warn("[basic] persistBalance ignore empty live", {
           ackTotal: ack.total,
           suppressed,
