@@ -1,3 +1,4 @@
+import { markActivityDirty } from "../wallet/activityDirty";
 /**
  * Pay a BOLT11 invoice from the selected wallet (Arkade LN corridor or LNDhub).
  * Used for bot Bitrefill, human contact LN*, and any chat pay_request with bolt11.
@@ -191,7 +192,8 @@ export async function executeChatLightningPay(opts: {
     });
 
     opts.hooks.bumpActivity?.();
-    void opts.hooks.refreshActivity?.().catch((e) =>
+    void markActivityDirty(opts.hooks.walletId, "pay_in_chat");
+      opts.hooks.refreshActivity?.().catch((e) =>
       console.warn("[basic] chat ln pay refreshActivity failed", e),
     );
 

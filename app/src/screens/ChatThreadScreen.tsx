@@ -4,6 +4,7 @@
  */
 
 import { useFocusEffect, useNavigation, useRoute } from "@react-navigation/native";
+import { ensureChatWatchers } from "../nostr/deferredWatchers";
 import type { RouteProp } from "@react-navigation/native";
 import {
   startTransition,
@@ -120,6 +121,12 @@ function formatTime(ms: number): string {
 }
 
 export function ChatThreadScreen() {
+  useFocusEffect(
+    useCallback(() => {
+      ensureChatWatchers();
+    }, []),
+  );
+
   const navigation = useNavigation<RootNav>();
   const route = useRoute<RouteProp<RootStackParamList, "ChatThread">>();
   const { t, locale } = useI18n();

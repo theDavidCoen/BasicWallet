@@ -22,9 +22,9 @@ import {
   type ContactShareOffer,
 } from "../contacts/contactShareInbox";
 import {
-  queueContactShareWatchBoot,
-  stopContactShareWatch,
+    stopContactShareWatch,
 } from "../contacts/contactShareWatch";
+import { scheduleDeferredWatchers } from "../nostr/deferredWatchers";
 import { contactDisplayName, midEllipsis } from "../contacts/types";
 import { unregisterPushBestEffort } from "../notifications/register";
 import { useHomeTourUiOpen } from "../home/useHomeTourUiOpen";
@@ -88,10 +88,7 @@ export function ContactShareReminder({
       setOffer(null);
       return;
     }
-    queueContactShareWatchBoot();
-    void import("../agent/botWatch")
-      .then((m) => m.queueBotWatchBoot())
-      .catch(() => {});
+    scheduleDeferredWatchers();
     refresh();
     const unsub = subscribeContactShareInbox(refresh);
     return () => {

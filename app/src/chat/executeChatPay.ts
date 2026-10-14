@@ -1,3 +1,4 @@
+import { markActivityDirty } from "../wallet/activityDirty";
 /**
  * Resolve pay destination for chat Send / Pay.
  * Prefer contact ark → request preferredReceive / reply → else error (honest).
@@ -634,11 +635,14 @@ export async function executeChatPay(opts: {
     // ChatThread/ChatAmount may still hold the outer ASP pause; delay past it.
     // α93 Xiaomi: chat send waited ~2m for merge upsert because history never
     // rematerialized immediately after Pay in Chat.
-    if (recordedOptimistic && opts.hooks.refreshActivity) {
-      const refresh = opts.hooks.refreshActivity;
-      setTimeout(() => {
-        void refresh().catch(() => {});
-      }, 300);
+    if (recordedOptimistic) {
+      markActivityDirty(opts.hooks.walletId, "pay_in_chat");
+      if (opts.hooks.refreshActivity) {
+        const refresh = opts.hooks.refreshActivity;
+        setTimeout(() => {
+          void refresh().catch(() => {});
+        }, 300);
+      }
     }
   }
 }

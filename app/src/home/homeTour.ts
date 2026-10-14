@@ -10,6 +10,7 @@
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { beginUiBusy, endUiBusy } from "../runtime/uiBusyGate";
 
 /** Survives factory reset (set during reset). Cleared only by uninstall. */
 export const HOME_TOUR_DONE_KEY = "basic.wallet.homeTour.done.v1";
@@ -41,6 +42,8 @@ export function isHomeTourUiOpen(): boolean {
 export function setHomeTourUiOpen(open: boolean): void {
   if (tourUiOpen === open) return;
   tourUiOpen = open;
+  if (open) beginUiBusy("tour");
+  else endUiBusy("tour");
   for (const fn of tourUiListeners) {
     try {
       fn();
