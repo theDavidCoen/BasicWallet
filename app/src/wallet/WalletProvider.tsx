@@ -9,6 +9,7 @@ import { Ramps } from "@arkade-os/sdk";
 import {
   commitArkadeActivityRows,
   dropOptimisticArkadeReceive,
+  hasUnsettledLocalReceiveForAmount,
   recordOptimisticArkadeReceive,
 } from "../account/activityStore";
 import { loadActivityRows } from "./activity";
@@ -70,10 +71,13 @@ import {
   registerClassicFundsNoticeDismiss,
 } from "../chat/chatInboundPrefer";
 import {
+  clearChatInboundHomeCreditNote,
   noteChatInboundHomeCredited,
   registerChatInboundHomeCreditHook,
+  warmChatInboundHomeCreditNotes,
   wasChatInboundHomeCredited,
 } from "../chat/chatInboundHomeCredit";
+import { listInboundPaymentsByStatus } from "../chat/chatStore";
 import { isPresencePromptInFlight } from "../security/presencePrompt";
 import { friendlyNetworkError } from "../util/friendlyNetworkError";
 import {
@@ -588,6 +592,30 @@ async function fetchLightningBalance(walletId: string): Promise<BalanceBreakdown
   const bal = await withTimeout(lndChannelBalance(cfg), 15_000, "lndChannelBalance");
   const sats = bal.localSats;
   return { total: sats, available: sats, boarding: 0 };
+}
+
+const CHAT_PHANTOM_HEAL_MS = 7 * 24 * 60 * 60_000;
+
+/** rc.9 receipt→applyLocalReceive left ack on disk with empty ASP vtxos. */
+function isChatReceiptPhantomAck(
+  networkId: Parameters<typeof hasUnsettledLocalReceiveForAmount>[0],
+  walletId: string,
+  ackTotal: number,
+): boolean {
+  if (!(ackTotal > 0)) return false;
+  if (wasChatInboundHomeCredited(ackTotal, CHAT_PHANTOM_HEAL_MS)) return true;
+  if (hasUnsettledLocalReceiveForAmount(networkId, walletId, ackTotal, CHAT_PHANTOM_HEAL_MS)) {
+    return true;
+  }
+  // Chat UI "You received" without ASP settlement (Samsung 674 after rc.10 install).
+  try {
+    const inbound = listInboundPaymentsByStatus(["paid"], CHAT_PHANTOM_HEAL_MS);
+    return inbound.some(
+      (m) => m.amountSats != null && Math.abs(m.amountSats - ackTotal) <= 1,
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
@@ -1264,6 +1292,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   // Chat inbound receipt → refresh ASP only (no phantom applyLocalReceive).
   // Samsung rc.9: receipt credit painted Home while getSpendableVtxos stayed [].
   useEffect(() => {
+    warmChatInboundHomeCreditNotes();
     registerChatInboundHomeCreditHook((amountSats) => {
       if (isFiatModeActiveGate()) {
         console.warn(
@@ -1494,6 +1523,25 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         // — except when opening a wallet that received while it was not selected
         // (cross-wallet send / background receive). Then fall through so catch-up notifies.
         if (bal.total === 0 && (ack?.total ?? 0) > 0) {
+          // rc.9→rc.10: phantom ack survives install; quiet path used to skip heal.
+          if (isChatReceiptPhantomAck(networkId, walletId, ack!.total)) {
+            console.warn("[basic] persistBalance quiet heal chat-receipt phantom", {
+              ackTotal: ack!.total,
+            });
+            const zero = { available: 0, boarding: 0, total: 0 };
+            lastAckRef.current = zero;
+            prevBalanceRef.current = zero;
+            lastNotifyFloorRef.current = null;
+            clearChatInboundHomeCreditNote(ack!.total);
+            dropOptimisticArkadeReceive(networkId, walletId, ack!.total, {
+              maxAgeMs: CHAT_PHANTOM_HEAL_MS,
+            });
+            setBalance(zero);
+            void writeLastAckBalance(networkId, walletId, zero);
+            void writeCachedBalance(networkId, walletId, zero);
+            setBalanceStatus("ready");
+            return;
+          }
           console.warn("[basic] persistBalance quiet ignore empty live", {
             ackTotal: ack?.total,
           });
@@ -1559,6 +1607,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       // emit FundsReceived for the entire wallet (log: ack 2497 → 0 → notice 3832).
       // Exception: rc.9 chat-receipt phantom (ack from applyLocalReceive while ASP
       // vtxos stay empty) — heal so Send is not offered against fake spendable.
+      // Notes are persisted + local-recv Activity survives RC install (Samsung 674).
       if (bal.total === 0 && ack && ack.total > 0) {
         const credit = getCatchUpCreditForWallet(
           catchUpCreditByWalletRef.current,
@@ -1566,7 +1615,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         );
         const phantomChatCredit =
           !suppressed &&
-          (wasChatInboundHomeCredited(ack.total, 10 * 60_000) ||
+          (isChatReceiptPhantomAck(networkId, walletId, ack.total) ||
             (credit != null &&
               credit.exactMatchTtlMs != null &&
               Math.abs(credit.sats - ack.total) <= CATCH_UP_CREDIT_EPS));
@@ -1584,6 +1633,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             walletId,
             null,
           );
+          clearChatInboundHomeCreditNote(ack.total);
+          dropOptimisticArkadeReceive(networkId, walletId, ack.total, {
+            maxAgeMs: CHAT_PHANTOM_HEAL_MS,
+          });
           setBalance(zero);
           void writeLastAckBalance(networkId, walletId, zero);
           void writeCachedBalance(networkId, walletId, zero);

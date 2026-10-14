@@ -88,13 +88,19 @@ export function reconcileOutboundChatPayments(opts: {
       m.amountSats,
       m.createdAt,
     );
+    // pendingSend stamp is written *before* wallet.send (executeChatPay). Using
+    // it alone for status=sending falsely marks You sent + publishes a receipt
+    // while ASP never moved funds (Xiaomi→Samsung 1349/674: via pending-stamp,
+    // zero applyLocalSpend, Samsung vtxos []). Only activity proves settle for
+    // in-flight sends; stamp may help recover status=failed after a real attempt.
     const pendingOk =
+      m.status === "failed" &&
       pending != null &&
       pending.at >= m.createdAt - 5_000 &&
       Date.now() - pending.at <= 20 * 60_000;
     if (!hit && !pendingOk) continue;
-    // Avoid claiming a still-in-flight convert as paid without activity evidence.
-    if (m.status === "converting" && !hit) continue;
+    // Converting / sending: require activity evidence — never stamp-only.
+    if ((m.status === "converting" || m.status === "sending") && !hit) continue;
 
     const was = m.status;
     updateChatMessage(m.id, { status: "paid" });
@@ -106,7 +112,7 @@ export function reconcileOutboundChatPayments(opts: {
       id: m.id.slice(0, 12),
       amount: m.amountSats,
       was,
-      via: hit ? "activity" : "pending-stamp",
+      via: hit ? "activity" : "pending-stamp-failed",
     });
 
     // Stuck Sending never published a receipt — peer may only have Ark notify (α77).

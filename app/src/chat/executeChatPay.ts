@@ -539,12 +539,22 @@ export async function executeChatPay(opts: {
   } catch (e) {
     if (opts.localMessageId) {
       const already = getChatMessage(opts.localMessageId);
-      if (already?.status === "paid") {
+      // Only trust paid if THIS attempt settled. α69/α77 reconcile used to flip
+      // Sending→paid from pendingSend stamp alone (pre-send) while wallet.send
+      // still failed — returning here skipped applyLocalSpend and lied You sent.
+      if (already?.status === "paid" && settledTxid) {
         return {
-          txid: settledTxid ?? `pending:${Date.now()}`,
+          txid: settledTxid,
           paymentId,
           address: dest.address,
         };
+      }
+      if (already?.status === "paid" && !settledTxid) {
+        console.warn(
+          "[basic] chat pay paid without settle — treating as still open",
+          { amount: payAmount },
+        );
+        updateChatMessage(opts.localMessageId, { status: "sending" });
       }
     }
 

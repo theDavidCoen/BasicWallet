@@ -115,15 +115,19 @@ export function pickAlreadySettledOutbound(input: {
       ) ?? null;
 
     const pendingAt = input.pendingStampAt;
+    // Stamp is pre-send — only recover failed bubbles; never claim sending paid.
     const pendingOk =
+      open.status === "failed" &&
       pendingAt != null &&
       pendingAt > 0 &&
       pendingAt >= open.createdAt - CHAT_SETTLE_PREDATE_SKEW_MS &&
       input.now - pendingAt <= CHAT_SETTLE_WINDOW_MS;
 
     if (!hit && !pendingOk) continue;
-    // Converting without activity: still mid Fiat convert — do not claim paid.
-    if (open.status === "converting" && !hit) continue;
+    // Converting / sending: require activity evidence.
+    if ((open.status === "converting" || open.status === "sending") && !hit) {
+      continue;
+    }
 
     return {
       messageId: open.id,

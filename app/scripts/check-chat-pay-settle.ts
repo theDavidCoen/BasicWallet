@@ -222,6 +222,31 @@ console.log("chatPaySettle scenarios\n");
   );
 }
 
+{
+  console.log("\n7) sending + pending-stamp alone must NOT settle (false You sent)");
+  const now = 1_700_000_000_000;
+  const bubbleAt = now - 2_000;
+  const picked = pickAlreadySettledOutbound({
+    amountSats: 1349,
+    contactId: "c1",
+    now,
+    candidates: [
+      {
+        id: "m_send",
+        contactId: "c1",
+        amountSats: 1349,
+        createdAt: bubbleAt,
+        paymentId: "pay",
+        status: "sending",
+      },
+    ],
+    activityRows: [],
+    // Stamp written before wallet.send — same as Xiaomi 1349/674 false paid.
+    pendingStampAt: bubbleAt + 50,
+  });
+  assert("sending + stamp only → no skip", picked === null);
+}
+
 if (failed > 0) {
   console.error(`\n${failed} chatPaySettle check(s) failed`);
   process.exit(1);
