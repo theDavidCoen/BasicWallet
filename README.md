@@ -21,7 +21,7 @@ Use at your own risk. There is no warranty.
 
 ## Download
 
-Latest release: **[v0.9.7](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.9.7)** (arm64-v8a APK + SHA256).
+Latest release: **[v0.10.0](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.10.0)** (arm64-v8a APK + SHA256).
 
 All builds: [Releases](https://github.com/theDavidCoen/BasicWallet/releases). Prefer verifying the checksum before install.
 
@@ -39,8 +39,8 @@ Basic (`app.basic.wallet`) is an experimental mobile wallet built with **Expo / 
 | **Bitcoin Maxi Mode** | Default ON: inbound alt-assets → sats when Fiat Mode is off |
 | **Lightning** | **Arkade intents** (Personal Send BOLT11 / LNURL / Lightning Address; BIP21 receive may embed `lightning=`) plus optional user-linked node (BTCPay **LND REST** / LNDHub) with Activity/Send/Receive/POS UX. Not Boltz. |
 | **Backup** | Passkey-oriented onboarding, Advanced Backup via Nostr and/or home server |
-| **Contacts** | Local encrypted contacts, share over Nostr gift wraps |
-| **Ask Cursor** | Optional on-device Nostr bot (Cursor Cloud Agents) under Chat & Pay; **New session** / `/new` / `/stop` for the bot thread |
+| **Contacts** | Local encrypted contacts, wallet-sheet greeting, identity/contact QR, share over Nostr gift wraps |
+| **Ask Cursor** | Optional on-device Nostr bot (Cursor Cloud Agents) under Chat & Pay; local enqueue + ack for snappier turns; **New session** / `/new` / `/stop` for the bot thread |
 | **Language** | Settings → Language: System default (OS → English fallback) or pin English / Italian / Portuguese |
 | **Bluetooth pair** | Move an account to a nearby phone from the welcome screen (encrypted Bluetooth; no QR/NFC) |
 | **Ops hygiene** | Reproducible Android APK recipe, minimal permissions, SQLCipher for account DB |
@@ -68,8 +68,8 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 - **Pair with Bluetooth** — move wallets / nsec to a nearby phone on the welcome screen (lobby code + biometrics; passkeys stay on Device 1)
 - **Manage a Nostr identity** (kind 0 profile broadcast from Identity); Advanced Backup (Nostr relays and/or home server), including Fiat/Maxi prefs in the Path C package; Path C dirty flag clears only after a successful upload, flushes after biometric unlock, and unlocks+retries Nextcloud 423 Locked once
 - Maintain **contacts** (npub, NIP-05, BIP-353, etc.) and share a contact over Nostr
-- **Pay in Chat** — Home **Chat & Pay** hub; 1:1 Nostr threads with text plus send/request (Arkade + Lightning BOLT11 for human contacts); classic Send stays separate
-- **Ask Cursor** — paste a Cursor API key in Settings → Provider Settings → Cursor; then use **Ask Cursor** in Chat & Pay (owner-only bot; shopping MCPs stay on your Cursor Dashboard). **New session** / `/new` clears the bot thread without relay revive; `/stop` cancels in-flight work
+- **Pay in Chat** — Home **Chat & Pay** hub; 1:1 Nostr threads with text plus send/request (Arkade + Lightning BOLT11 for human contacts); paying a request settles the request card; inbound receipts credit Home when ASP notify is late; failed Max retries do not fan into duplicate “You sent” / “You received” bubbles; classic Send stays separate
+- **Ask Cursor** — paste a Cursor API key in Settings → Provider Settings → Cursor; then use **Ask Cursor** in Chat & Pay (owner-only bot; shopping MCPs stay on your Cursor Dashboard). Local enqueue + ack shortens the first response wait. **New session** / `/new` clears the bot thread without relay revive; `/stop` cancels in-flight work
 - **Language** — Settings → Language: follow the phone (unsupported OS languages fall back to English) or pin **English**, **Italiano**, or **Português**
 - **Closed-app alerts** (Android, opt-in) — opaque tray wake (“New Pay message”) for Pay in Chat / contact share while the app is closed; never amounts or memos; Chat & Pay can prompt once to enable; tray tap opens the chat thread after unlock; classic receives still catch up on open
 - Prefer mainnet or Mutinynet (and optional custom ASP) from Settings

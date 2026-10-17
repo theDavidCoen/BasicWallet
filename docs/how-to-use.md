@@ -49,6 +49,7 @@ Settings → About shows version + git commit for the APK you installed.
 
 - **Chat & Pay** on Home, or Settings → Nostr → Chat & Pay (or open a contact) → 1:1 thread over Nostr gift wraps.
 - Composer for text; **Request** / **Send** for payment cards in the thread (Arkade and Lightning BOLT11 for human contacts when the selected wallet / contact identifiers allow it). Classic Send stays for paste / QR / multisend.
+- Paying a peer **Request** settles that request card (paid, actions cleared) while the outbound **You sent** bubble stays. On the receiver, **You received** should match Home once funds land (receipt can credit Home if ASP notify is slow). One Max / retry spend → one sent + one received bubble (failed attempts stay failed, not duplicate paid cards).
 - Unread activity can surface as a Home banner; history is local (encrypted) and recoverable from Nostr when identity/relays allow.
 
 ### Ask Cursor
@@ -58,7 +59,7 @@ Optional AI helper in Chat & Pay (experimental). Needs a Nostr identity first.
 1. Settings → Nostr → **Nostr Identity** — create or import if you do not have one.
 2. Settings → Provider Settings → **Cursor** — paste your Cursor API key (from the Cursor Dashboard). Basic validates it and activates an on-device bot; shopping MCPs such as Bitrefill stay on your Cursor Cloud / Dashboard (never entered in Basic).
 3. Open **Chat & Pay** (Home or Settings → Nostr → Chat & Pay) → **Ask Cursor**.
-4. Chat with suggestion chips or free text. When the bot posts a pay card, **Confirm** + biometrics pays from your selected wallet (Arkade corridor or linked Lightning node, as applicable). The bot thread has no Request/Send composer actions.
+4. Chat with suggestion chips or free text. Turns enqueue locally with a quick ack before the cloud agent finishes (snappier first feedback). When the bot posts a pay card, **Confirm** + biometrics pays from your selected wallet (Arkade corridor or linked Lightning node, as applicable). The bot thread has no Request/Send composer actions.
 
 **Session controls** (bot thread only):
 
@@ -271,7 +272,7 @@ Switching network can reset wallet engine state — backup first.
 
 ## Get the APK
 
-Latest: **[v0.9.7](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.9.7)** (arm64-v8a).
+Latest: **[v0.10.0](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.10.0)** (arm64-v8a).
 
 All releases: [theDavidCoen/BasicWallet/releases](https://github.com/theDavidCoen/BasicWallet/releases). Prefer arm64-v8a builds + verify SHA256 (and PGP on the checksum when present).
 
