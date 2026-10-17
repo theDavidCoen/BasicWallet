@@ -49,6 +49,8 @@ Network defaults: development tends toward Mutinynet; release builds target main
 
 This is **not** an AKRLabs / arkade.money product. It depends on the Arkade SDK as a technical ingredient while product UX lives in this repo (`prototype/docs/`).
 
+This is also not an Edge product: I work for Edge wallet as Software QA Tester & Support. We may or may not integrate Arkade and some of the features available in this UX/UI experiment. I do not offer active support on Basic and it is not an Edge competitor.
+
 ## What it can do today (alpha)
 
 Capabilities evolve quickly; check Settings → About for the build version and git commit. In recent alphas you can typically:
