@@ -16,6 +16,7 @@ export { markWarmupSeen, WARMUP_SEEN_KEY } from "../wallet/warmupSeen";
 
 export function WalletWarmupScreen() {
   const {
+    engineBootAllowed,
     walletInteractive,
     openRestoreDone,
     selectedWallet,
@@ -40,14 +41,18 @@ export function WalletWarmupScreen() {
     };
   }, []);
 
+  // Soft timeout only after unlock — otherwise a slow bio would skip to Home
+  // before Keystore/ASP open starts.
   useEffect(() => {
+    if (!engineBootAllowed) return;
     const soft = setTimeout(() => {
       finishWarmup();
     }, WARMUP_TIMEOUT_MS);
     return () => clearTimeout(soft);
-  }, [finishWarmup]);
+  }, [engineBootAllowed, finishWarmup]);
 
   useEffect(() => {
+    if (!engineBootAllowed) return;
     const ln = selectedWallet?.kind === "lightning";
     if (ln) {
       finishWarmup();
@@ -55,7 +60,13 @@ export function WalletWarmupScreen() {
     }
     if (!walletInteractive || !openRestoreDone) return;
     finishWarmup();
-  }, [walletInteractive, openRestoreDone, selectedWallet?.kind, finishWarmup]);
+  }, [
+    engineBootAllowed,
+    walletInteractive,
+    openRestoreDone,
+    selectedWallet?.kind,
+    finishWarmup,
+  ]);
 
   // Wait for flag before painting title — prevents SETTING UP flash on return.
   if (returning === null) {

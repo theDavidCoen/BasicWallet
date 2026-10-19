@@ -78,7 +78,9 @@ import {
   wasChatInboundHomeCredited,
 } from "../chat/chatInboundHomeCredit";
 import { listInboundPaymentsByStatus } from "../chat/chatStore";
+import { subscribeAppUnlocked } from "../security/appLockEvents";
 import { isPresencePromptInFlight } from "../security/presencePrompt";
+import { readPrivacySettings } from "../security/privacySettings";
 import { friendlyNetworkError } from "../util/friendlyNetworkError";
 import {
   allocatePasskeyChild,
@@ -175,6 +177,11 @@ type WalletContextValue = {
    * live: Home shell may navigate freely.
    */
   sessionPhase: SessionPhase;
+  /**
+   * False until AppLock unlock (or biometrics lock off / no wallet).
+   * Engine open + ASP sync wait on this; warm resume re-lock does not clear it.
+   */
+  engineBootAllowed: boolean;
   /** Keystore open — UI may navigate; balance/addresses may still load. */
   walletInteractive: boolean;
   /** HD restore finished (or soft-failed); warmup may dismiss. */
@@ -623,6 +630,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [hasWallet, setHasWallet] = useState(false);
   /** Pre-Home warmup finished (or timed out / onboarding). */
   const [sessionLive, setSessionLive] = useState(false);
+  /**
+   * Cold-start gate: Keystore/ASP open runs only after unlock (or when lock is off).
+   * Stays true after first allow — AppLock re-lock must not tear down the engine.
+   */
+  const [engineBootAllowed, setEngineBootAllowed] = useState(false);
   /** Mirror of openRestoreDoneRef for React consumers (warmup gate). */
   const [openRestoreDone, setOpenRestoreDone] = useState(false);
   const [wallets, setWallets] = useState<WalletRecord[]>([]);
@@ -671,6 +683,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const openingRef = useRef(false);
   /** Single-flight Keystore open — ensureBoardingAddress awaits this instead of opening again. */
   const openInFlightRef = useRef<Promise<void> | null>(null);
+  /** One-shot cold lightning balance probe after unlock (arkade uses openingRef). */
+  const coldLightningBootRef = useRef(false);
   const openRetryCountRef = useRef(0);
   const reloadTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   /** Nested boosts from POS / Receive QR — poll balance more often while > 0. */
@@ -3002,36 +3016,19 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setBalance(null);
       setBalanceStatus("idle");
       balanceBaselineReadyRef.current = false;
+      // Onboarding: no lock gate — allow session without waiting for AppLock.
+      setEngineBootAllowed(true);
       return;
     }
 
-    if (selected.kind === "arkade") {
-      void openWalletAndSync(selected.id);
-    } else if (selected.kind === "lightning") {
-      const walletId = selected.id;
-      void (async () => {
-        try {
-          const bal = await fetchLightningBalance(walletId);
-          if (selectedIdRef.current !== walletId) return;
-          setBalance(bal);
-          setBalanceStatus("ready");
-          void writeCachedBalance(networkId, walletId, bal);
-          try {
-            await syncLightningHistory(networkId, walletId);
-            if (selectedIdRef.current === walletId) {
-              setActivityEpoch((n) => n + 1);
-            }
-          } catch (e) {
-            console.warn("[basic] lightning history sync failed", e);
-          }
-        } catch (e) {
-          console.warn("[basic] lightning balance failed", e);
-          if (selectedIdRef.current !== walletId) return;
-          setBalance({ total: 0, available: 0, boarding: 0 });
-          setBalanceStatus("error");
-        }
-      })();
+    // Engine / ASP / LN sync wait for AppLock unlock when biometrics lock is ON.
+    // Inventory + cached balance above already ran so Unlock can paint.
+    const privacy = await readPrivacySettings();
+    if (!privacy.biometricsLock) {
+      setEngineBootAllowed(true);
+      return;
     }
+    console.warn("[basic] engine boot deferred until AppLock unlock");
   }, [openWalletAndSync]);
 
   const provisionFromMnemonic = useCallback(
@@ -3423,6 +3420,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setSessionLive(false);
     setOpenRestoreDone(false);
     openRestoreDoneRef.current = false;
+    coldLightningBootRef.current = false;
+    // Stay allowed — post-reset onboarding must not wait for a lock that has no wallet.
+    setEngineBootAllowed(true);
     await clearWarmupSeen();
   }, []);
 
@@ -3462,6 +3462,61 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void bootstrapExisting();
   }, [bootstrapExisting]);
+
+  // AppLockGate → allow Keystore/ASP open (cold start). Re-lock does not revoke.
+  useEffect(() => {
+    return subscribeAppUnlocked(() => {
+      setEngineBootAllowed(true);
+    });
+  }, []);
+
+  // Cold open after unlock (or immediately when biometrics lock is off).
+  useEffect(() => {
+    if (!ready || !engineBootAllowed || !hasWallet) return;
+    const selected = selectedWallet;
+    if (!selected) return;
+
+    if (selected.kind === "arkade") {
+      if (wallet || openingRef.current || openInFlightRef.current) return;
+      void openWalletAndSync(selected.id);
+      return;
+    }
+
+    if (selected.kind !== "lightning") return;
+    if (coldLightningBootRef.current) return;
+    coldLightningBootRef.current = true;
+    const walletId = selected.id;
+    const networkId = getNetworkConfig().id;
+    void (async () => {
+      try {
+        const bal = await fetchLightningBalance(walletId);
+        if (selectedIdRef.current !== walletId) return;
+        setBalance(bal);
+        setBalanceStatus("ready");
+        void writeCachedBalance(networkId, walletId, bal);
+        try {
+          await syncLightningHistory(networkId, walletId);
+          if (selectedIdRef.current === walletId) {
+            setActivityEpoch((n) => n + 1);
+          }
+        } catch (e) {
+          console.warn("[basic] lightning history sync failed", e);
+        }
+      } catch (e) {
+        console.warn("[basic] lightning balance failed", e);
+        if (selectedIdRef.current !== walletId) return;
+        setBalance({ total: 0, available: 0, boarding: 0 });
+        setBalanceStatus("error");
+      }
+    })();
+  }, [
+    ready,
+    engineBootAllowed,
+    hasWallet,
+    selectedWallet,
+    wallet,
+    openWalletAndSync,
+  ]);
 
   useEffect(() => {
     if (!wallet || balanceStatus !== "error") return;
@@ -4070,11 +4125,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     if (ready && !hasWallet) setSessionLive(true);
   }, [ready, hasWallet]);
 
-  // Encrypted contacts directory (Nostr) — independent of Path C backup enable.
+  // Encrypted contacts directory (Nostr) — after unlock + warmup only.
   useEffect(() => {
-    if (sessionPhase !== "live") return;
+    if (!engineBootAllowed || sessionPhase !== "live") return;
     queueContactsDirectoryBootSync();
-  }, [sessionPhase]);
+  }, [engineBootAllowed, sessionPhase]);
 
   // Debounced background exit package when recovery address is set.
   useEffect(() => {
@@ -4089,6 +4144,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       ready,
       hasWallet,
       sessionPhase,
+      engineBootAllowed,
       walletInteractive,
       openRestoreDone,
       markSessionLive,
@@ -4144,6 +4200,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       ready,
       hasWallet,
       sessionPhase,
+      engineBootAllowed,
       walletInteractive,
       openRestoreDone,
       markSessionLive,

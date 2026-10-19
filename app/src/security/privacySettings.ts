@@ -1,6 +1,7 @@
 /**
  * Penpot 05c Privacy preferences.
- * Biometrics lock gates app open; also unlocks Path C backup passphrase into RAM.
+ * Biometrics lock gates app open and cold engine/ASP boot; also unlocks Path C
+ * backup passphrase into RAM.
  * App PIN is optional unlock fallback (01f) — configured separately.
  */
 

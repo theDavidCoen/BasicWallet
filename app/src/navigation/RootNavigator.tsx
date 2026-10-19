@@ -95,9 +95,11 @@ const navTheme = {
 };
 
 export function RootNavigator() {
-  const { ready, hasWallet, sessionPhase } = useWallet();
+  const { ready, hasWallet, sessionPhase, engineBootAllowed } = useWallet();
   const navigationRef = useNavigationContainerRef<RootStackParamList>();
-  const navMounted = hasWallet && sessionPhase !== "warming";
+  // Home shell only after unlock + warmup (not under a locked overlay).
+  const navMounted =
+    hasWallet && engineBootAllowed && sessionPhase !== "warming";
 
   // Bind only when NavigationContainer is actually mounted (not WalletWarmup).
   useEffect(() => {
@@ -115,10 +117,13 @@ export function RootNavigator() {
 
   // One AppLockGate for the whole session — remounting around warmup caused a
   // second biometric prompt when switching to Home.
+  // Until unlock: inert underlay only (no warmup/Home/ASP). Lock is the session UI.
   return (
     <AppLockGate>
       <UserPresenceHost />
-      {hasWallet && sessionPhase === "warming" ? (
+      {hasWallet && !engineBootAllowed ? (
+        <View style={{ flex: 1, backgroundColor: colors.bg }} />
+      ) : hasWallet && sessionPhase === "warming" ? (
         <WalletWarmupScreen />
       ) : (
         <NavigationContainer

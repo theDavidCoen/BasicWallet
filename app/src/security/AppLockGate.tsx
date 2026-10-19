@@ -66,7 +66,7 @@ export function AppLockGate({ children }: { children: ReactNode }) {
   const unlockingRef = useRef(false);
   /** Sync unlock for AppState — setState alone races with presence end → second bio. */
   const unlockedRef = useRef(false);
-  /** AppLockGate mounts only after wallet bootstrap — track mid-session provision. */
+  /** Mounts after inventory bootstrap; engine open waits for unlock. Mid-session provision tracked here. */
   const prevHasWalletRef = useRef(hasWallet);
   const bioWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Ignore stale authenticateAsync results after a newer attempt starts. */
@@ -254,8 +254,8 @@ export function AppLockGate({ children }: { children: ReactNode }) {
     // No auto-prompt on cold start or resume — user taps the circle.
   }, [refreshPinAvailable]);
 
-  // Cold start only (this gate mounts after wallet bootstrap). Mid-session
-  // provision must not re-enter lock — see hasWallet effect below.
+  // Cold start only (inventory ready; Keystore/ASP still deferred until unlock).
+  // Mid-session provision must not re-enter lock — see hasWallet effect below.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
