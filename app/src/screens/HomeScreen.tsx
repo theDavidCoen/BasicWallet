@@ -60,10 +60,8 @@ import {
   consumeForceHomeTourForQa,
   isHomeTourPending,
   isHomeTourPendingSync,
-  isHomeTourUiOpen,
   markHomeTourDone,
   setHomeTourUiOpen,
-  subscribeHomeTourUi,
 } from "../home/homeTour";
 import {
   noteHomeScreenRender,
@@ -93,61 +91,10 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 /**
- * Gate: first-wallet / forced tour mounts ONLY the overlay — Home chrome, rates,
- * gestures, and wallet UI hooks stay unmounted until dismiss (Samsung first-paint).
+ * Home always mounts (cached chrome under Spotlight D). Heavy ASP/rates work is
+ * frozen via isHomeTourUiOpen — never leave a black void under the overlay.
  */
 export function HomeScreen() {
-  const [tourOnly, setTourOnly] = useState(
-    () => isHomeTourPendingSync() || isHomeTourUiOpen(),
-  );
-
-  useEffect(() => {
-    return subscribeHomeTourUi(() => {
-      setTourOnly(isHomeTourUiOpen() || isHomeTourPendingSync());
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!tourOnly) return;
-    let cancelled = false;
-    void (async () => {
-      const pending = await isHomeTourPending();
-      if (cancelled) return;
-      if (pending || isHomeTourUiOpen()) {
-        setHomeTourUiOpen(true);
-        setTourOnly(true);
-      } else {
-        setTourOnly(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [tourOnly]);
-
-  const finishTourOnly = useCallback(() => {
-    console.log("[HomeTour] tour-only shell dismiss → mount Home body");
-    void markHomeTourDone();
-    setHomeTourUiOpen(false);
-    setTourOnly(false);
-  }, []);
-
-  if (tourOnly) {
-    return (
-      <View style={styles.full} collapsable={false}>
-        <HomeTourOverlay
-          visible
-          onSkip={finishTourOnly}
-          onDone={finishTourOnly}
-        />
-      </View>
-    );
-  }
-
-  return <HomeScreenBody />;
-}
-
-function HomeScreenBody() {
   const navigation = useNavigation<RootNav>();
   const { t } = useI18n();
   const {
@@ -1225,15 +1172,13 @@ function HomeScreenBody() {
   return (
     <View style={styles.full} collapsable={false}>
       {/*
-        QA / mid-session force-tour: do NOT keep Home chrome mounted under the
-        overlay — balance/rates/gestures still re-render and steal the first
-        seconds (Samsung). Product first-wallet path uses RootNavigator
-        tour-only shell instead (Home not mounted at all).
+        Keep real Home chrome under the tour (cached balance / avatar / CTAs).
+        Gestures stay locked while tourLocksHome; WalletProvider freezes ASP.
       */}
-      {tourOpen ? (
-        <View style={styles.full} collapsable={false} />
-      ) : tourLocksHome ? (
-        homeTree
+      {tourLocksHome ? (
+        <View style={styles.full} pointerEvents="none" collapsable={false}>
+          {homeTree}
+        </View>
       ) : (
         <GestureDetector gesture={homeSwipe}>{homeTree}</GestureDetector>
       )}

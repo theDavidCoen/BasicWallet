@@ -1327,6 +1327,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         );
         return;
       }
+      // Tour owns the JS thread — do not arm boost / getBalance under overlay.
+      if (homeTourUiOpenRef.current || isHomeTourUiOpen()) {
+        console.warn(
+          "[basic] chat inbound ASP refresh deferred (home tour open)",
+          amountSats,
+        );
+        return;
+      }
       // Boost short polls so a real vtxo shows up without inventing sats.
       incomingWatchBoostRef.current = Math.max(
         incomingWatchBoostRef.current,
@@ -2446,10 +2454,39 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           openingRef.current = false;
           void (async () => {
             if (selectedIdRef.current !== walletId) return;
+            // Lightweight address warm is OK; heavy restore/reload waits for tour.
             void syncReceiveAddresses(w);
             try {
               await afterInteractionsOrTimeout(800);
               if (selectedIdRef.current !== walletId) return;
+              if (
+                homeTourUiOpenRef.current ||
+                isHomeTourUiOpen() ||
+                isHomeTourPendingSync()
+              ) {
+                console.warn(
+                  "[basic] post-open restore/reload deferred (home tour open)",
+                );
+                await new Promise<void>((resolve) => {
+                  const done = () => {
+                    if (
+                      !isHomeTourUiOpen() &&
+                      !isHomeTourPendingSync()
+                    ) {
+                      resolve();
+                      return true;
+                    }
+                    return false;
+                  };
+                  if (done()) return;
+                  const unsub = subscribeHomeTourUi(() => {
+                    if (done()) unsub();
+                  });
+                  // Closed between check and subscribe — avoid hang.
+                  if (done()) unsub();
+                });
+                if (selectedIdRef.current !== walletId) return;
+              }
               if (consumeRestorePending(walletId)) {
                 await runWalletRestore(walletId, w);
                 if (selectedIdRef.current !== walletId) return;
@@ -3594,6 +3631,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const w = wallet;
     const walletId = selectedIdRef.current;
     if (!w || !walletId || selectedWallet?.kind !== "arkade") return;
+    // Do not arm the poll loop at all while Spotlight D owns the JS thread
+    // (create-path setWallet mid-tour used to start boosted ticks + notify flip).
+    if (
+      homeTourUiOpenRef.current ||
+      isHomeTourUiOpen() ||
+      isHomeTourPendingSync()
+    ) {
+      console.warn("[basic] balancePoll deferred (home tour open)");
+      return;
+    }
     // Expo notify is flaky — keep a safety poll. Slow when push confirmed; faster if silent/dead.
     // α82: skip ticks while backgrounded. α84: Receive+notify → rare gentle poll only.
     // α88: subscribed-but-silent uses α86 rates (30s/8s), not 45s/15s.
@@ -3647,12 +3694,21 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     incomingWatchBoostEpoch,
     notifySubscribed,
     notifyPushAlive,
+    homeTourUiEpoch,
   ]);
 
   useEffect(() => {
     const w = wallet;
     const walletId = selectedIdRef.current;
     if (!w || !walletId || selectedWallet?.kind !== "arkade") return;
+    if (
+      homeTourUiOpenRef.current ||
+      isHomeTourUiOpen() ||
+      isHomeTourPendingSync()
+    ) {
+      console.warn("[basic] notifyIncomingFunds deferred start (home tour open)");
+      return;
+    }
     let stop: (() => void) | undefined;
     let cancelled = false;
     let sawSubscribeReplay = false;
@@ -4160,6 +4216,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     ensureBalanceAtLeast,
     setNotifyPushAlive,
     markNotifyPushAlive,
+    homeTourUiEpoch,
   ]);
 
   const balanceSats = balance?.total ?? null;
@@ -4193,6 +4250,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         if (incomingWatchBoostRef.current > 0) {
           incomingWatchBoostRef.current = 0;
           console.warn("[basic] incomingWatchBoost cleared for tour");
+          setIncomingWatchBoostEpoch((n) => n + 1);
         }
         return;
       }
