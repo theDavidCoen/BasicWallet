@@ -18,7 +18,8 @@ Settings → About shows version + git commit for the APK you installed.
 ## Basic features
 
 ### Home
-- After the first wallet on a fresh install, a short **onboarding tour** (Spotlight) introduces Home gestures; Skip or finish once (factory reset does not replay it).
+- After the first wallet on a fresh install, a short **onboarding tour** (Spotlight) introduces Home gestures over the real Home chrome. Use **Back** / **Next** (or swipe the card left/right); **Skip** or finish once. Factory reset does not replay it. While the tour is open, heavy wallet sync stays paused so taps stay fluid; sync catches up when you dismiss.
+- If **App Lock** is enabled, unlock first: the wallet engine (Keystore / ASP open) starts only after unlock, not under the lock screen.
 
 - **Balance** — tap the amount to hide/show; tap **⇅** (when not in Fiat Mode) to cycle sats / fiat display units.
 - **Receive / Send** — primary actions under the balance.
@@ -116,6 +117,7 @@ These are easy to miss; they are part of the real Home / Send UX.
 | **Swipe down** from just below the logo | Force **balance + activity** resync (circular spinner while it runs) |
 | **Swipe left → right** (LTR) on Home | Open **POS** side page (Arkade: amounted BIP21 / optional `lightning=`; **Lightning node wallet**: keypad + optional memo → BOLT11) |
 | **Swipe right → left** (RTL) on Home | Open **Scan QR** side page |
+| **Tour card** swipe left / right (first-wallet Spotlight only) | Next / Back on the onboarding steps (same as the in-card buttons) |
 | **Chat & Pay** under Receive/Send | Open Pay in Chat hub |
 | **R$** button (header, Arkade wallet) | Enter Fiat Mode sheet |
 | **₿** button (header, while Fiat Mode on) | Exit Fiat Mode sheet |
@@ -257,6 +259,7 @@ Once connected and selected:
 ### Security gates
 
 - App lock / biometrics for sensitive actions (backup enable, export phrase, Enter Fiat Mode, etc.).
+- With App Lock on, cold start shows Unlock first; Arkade Keystore/ASP open and balance sync start only after a successful unlock (not while the lock UI is up).
 - Recovery phrase export is gated; screen capture blocked where wired.
 
 ---
@@ -272,7 +275,7 @@ Switching network can reset wallet engine state — backup first.
 
 ## Get the APK
 
-Latest: **[v0.10.0](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.10.0)** (arm64-v8a).
+Latest: **[v0.10.1](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.10.1)** (arm64-v8a).
 
 All releases: [theDavidCoen/BasicWallet/releases](https://github.com/theDavidCoen/BasicWallet/releases). Prefer arm64-v8a builds + verify SHA256 (and PGP on the checksum when present).
 

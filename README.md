@@ -21,7 +21,7 @@ Use at your own risk. There is no warranty.
 
 ## Download
 
-Latest release: **[v0.10.0](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.10.0)** (arm64-v8a APK + SHA256).
+Latest release: **[v0.10.1](https://github.com/theDavidCoen/BasicWallet/releases/tag/v0.10.1)** (arm64-v8a APK + SHA256).
 
 All builds: [Releases](https://github.com/theDavidCoen/BasicWallet/releases). Prefer verifying the checksum before install.
 
@@ -55,7 +55,7 @@ This is also not an Edge product: I work for Edge wallet as Software QA Tester &
 
 Capabilities evolve quickly; check Settings → About for the build version and git commit. In recent alphas you can typically:
 
-- Create or restore an **Arkade seed wallet (HD)**; fresh installs get a short Home onboarding tour after the first wallet
+- Create or restore an **Arkade seed wallet (HD)**; fresh installs get a short Home onboarding tour after the first wallet (card Back/Next + swipe; heavy ASP/sync waits until unlock and until the tour finishes)
 - Receive Arkade funds and send to addresses / contacts
 - **Multisend** — one Arkade send to several `ark…` recipients (amounts per line; activity shows all destinations)
 - **Fiat Mode** — hold a stable unit on the selected Arkade wallet; enter/exit via Home R$ / ₿; inbound auto-swap while on
@@ -64,7 +64,7 @@ Capabilities evolve quickly; check Settings → About for the build version and 
 - **Connect a Lightning node** (BTCPay LND REST, LNDHub) for node balance / LN flows; LND REST Activity + Send with preimage/memo; Receive / Send / POS Lightning UX
 - **Arkade Lightning** — from a Personal (Arkade seed) wallet: pay BOLT11 / LNURL / Lightning Address via the intents corridor (Confirm + biometrics, no auto-pay); Receive BIP21 may embed a minted `lightning=` invoice when a solver can mint for the amount
 - Collaborative offboard and **unilateral exit** related settings (escape hatches)
-- Set app PIN / biometrics gates for sensitive actions; Unlock circle stays tappable after Home/recents warm resume (no auto-prompt)
+- Set app PIN / biometrics gates for sensitive actions; Unlock circle stays tappable after Home/recents warm resume (no auto-prompt); with App Lock on, Keystore/ASP engine boot waits until unlock
 - Export recovery phrase only after presence checks (screen capture blocked where wired)
 - **Continue with passkey** (WebAuthn / Credential Manager PRF → Personal seed + Nostr identity); if no passkey manager is available, continue without passkey
 - **Pair with Bluetooth** — move wallets / nsec to a nearby phone on the welcome screen (lobby code + biometrics; passkeys stay on Device 1)
