@@ -56,12 +56,15 @@ import {
 } from "../chat/chatStore";
 import { useI18n } from "../i18n";
 import { HomeTourOverlay } from "../components/HomeTourOverlay";
+import { HomeTourUnderlay } from "../components/HomeTourUnderlay";
 import {
   consumeForceHomeTourForQa,
   isHomeTourPending,
   isHomeTourPendingSync,
+  isHomeTourUiOpen,
   markHomeTourDone,
   setHomeTourUiOpen,
+  subscribeHomeTourUi,
 } from "../home/homeTour";
 import {
   noteHomeScreenRender,
@@ -91,10 +94,62 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 /**
- * Home always mounts (cached chrome under Spotlight D). Heavy ASP/rates work is
- * frozen via isHomeTourUiOpen — never leave a black void under the overlay.
+ * Gate: while tour pending/open, mount a static Home-looking underlay + overlay
+ * only — full Home hooks (rates/gestures/Soft*) stay unmounted (Samsung freeze).
  */
 export function HomeScreen() {
+  const [tourShell, setTourShell] = useState(
+    () => isHomeTourPendingSync() || isHomeTourUiOpen(),
+  );
+
+  useEffect(() => {
+    return subscribeHomeTourUi(() => {
+      setTourShell(isHomeTourUiOpen() || isHomeTourPendingSync());
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!tourShell) return;
+    let cancelled = false;
+    void (async () => {
+      const pending = await isHomeTourPending();
+      if (cancelled) return;
+      if (pending || isHomeTourUiOpen()) {
+        setHomeTourUiOpen(true);
+        setTourShell(true);
+      } else {
+        setTourShell(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tourShell]);
+
+  const finishTourShell = useCallback(() => {
+    console.log("[HomeTour] underlay shell dismiss → mount Home body");
+    void markHomeTourDone();
+    setHomeTourUiOpen(false);
+    setTourShell(false);
+  }, []);
+
+  if (tourShell) {
+    return (
+      <View style={styles.full} collapsable={false}>
+        <HomeTourUnderlay />
+        <HomeTourOverlay
+          visible
+          onSkip={finishTourShell}
+          onDone={finishTourShell}
+        />
+      </View>
+    );
+  }
+
+  return <HomeScreenBody />;
+}
+
+function HomeScreenBody() {
   const navigation = useNavigation<RootNav>();
   const { t } = useI18n();
   const {
@@ -1172,13 +1227,13 @@ export function HomeScreen() {
   return (
     <View style={styles.full} collapsable={false}>
       {/*
-        Keep real Home chrome under the tour (cached balance / avatar / CTAs).
-        Gestures stay locked while tourLocksHome; WalletProvider freezes ASP.
+        QA force-tour mid-session: static underlay (not full Home tree) so
+        Soft hints, rates, and gestures stay off. Product first-wallet uses gate.
       */}
-      {tourLocksHome ? (
-        <View style={styles.full} pointerEvents="none" collapsable={false}>
-          {homeTree}
-        </View>
+      {tourOpen ? (
+        <HomeTourUnderlay />
+      ) : tourLocksHome ? (
+        homeTree
       ) : (
         <GestureDetector gesture={homeSwipe}>{homeTree}</GestureDetector>
       )}

@@ -58,7 +58,7 @@ import {
   publishLabelDirectory,
   queuePublishLabelDirectory,
 } from "../nostr/labelDirectory";
-import { queueContactsDirectoryBootSync, syncContactsDirectoryAfterPasskey } from "../contacts/contactsNostrSync";
+import { queueContactsDirectoryBootSync } from "../contacts/contactsNostrSync";
 import { mnemonicFromEntropy } from "../onboarding/mnemonicFromEntropy";
 import { combineCsprngWithMotion } from "../onboarding/motionEntropy";
 import { isChatThreadFocused } from "../chat/chatThreadFocus";
@@ -3175,13 +3175,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         console.warn("[basic] label directory fetch failed", e);
       }
 
-      // Contacts use the same derived nsec (kind 30078). Must run after storeNostrKeyPair;
-      // boot sync alone is not enough (it may have skipped before identity existed).
-      try {
-        await syncContactsDirectoryAfterPasskey();
-      } catch (e) {
-        console.warn("[basic] contacts directory after passkey", e);
-      }
+      // Contacts use the same derived nsec (kind 30078). Defer the Nostr fetch off
+      // the passkey→Ready→tour critical path (Samsung: directory applied then
+      // first Next froze). Boot sync after tour dismiss still runs.
+      console.warn(
+        "[basic] contacts directory after passkey deferred (post-tour boot)",
+      );
+      queueContactsDirectoryBootSync();
 
       let actives = await listActivePasskeyChildren();
 

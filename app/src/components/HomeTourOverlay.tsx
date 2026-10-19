@@ -454,8 +454,9 @@ const TourBody = memo(function TourBody({
   /** Dim/outside only — nav buttons work immediately (rc.19 arm gated all hits). */
   const [dimArmed, setDimArmed] = useState(false);
   /**
-   * Soft* Reanimated hints (withRepeat) mount after the card paints — first
-   * seconds stay fluid for Back/Next/swipe (Samsung first-paint jank).
+   * Soft* Reanimated+SVG hints — Samsung rc.5 froze on first Next when Soft*
+   * mounted at TOUR_ARM+120 (synchronouslyUpdateUIProps / SvgView.draw storm).
+   * Only after step ≥ 1 and a settle delay; no prefetch warm loops.
    */
   const [hintsLive, setHintsLive] = useState(false);
   const stepRef = useRef(0);
@@ -467,15 +468,22 @@ const TourBody = memo(function TourBody({
 
   useEffect(() => {
     setDimArmed(false);
-    setHintsLive(false);
     const arm = setTimeout(() => setDimArmed(true), TOUR_ARM_MS);
-    // Hints after arm + one frame budget — card/nav first.
-    const hints = setTimeout(() => setHintsLive(true), TOUR_ARM_MS + 120);
     return () => {
       clearTimeout(arm);
-      clearTimeout(hints);
     };
   }, []);
+
+  useEffect(() => {
+    if (stepIndex < 1) {
+      setHintsLive(false);
+      return;
+    }
+    const hints = setTimeout(() => setHintsLive(true), 700);
+    return () => {
+      clearTimeout(hints);
+    };
+  }, [stepIndex]);
 
   useEffect(() => {
     console.log("[HomeTour] body mounted");
@@ -513,11 +521,8 @@ const TourBody = memo(function TourBody({
     return Math.round(windowH * CLUSTER_TOP_FRAC);
   }, []);
 
-  /** Prefetch Soft* only after hints are live (never on first paint). */
-  const prefetchHint =
-    hintsLive && stepIndex < STEP_COUNT - 1
-      ? HOME_TOUR_STEPS[stepIndex + 1]!.hint
-      : null;
+  /** No Soft* prefetch — warm withRepeat loops still cost first Next on Samsung. */
+  const prefetchHint = null;
 
   const applyStep = useCallback((next: number, dir: "back" | "next", t0: number) => {
     const fromStep = stepRef.current;
