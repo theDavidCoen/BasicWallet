@@ -4189,6 +4189,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setHomeTourUiEpoch((n) => n + 1);
       if (open) {
         console.warn("[basic] home tour freeze on");
+        // Drop Receive boost storms (getBalance 3s timeouts) while tour owns JS.
+        if (incomingWatchBoostRef.current > 0) {
+          incomingWatchBoostRef.current = 0;
+          console.warn("[basic] incomingWatchBoost cleared for tour");
+        }
         return;
       }
       console.warn("[basic] home tour freeze off — catch-up");
