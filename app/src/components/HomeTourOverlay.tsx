@@ -453,6 +453,11 @@ const TourBody = memo(function TourBody({
   const [stepIndex, setStepIndex] = useState(0);
   /** Dim/outside only — nav buttons work immediately (rc.19 arm gated all hits). */
   const [dimArmed, setDimArmed] = useState(false);
+  /**
+   * Soft* Reanimated hints (withRepeat) mount after the card paints — first
+   * seconds stay fluid for Back/Next/swipe (Samsung first-paint jank).
+   */
+  const [hintsLive, setHintsLive] = useState(false);
   const stepRef = useRef(0);
   const tapProbe = useRef<TapProbe | null>(null);
   const onSkipRef = useRef(onSkip);
@@ -462,8 +467,14 @@ const TourBody = memo(function TourBody({
 
   useEffect(() => {
     setDimArmed(false);
-    const id = setTimeout(() => setDimArmed(true), TOUR_ARM_MS);
-    return () => clearTimeout(id);
+    setHintsLive(false);
+    const arm = setTimeout(() => setDimArmed(true), TOUR_ARM_MS);
+    // Hints after arm + one frame budget — card/nav first.
+    const hints = setTimeout(() => setHintsLive(true), TOUR_ARM_MS + 120);
+    return () => {
+      clearTimeout(arm);
+      clearTimeout(hints);
+    };
   }, []);
 
   useEffect(() => {
@@ -502,9 +513,9 @@ const TourBody = memo(function TourBody({
     return Math.round(windowH * CLUSTER_TOP_FRAC);
   }, []);
 
-  /** Prefetch Soft* for the next step so first Next into it is warm. */
+  /** Prefetch Soft* only after hints are live (never on first paint). */
   const prefetchHint =
-    stepIndex < STEP_COUNT - 1
+    hintsLive && stepIndex < STEP_COUNT - 1
       ? HOME_TOUR_STEPS[stepIndex + 1]!.hint
       : null;
 
@@ -569,11 +580,13 @@ const TourBody = memo(function TourBody({
     <View style={styles.portalRoot} pointerEvents="box-none">
       <DimTapSkip armed={dimArmed} onSkip={goSkip} label={skipLabel} />
 
-      <TourHintsLayer
-        activeHint={step.hint}
-        prefetchHint={prefetchHint}
-        insetsTop={insets.top}
-      />
+      {hintsLive ? (
+        <TourHintsLayer
+          activeHint={step.hint}
+          prefetchHint={prefetchHint}
+          insetsTop={insets.top}
+        />
+      ) : null}
 
       <View style={styles.stage} pointerEvents="box-none">
         <View

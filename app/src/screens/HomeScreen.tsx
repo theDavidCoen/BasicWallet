@@ -304,11 +304,18 @@ export function HomeScreen() {
     setHomeTourUiOpen(tourOpen);
   }, [tourOpen]);
 
-  // Perf probe: JS rAF fps while tour is open (proves Soft*/Home contention).
+  // Perf probe: start after Soft* arm window so the probe itself is not in the
+  // first-seconds contention window (dev/QA only signal).
   useEffect(() => {
-    if (tourOpen) startTourJsFpsProbe();
-    else stopTourJsFpsProbe();
-    return () => stopTourJsFpsProbe();
+    if (!tourOpen) {
+      stopTourJsFpsProbe();
+      return;
+    }
+    const id = setTimeout(() => startTourJsFpsProbe(), 700);
+    return () => {
+      clearTimeout(id);
+      stopTourJsFpsProbe();
+    };
   }, [tourOpen]);
 
   // QA: About long-press Version → requestForceHomeTourForQa → reopen overlay.
@@ -471,14 +478,18 @@ export function HomeScreen() {
       const pull = async (codes: DisplayCurrencyCode[]) => {
         if (codes.length === 0 || cancelled) return;
         // Skip starting a new pull while tour is open (JS contention).
-        // If a pull is already in flight, still apply when it returns.
-        const blockedStart = tourOpenRef.current;
-        if (blockedStart) {
+        if (tourOpenRef.current) {
           console.log("[HomeTourRates] poll skip start (tour open)");
           return;
         }
         const rates = await fetchSpotRates(codes);
         if (cancelled) return;
+        // Also block apply — in-flight pulls started pre-tour were landing
+        // setFiatRates under the overlay (Samsung jsFps≈19 at tour open).
+        if (tourOpenRef.current) {
+          console.log("[HomeTourRates] poll skip apply (tour open)");
+          return;
+        }
         if (Object.keys(rates).length > 0) {
           setFiatRates(rates);
           console.log(

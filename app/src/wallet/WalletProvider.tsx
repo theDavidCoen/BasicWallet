@@ -79,6 +79,7 @@ import {
 } from "../chat/chatInboundHomeCredit";
 import { listInboundPaymentsByStatus } from "../chat/chatStore";
 import {
+  isHomeTourPendingSync,
   isHomeTourUiOpen,
   subscribeHomeTourUi,
 } from "../home/homeTour";
@@ -2472,27 +2473,37 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
               }
             } finally {
               openRestoreDoneRef.current = true;
-              setOpenRestoreDone(true);
-              // If a live balance already landed under quiet, clear now; otherwise
-              // the next persistBalance (poll/reload) will clear after adopting.
-              if (openSyncQuietRef.current && (lastAckRef.current?.total ?? 0) > 0) {
-                openSyncQuietRef.current = false;
-                openNoticeQuietUntilRef.current =
-                  Date.now() + POST_OPEN_NOTICE_QUIET_MS;
-                console.warn("[basic] openSyncQuiet off (open settle done)", {
-                  ackTotal: lastAckRef.current?.total ?? null,
-                  noticeQuietMs: POST_OPEN_NOTICE_QUIET_MS,
-                });
-                // Cache/ack already on screen — leave syncing even if live reload was
-                // skipped (POS hold) or persist early-returned.
-                if (prevBalanceRef.current) setBalanceStatus("ready");
+              // Tour open: keep refs only — setState here re-renders Home under overlay
+              // (Samsung first-seconds jank; log: open settle during tour → jsFps≈19).
+              if (homeTourUiOpenRef.current) {
+                console.warn("[basic] open settle UI deferred (home tour open)");
               } else {
-                console.warn("[basic] open settle done, quiet awaits first live", {
-                  ackTotal: lastAckRef.current?.total ?? null,
-                });
+                setOpenRestoreDone(true);
+                // If a live balance already landed under quiet, clear now; otherwise
+                // the next persistBalance (poll/reload) will clear after adopting.
+                if (openSyncQuietRef.current && (lastAckRef.current?.total ?? 0) > 0) {
+                  openSyncQuietRef.current = false;
+                  openNoticeQuietUntilRef.current =
+                    Date.now() + POST_OPEN_NOTICE_QUIET_MS;
+                  console.warn("[basic] openSyncQuiet off (open settle done)", {
+                    ackTotal: lastAckRef.current?.total ?? null,
+                    noticeQuietMs: POST_OPEN_NOTICE_QUIET_MS,
+                  });
+                  // Cache/ack already on screen — leave syncing even if live reload was
+                  // skipped (POS hold) or persist early-returned.
+                  if (prevBalanceRef.current) setBalanceStatus("ready");
+                } else {
+                  console.warn("[basic] open settle done, quiet awaits first live", {
+                    ackTotal: lastAckRef.current?.total ?? null,
+                  });
+                }
               }
             }
             if (selectedIdRef.current !== walletId) return;
+            if (homeTourUiOpenRef.current) {
+              console.warn("[basic] catch-up/renew skipped (home tour open)");
+              return;
+            }
             scheduleCatchUpPolls(w, walletId);
             try {
               const mgr = await withTimeout(
@@ -3499,8 +3510,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // Cold open after unlock (or immediately when biometrics lock is off).
+  // If Spotlight D tour is pending/open, skip engine open so first tour seconds
+  // stay fluid — catch-up runs when the tour latch clears (homeTourUiEpoch).
   useEffect(() => {
     if (!ready || !engineBootAllowed || !hasWallet) return;
+    if (isHomeTourUiOpen() || isHomeTourPendingSync()) {
+      // Show Home+tour with cached balance; do not wait on Wallet.create.
+      if (!sessionLive) setSessionLive(true);
+      console.warn("[basic] engine open deferred (home tour pending/open)");
+      return;
+    }
     const selected = selectedWallet;
     if (!selected) return;
 
@@ -3544,6 +3563,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     selectedWallet,
     wallet,
     openWalletAndSync,
+    homeTourUiEpoch,
+    sessionLive,
   ]);
 
   useEffect(() => {
@@ -4171,9 +4192,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       console.warn("[basic] home tour freeze off — catch-up");
+      // Flush open-settle flags deferred while tour owned the JS thread.
+      if (openRestoreDoneRef.current) setOpenRestoreDone(true);
       const walletId = selectedIdRef.current;
       const w = getOpenWallet();
-      if (w && walletId) void loadBalance(w, walletId);
+      if (w && walletId) {
+        void loadBalance(w, walletId);
+        scheduleCatchUpPolls(w, walletId);
+      }
     });
   }, [loadBalance]);
 
