@@ -78,6 +78,10 @@ import {
   wasChatInboundHomeCredited,
 } from "../chat/chatInboundHomeCredit";
 import { listInboundPaymentsByStatus } from "../chat/chatStore";
+import {
+  isHomeTourUiOpen,
+  subscribeHomeTourUi,
+} from "../home/homeTour";
 import { subscribeAppUnlocked } from "../security/appLockEvents";
 import { isPresencePromptInFlight } from "../security/presencePrompt";
 import { readPrivacySettings } from "../security/privacySettings";
@@ -685,6 +689,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const openInFlightRef = useRef<Promise<void> | null>(null);
   /** One-shot cold lightning balance probe after unlock (arkade uses openingRef). */
   const coldLightningBootRef = useRef(false);
+  /**
+   * Spotlight D tour — mirror of isHomeTourUiOpen(). Skip ASP polls / balance
+   * setState / rematerialize / Nostr boot while open (same idea as boot-after-unlock).
+   */
+  const homeTourUiOpenRef = useRef(isHomeTourUiOpen());
+  /** Bumps when tour opens/closes so effects can pause/resume. */
+  const [homeTourUiEpoch, setHomeTourUiEpoch] = useState(0);
   const openRetryCountRef = useRef(0);
   const reloadTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   /** Nested boosts from POS / Receive QR — poll balance more often while > 0. */
@@ -1391,6 +1402,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       try {
       // Stale reload after switch: never poison that wallet's display cache / ack.
       if (selectedIdRef.current !== walletId) {
+        return;
+      }
+      // Tour open: cache only — no Home setState / FundsReceived under the overlay.
+      if (homeTourUiOpenRef.current) {
+        const networkId = getNetworkConfig().id;
+        void writeCachedBalance(networkId, walletId, bal);
         return;
       }
       const networkId = getNetworkConfig().id;
@@ -2214,6 +2231,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       if (aspPollPausedRef.current > 0) {
         return null;
       }
+      // Home tour open — keep JS free for Next/Back / swipe (no getBalance under overlay).
+      if (homeTourUiOpenRef.current) {
+        return null;
+      }
       // POS keypad open — never start network balance work under the finger.
       if (posUiHoldRef.current > 0) {
         return null;
@@ -2275,7 +2296,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         if (
           balancePullAgainRef.current &&
           aspPollPausedRef.current === 0 &&
-          posUiHoldRef.current === 0
+          posUiHoldRef.current === 0 &&
+          !homeTourUiOpenRef.current
         ) {
           balancePullAgainRef.current = false;
           const id = selectedIdRef.current;
@@ -2295,6 +2317,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   pullBalanceNowRef.current = () => {
     if (aspPollPausedRef.current > 0) return;
     if (posUiHoldRef.current > 0) return;
+    if (homeTourUiOpenRef.current) return;
     const w = wallet;
     const walletId = selectedIdRef.current;
     if (!w || !walletId || selectedWallet?.kind !== "arkade") return;
@@ -2306,6 +2329,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     async (w: BasicWallet, walletId: string) => {
       if (selectedIdRef.current !== walletId) return;
       if (posUiHoldRef.current > 0) return;
+      if (homeTourUiOpenRef.current) return;
       await loadBalance(w, walletId);
     },
     [loadBalance],
@@ -2316,6 +2340,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     (w: BasicWallet, walletId: string, opts?: { urgent?: boolean; event?: boolean }) => {
       if (aspPollPausedRef.current > 0) return;
       if (posUiHoldRef.current > 0) return;
+      if (homeTourUiOpenRef.current) return;
       clearTimeout(reloadTimerRef.current);
       // Receive/POS awaiting: don't sit on the 1s event debounce (α81).
       const boosted = incomingWatchBoostRef.current > 0;
@@ -2330,6 +2355,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       reloadTimerRef.current = setTimeout(() => {
         if (aspPollPausedRef.current > 0) return;
         if (posUiHoldRef.current > 0) return;
+        if (homeTourUiOpenRef.current) return;
         // POS keypad / boost: balance only — never rematerialize under the finger.
         if (!isEvent && incomingWatchBoostRef.current > 0) {
           void loadBalance(w, walletId);
@@ -2742,6 +2768,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const refreshActivity = useCallback(async (opts?: { force?: boolean }) => {
     // Never rematerialize during outbound send — fights wallet.send (α69).
     if (aspPollPausedRef.current > 0) return;
+    // Tour owns the JS thread — defer history rematerialize until dismiss.
+    if (homeTourUiOpenRef.current && !opts?.force) return;
     const walletId = selectedIdRef.current;
     if (!walletId) return;
     // Cooldown after timeouts — stacked rematerialize froze Xiaomi (α70). Per wallet.
@@ -3575,6 +3603,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       if (AppState.currentState === "background") return;
       if (selectedIdRef.current !== walletId) return;
       if (posUiHoldRef.current > 0) return;
+      if (homeTourUiOpenRef.current) return;
       void loadBalance(w, walletId);
     };
     // One immediate pull on focus / effect start — then interval (notify-first).
@@ -3616,6 +3645,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         const subscribedAt = Date.now();
         const unsub = await w.notifyIncomingFunds((funds) => {
           if (cancelled || selectedIdRef.current !== walletId) return;
+          // Defer UI/balance work while Spotlight D tour owns the JS thread.
+          if (homeTourUiOpenRef.current) {
+            console.warn("[basic] notifyIncomingFunds deferred (home tour open)");
+            return;
+          }
           if (funds.type !== "utxo" && funds.spentVtxos.length === 0) {
             const vtxos = funds.newVtxos ?? [];
             const amount = vtxos.reduce((s, c) => s + (c.value ?? 0), 0);
@@ -4125,19 +4159,39 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     if (ready && !hasWallet) setSessionLive(true);
   }, [ready, hasWallet]);
 
-  // Encrypted contacts directory (Nostr) — after unlock + warmup only.
+  // Pause ASP/Nostr while Spotlight D tour is open; catch up on dismiss.
+  useEffect(() => {
+    homeTourUiOpenRef.current = isHomeTourUiOpen();
+    return subscribeHomeTourUi(() => {
+      const open = isHomeTourUiOpen();
+      homeTourUiOpenRef.current = open;
+      setHomeTourUiEpoch((n) => n + 1);
+      if (open) {
+        console.warn("[basic] home tour freeze on");
+        return;
+      }
+      console.warn("[basic] home tour freeze off — catch-up");
+      const walletId = selectedIdRef.current;
+      const w = getOpenWallet();
+      if (w && walletId) void loadBalance(w, walletId);
+    });
+  }, [loadBalance]);
+
+  // Encrypted contacts directory (Nostr) — after unlock + warmup, not during tour.
   useEffect(() => {
     if (!engineBootAllowed || sessionPhase !== "live") return;
+    if (homeTourUiOpenRef.current || isHomeTourUiOpen()) return;
     queueContactsDirectoryBootSync();
-  }, [engineBootAllowed, sessionPhase]);
+  }, [engineBootAllowed, sessionPhase, homeTourUiEpoch]);
 
   // Debounced background exit package when recovery address is set.
   useEffect(() => {
+    if (homeTourUiOpenRef.current) return;
     if (selectedWallet?.kind !== "arkade") return;
     if (balanceStatus !== "ready") return;
     if (balanceSats === null || balanceSats <= 0) return;
     scheduleAutoPrepare("balance-ready");
-  }, [selectedWallet?.kind, selectedWallet?.id, balanceStatus, balanceSats, activityEpoch]);
+  }, [selectedWallet?.kind, selectedWallet?.id, balanceStatus, balanceSats, activityEpoch, homeTourUiEpoch]);
 
   const value = useMemo(
     () => ({
