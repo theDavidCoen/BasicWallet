@@ -3,9 +3,8 @@
  *
  * Architecture:
  * - In-card Back/Next + horizontal swipe (left=next, right=back); Skip under.
- * - Settings: fingerprint in white ring under logo; opacity pulse only.
- * - Soft* for active + prefetch(next) so first Next does not pay Reanimated mount.
- * - WalletProvider + Home freeze ASP/rates/Nostr while tour open; host pointerEvents=auto.
+ * - Soft* Reanimated/SVG hints disabled for the whole tour (Samsung freeze).
+ * - Real Home chrome stays mounted under the overlay; WalletProvider freezes ASP.
  */
 
 import {
@@ -35,7 +34,6 @@ import Animated, {
   withSequence,
   withTiming,
 } from "react-native-reanimated";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
 import { HOME_TOUR_STEPS } from "../home/homeTour";
 import { logTourTap } from "../home/homeTourPerf";
@@ -449,16 +447,15 @@ const TourBody = memo(function TourBody({
   onDone: () => void;
 }) {
   const { t } = useI18n();
-  const insets = useSafeAreaInsets();
   const [stepIndex, setStepIndex] = useState(0);
   /** Dim/outside only — nav buttons work immediately (rc.19 arm gated all hits). */
   const [dimArmed, setDimArmed] = useState(false);
   /**
-   * Soft* Reanimated+SVG hints — Samsung rc.5 froze on first Next when Soft*
-   * mounted at TOUR_ARM+120 (synchronouslyUpdateUIProps / SvgView.draw storm).
-   * Only after step ≥ 1 and a settle delay; no prefetch warm loops.
+   * Soft* Reanimated+SVG hints stay OFF for the entire tour (rc.5/rc.6 Samsung:
+   * synchronouslyUpdateUIProps / SvgView.draw storm → multi-second freeze even
+   * when deferred past step 1). Card copy + dots carry guidance; Soft* can return
+   * later as non-Reanimated placeholders if product wants them.
    */
-  const [hintsLive, setHintsLive] = useState(false);
   const stepRef = useRef(0);
   const tapProbe = useRef<TapProbe | null>(null);
   const onSkipRef = useRef(onSkip);
@@ -475,18 +472,7 @@ const TourBody = memo(function TourBody({
   }, []);
 
   useEffect(() => {
-    if (stepIndex < 1) {
-      setHintsLive(false);
-      return;
-    }
-    const hints = setTimeout(() => setHintsLive(true), 700);
-    return () => {
-      clearTimeout(hints);
-    };
-  }, [stepIndex]);
-
-  useEffect(() => {
-    console.log("[HomeTour] body mounted");
+    console.log("[HomeTour] body mounted (Soft* disabled for tour)");
   }, []);
 
   const step =
@@ -520,9 +506,6 @@ const TourBody = memo(function TourBody({
     const windowH = Dimensions.get("window").height;
     return Math.round(windowH * CLUSTER_TOP_FRAC);
   }, []);
-
-  /** No Soft* prefetch — warm withRepeat loops still cost first Next on Samsung. */
-  const prefetchHint = null;
 
   const applyStep = useCallback((next: number, dir: "back" | "next", t0: number) => {
     const fromStep = stepRef.current;
@@ -584,14 +567,6 @@ const TourBody = memo(function TourBody({
   return (
     <View style={styles.portalRoot} pointerEvents="box-none">
       <DimTapSkip armed={dimArmed} onSkip={goSkip} label={skipLabel} />
-
-      {hintsLive ? (
-        <TourHintsLayer
-          activeHint={step.hint}
-          prefetchHint={prefetchHint}
-          insetsTop={insets.top}
-        />
-      ) : null}
 
       <View style={styles.stage} pointerEvents="box-none">
         <View

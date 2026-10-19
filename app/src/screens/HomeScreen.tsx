@@ -56,15 +56,12 @@ import {
 } from "../chat/chatStore";
 import { useI18n } from "../i18n";
 import { HomeTourOverlay } from "../components/HomeTourOverlay";
-import { HomeTourUnderlay } from "../components/HomeTourUnderlay";
 import {
   consumeForceHomeTourForQa,
   isHomeTourPending,
   isHomeTourPendingSync,
-  isHomeTourUiOpen,
   markHomeTourDone,
   setHomeTourUiOpen,
-  subscribeHomeTourUi,
 } from "../home/homeTour";
 import {
   noteHomeScreenRender,
@@ -94,62 +91,10 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 /**
- * Gate: while tour pending/open, mount a static Home-looking underlay + overlay
- * only — full Home hooks (rates/gestures/Soft*) stay unmounted (Samsung freeze).
+ * Real Home chrome stays mounted under Spotlight D (`pointerEvents="none"`).
+ * Soft* hints stay off for the whole tour; WalletProvider freezes ASP/chat.
  */
 export function HomeScreen() {
-  const [tourShell, setTourShell] = useState(
-    () => isHomeTourPendingSync() || isHomeTourUiOpen(),
-  );
-
-  useEffect(() => {
-    return subscribeHomeTourUi(() => {
-      setTourShell(isHomeTourUiOpen() || isHomeTourPendingSync());
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!tourShell) return;
-    let cancelled = false;
-    void (async () => {
-      const pending = await isHomeTourPending();
-      if (cancelled) return;
-      if (pending || isHomeTourUiOpen()) {
-        setHomeTourUiOpen(true);
-        setTourShell(true);
-      } else {
-        setTourShell(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [tourShell]);
-
-  const finishTourShell = useCallback(() => {
-    console.log("[HomeTour] underlay shell dismiss → mount Home body");
-    void markHomeTourDone();
-    setHomeTourUiOpen(false);
-    setTourShell(false);
-  }, []);
-
-  if (tourShell) {
-    return (
-      <View style={styles.full} collapsable={false}>
-        <HomeTourUnderlay />
-        <HomeTourOverlay
-          visible
-          onSkip={finishTourShell}
-          onDone={finishTourShell}
-        />
-      </View>
-    );
-  }
-
-  return <HomeScreenBody />;
-}
-
-function HomeScreenBody() {
   const navigation = useNavigation<RootNav>();
   const { t } = useI18n();
   const {
@@ -501,22 +446,29 @@ function HomeScreenBody() {
 
   // Recovery / pending-sweep sync once per Home focus (duplicate useFocusEffect
   // removed α89 — tap-scene lag evidence: double work on every Home focus).
+  // Skip entirely while tour owns the scene (real Home is underlay only).
   useFocusEffect(
     useCallback(() => {
+      if (tourOpenRef.current) return;
       let cancelled = false;
       void (async () => {
         await refreshPendingSweep();
-        if (cancelled || !selectedWallet || selectedWallet.kind !== "arkade") {
+        if (
+          cancelled ||
+          tourOpenRef.current ||
+          !selectedWallet ||
+          selectedWallet.kind !== "arkade"
+        ) {
           return;
         }
         const rec = await readRecoveryAddress(network.id);
-        if (!rec || cancelled) return;
+        if (!rec || cancelled || tourOpenRef.current) return;
         const added = await syncRecoveryExitActivities({
           networkId: network.id,
           walletId: selectedWallet.id,
           sweepAddress: rec,
         });
-        if (!cancelled && added > 0) bumpActivity();
+        if (!cancelled && !tourOpenRef.current && added > 0) bumpActivity();
       })();
       return () => {
         cancelled = true;
@@ -962,7 +914,9 @@ function HomeScreenBody() {
   // a disabled RNGH parent still steals the first tap on Samsung (laggy Skip/Next).
   const homeTree = (
       <View style={styles.full} collapsable={false}>
-        <SyncProgressBar active={balanceStatus === "loading"} />
+        <SyncProgressBar
+          active={!tourLocksHome && balanceStatus === "loading"}
+        />
         <ScreenChrome
           logoScale={1}
           avatar={
@@ -1227,13 +1181,13 @@ function HomeScreenBody() {
   return (
     <View style={styles.full} collapsable={false}>
       {/*
-        QA force-tour mid-session: static underlay (not full Home tree) so
-        Soft hints, rates, and gestures stay off. Product first-wallet uses gate.
+        Real Home chrome under the tour (same tree as post-dismiss). Gestures
+        off via pointerEvents + tourLocksHome; Soft* disabled in overlay.
       */}
-      {tourOpen ? (
-        <HomeTourUnderlay />
-      ) : tourLocksHome ? (
-        homeTree
+      {tourLocksHome ? (
+        <View style={styles.full} pointerEvents="none" collapsable={false}>
+          {homeTree}
+        </View>
       ) : (
         <GestureDetector gesture={homeSwipe}>{homeTree}</GestureDetector>
       )}
