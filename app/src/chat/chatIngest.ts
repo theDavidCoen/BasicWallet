@@ -7,6 +7,7 @@ import { getNetworkConfig } from "../config/network";
 import { getSelectedWalletId } from "../account/walletRegistry";
 import { fetchFiatSpot } from "../fiat/depixAssets";
 import { readFiatModeState } from "../fiat/fiatModeStore";
+import { isHomeTourUiOpen } from "../home/homeTour";
 import {
   consumeRecentInboundFiatSettle,
   isAutoInboundBusy,
@@ -90,6 +91,12 @@ export async function ingestChatEnvelope(opts: {
   wrapCreatedAtSec?: number;
 }): Promise<boolean> {
   const { envelope, peerPubkey, wrapEventId } = opts;
+  // Gift-wrap storms during Spotlight D blocked Samsung tour taps (rc.7: ~5s
+  // silence after first Next). Catch-up after dismiss re-fetches wraps.
+  if (isHomeTourUiOpen()) {
+    console.warn("[basic] chat ingest deferred (home tour open)", envelope.type);
+    return false;
+  }
   if (findMessageByNostrEventId(wrapEventId)) return false;
 
   const contactId = resolveContactId(peerPubkey, envelope.threadContactHint);

@@ -2440,6 +2440,36 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
       const run = (async () => {
         try {
+          // Create/passkey path starts open before/during Spotlight D. Keystore +
+          // Wallet.create on the JS/native bridge froze Samsung ~5s after first
+          // Next (rc.7: Soft* off, paint 21ms, then silent stall). Wait for tour.
+          if (
+            homeTourUiOpenRef.current ||
+            isHomeTourUiOpen() ||
+            isHomeTourPendingSync()
+          ) {
+            console.warn(
+              "[basic] openHdWalletFromKeystore deferred (home tour open)",
+            );
+            await new Promise<void>((resolve) => {
+              const done = () => {
+                if (!isHomeTourUiOpen() && !isHomeTourPendingSync()) {
+                  resolve();
+                  return true;
+                }
+                return false;
+              };
+              if (done()) return;
+              const unsub = subscribeHomeTourUi(() => {
+                if (done()) unsub();
+              });
+              if (done()) unsub();
+            });
+            if (selectedIdRef.current !== walletId) {
+              openingRef.current = false;
+              return;
+            }
+          }
           const w = await openHdWalletFromKeystore(walletId, { runRestore: false });
           if (selectedIdRef.current !== walletId) {
             openingRef.current = false;

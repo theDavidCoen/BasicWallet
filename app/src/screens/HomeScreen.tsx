@@ -65,7 +65,6 @@ import {
 } from "../home/homeTour";
 import {
   noteHomeScreenRender,
-  startTourJsFpsProbe,
   stopTourJsFpsProbe,
 } from "../home/homeTourPerf";
 
@@ -308,18 +307,10 @@ export function HomeScreen() {
     setHomeTourUiOpen(tourOpen);
   }, [tourOpen]);
 
-  // Perf probe: start after Soft* arm window so the probe itself is not in the
-  // first-seconds contention window (dev/QA only signal).
+  // FPS probe off during tour — rAF loop itself contended on Samsung; rely on
+  // HomeTourPerf paintDtMs from taps instead.
   useEffect(() => {
-    if (!tourOpen) {
-      stopTourJsFpsProbe();
-      return;
-    }
-    const id = setTimeout(() => startTourJsFpsProbe(), 700);
-    return () => {
-      clearTimeout(id);
-      stopTourJsFpsProbe();
-    };
+    stopTourJsFpsProbe();
   }, [tourOpen]);
 
   // QA: About long-press Version → requestForceHomeTourForQa → reopen overlay.
@@ -1003,13 +994,13 @@ export function HomeScreen() {
           onLongPressEmpty={tourLocksHome ? undefined : openSettings}
         >
           <View style={styles.flex}>
-            <GestureDetector gesture={pullResync}>
-            <View
-              style={styles.center}
-              accessibilityHint={t("home.pullResyncHint")}
-            >
+            {(() => {
+              const centerInner = (
+                <>
               <View style={styles.pullResyncAnchor}>
-                <PullResyncIndicator pullY={pullY} busy={pullResyncBusy} />
+                {tourLocksHome ? null : (
+                  <PullResyncIndicator pullY={pullY} busy={pullResyncBusy} />
+                )}
                 <View style={styles.walletTagRow}>
                   <Text style={styles.walletTag}>
                     {stripFiatModeLabelSuffix(
@@ -1139,9 +1130,41 @@ export function HomeScreen() {
                   {t("home.chatAndPayHint")}
                 </Text>
               </Pressable>
-            </View>
-            </GestureDetector>
+                </>
+              );
+              // Tour: no pullResync GestureDetector / PullResyncIndicator (Reanimated).
+              if (tourLocksHome) {
+                return (
+                  <View style={styles.center} pointerEvents="none">
+                    {centerInner}
+                  </View>
+                );
+              }
+              return (
+                <GestureDetector gesture={pullResync}>
+                  <View
+                    style={styles.center}
+                    accessibilityHint={t("home.pullResyncHint")}
+                  >
+                    {centerInner}
+                  </View>
+                </GestureDetector>
+              );
+            })()}
 
+            {tourLocksHome ? (
+              <View
+                style={[
+                  styles.histHit,
+                  (activityOpen && !homeDragging) || fiatModeSheetOpen
+                    ? styles.histHitHidden
+                    : null,
+                ]}
+                pointerEvents="none"
+              >
+                <View style={styles.histHandle} />
+              </View>
+            ) : (
             <GestureDetector gesture={pan}>
               <View
                 ref={handleRef}
@@ -1162,6 +1185,7 @@ export function HomeScreen() {
                 </Pressable>
               </View>
             </GestureDetector>
+            )}
 
             {rateFooter ? (
               <Pressable
