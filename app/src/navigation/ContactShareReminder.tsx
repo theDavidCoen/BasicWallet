@@ -88,6 +88,8 @@ export function ContactShareReminder({
       setOffer(null);
       return;
     }
+    // Defer gift-wrap / bot watch boot until after Spotlight D tour dismisses.
+    if (homeTourOpen) return;
     queueContactShareWatchBoot();
     void import("../agent/botWatch")
       .then((m) => m.queueBotWatchBoot())
@@ -97,7 +99,7 @@ export function ContactShareReminder({
     return () => {
       unsub();
     };
-  }, [hasWallet, refresh]);
+  }, [hasWallet, refresh, homeTourOpen]);
 
   // Re-read inbox when landing on Home (catch-up / live sub may have filled it).
   useEffect(() => {

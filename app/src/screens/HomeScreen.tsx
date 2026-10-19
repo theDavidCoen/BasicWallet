@@ -65,7 +65,6 @@ import {
 } from "../home/homeTour";
 import {
   noteHomeScreenRender,
-  startTourJsFpsProbe,
   stopTourJsFpsProbe,
 } from "../home/homeTourPerf";
 
@@ -90,6 +89,10 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
+/**
+ * Real Home chrome stays mounted under Spotlight D (`pointerEvents="none"`).
+ * Soft* hints stay off for the whole tour; WalletProvider freezes ASP/chat.
+ */
 export function HomeScreen() {
   const navigation = useNavigation<RootNav>();
   const { t } = useI18n();
@@ -304,11 +307,10 @@ export function HomeScreen() {
     setHomeTourUiOpen(tourOpen);
   }, [tourOpen]);
 
-  // Perf probe: JS rAF fps while tour is open (proves Soft*/Home contention).
+  // FPS probe off during tour — rAF loop itself contended on Samsung; rely on
+  // HomeTourPerf paintDtMs from taps instead.
   useEffect(() => {
-    if (tourOpen) startTourJsFpsProbe();
-    else stopTourJsFpsProbe();
-    return () => stopTourJsFpsProbe();
+    stopTourJsFpsProbe();
   }, [tourOpen]);
 
   // QA: About long-press Version → requestForceHomeTourForQa → reopen overlay.
@@ -435,22 +437,29 @@ export function HomeScreen() {
 
   // Recovery / pending-sweep sync once per Home focus (duplicate useFocusEffect
   // removed α89 — tap-scene lag evidence: double work on every Home focus).
+  // Skip entirely while tour owns the scene (real Home is underlay only).
   useFocusEffect(
     useCallback(() => {
+      if (tourOpenRef.current) return;
       let cancelled = false;
       void (async () => {
         await refreshPendingSweep();
-        if (cancelled || !selectedWallet || selectedWallet.kind !== "arkade") {
+        if (
+          cancelled ||
+          tourOpenRef.current ||
+          !selectedWallet ||
+          selectedWallet.kind !== "arkade"
+        ) {
           return;
         }
         const rec = await readRecoveryAddress(network.id);
-        if (!rec || cancelled) return;
+        if (!rec || cancelled || tourOpenRef.current) return;
         const added = await syncRecoveryExitActivities({
           networkId: network.id,
           walletId: selectedWallet.id,
           sweepAddress: rec,
         });
-        if (!cancelled && added > 0) bumpActivity();
+        if (!cancelled && !tourOpenRef.current && added > 0) bumpActivity();
       })();
       return () => {
         cancelled = true;
@@ -471,14 +480,18 @@ export function HomeScreen() {
       const pull = async (codes: DisplayCurrencyCode[]) => {
         if (codes.length === 0 || cancelled) return;
         // Skip starting a new pull while tour is open (JS contention).
-        // If a pull is already in flight, still apply when it returns.
-        const blockedStart = tourOpenRef.current;
-        if (blockedStart) {
+        if (tourOpenRef.current) {
           console.log("[HomeTourRates] poll skip start (tour open)");
           return;
         }
         const rates = await fetchSpotRates(codes);
         if (cancelled) return;
+        // Also block apply — in-flight pulls started pre-tour were landing
+        // setFiatRates under the overlay (Samsung jsFps≈19 at tour open).
+        if (tourOpenRef.current) {
+          console.log("[HomeTourRates] poll skip apply (tour open)");
+          return;
+        }
         if (Object.keys(rates).length > 0) {
           setFiatRates(rates);
           console.log(
@@ -892,7 +905,9 @@ export function HomeScreen() {
   // a disabled RNGH parent still steals the first tap on Samsung (laggy Skip/Next).
   const homeTree = (
       <View style={styles.full} collapsable={false}>
-        <SyncProgressBar active={balanceStatus === "loading"} />
+        <SyncProgressBar
+          active={!tourLocksHome && balanceStatus === "loading"}
+        />
         <ScreenChrome
           logoScale={1}
           avatar={
@@ -979,13 +994,13 @@ export function HomeScreen() {
           onLongPressEmpty={tourLocksHome ? undefined : openSettings}
         >
           <View style={styles.flex}>
-            <GestureDetector gesture={pullResync}>
-            <View
-              style={styles.center}
-              accessibilityHint={t("home.pullResyncHint")}
-            >
+            {(() => {
+              const centerInner = (
+                <>
               <View style={styles.pullResyncAnchor}>
-                <PullResyncIndicator pullY={pullY} busy={pullResyncBusy} />
+                {tourLocksHome ? null : (
+                  <PullResyncIndicator pullY={pullY} busy={pullResyncBusy} />
+                )}
                 <View style={styles.walletTagRow}>
                   <Text style={styles.walletTag}>
                     {stripFiatModeLabelSuffix(
@@ -1115,9 +1130,41 @@ export function HomeScreen() {
                   {t("home.chatAndPayHint")}
                 </Text>
               </Pressable>
-            </View>
-            </GestureDetector>
+                </>
+              );
+              // Tour: no pullResync GestureDetector / PullResyncIndicator (Reanimated).
+              if (tourLocksHome) {
+                return (
+                  <View style={styles.center} pointerEvents="none">
+                    {centerInner}
+                  </View>
+                );
+              }
+              return (
+                <GestureDetector gesture={pullResync}>
+                  <View
+                    style={styles.center}
+                    accessibilityHint={t("home.pullResyncHint")}
+                  >
+                    {centerInner}
+                  </View>
+                </GestureDetector>
+              );
+            })()}
 
+            {tourLocksHome ? (
+              <View
+                style={[
+                  styles.histHit,
+                  (activityOpen && !homeDragging) || fiatModeSheetOpen
+                    ? styles.histHitHidden
+                    : null,
+                ]}
+                pointerEvents="none"
+              >
+                <View style={styles.histHandle} />
+              </View>
+            ) : (
             <GestureDetector gesture={pan}>
               <View
                 ref={handleRef}
@@ -1138,6 +1185,7 @@ export function HomeScreen() {
                 </Pressable>
               </View>
             </GestureDetector>
+            )}
 
             {rateFooter ? (
               <Pressable
@@ -1156,8 +1204,14 @@ export function HomeScreen() {
 
   return (
     <View style={styles.full} collapsable={false}>
+      {/*
+        Real Home chrome under the tour (same tree as post-dismiss). Gestures
+        off via pointerEvents + tourLocksHome; Soft* disabled in overlay.
+      */}
       {tourLocksHome ? (
-        homeTree
+        <View style={styles.full} pointerEvents="none" collapsable={false}>
+          {homeTree}
+        </View>
       ) : (
         <GestureDetector gesture={homeSwipe}>{homeTree}</GestureDetector>
       )}

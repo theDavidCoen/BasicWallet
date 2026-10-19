@@ -116,6 +116,8 @@ export function ChatUnreadBanner({
       setSummary(emptySummary());
       return;
     }
+    // Defer Nostr/chat/bot boot while Spotlight D tour owns the JS thread.
+    if (homeTourOpen) return;
     // Gift-wrap demux (contact share + chat) — same boot as ContactShareReminder.
     queueContactShareWatchBoot();
     void import("../agent/botWatch")
@@ -123,7 +125,7 @@ export function ChatUnreadBanner({
       .catch(() => {});
     refresh();
     return subscribeChatStore(refresh);
-  }, [hasWallet, refresh]);
+  }, [hasWallet, refresh, homeTourOpen]);
 
   useEffect(() => {
     const sub = AppState.addEventListener("change", (next) => {

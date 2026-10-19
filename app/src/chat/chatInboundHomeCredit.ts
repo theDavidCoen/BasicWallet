@@ -11,6 +11,7 @@
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { isHomeTourUiOpen } from "../home/homeTour";
 
 type CreditHint = { amountSats: number; at: number };
 
@@ -138,6 +139,16 @@ export function clearChatInboundHomeCreditNote(amountSats: number): void {
 export function ensureChatInboundHomeCredit(amountSats: number): boolean {
   const abs = Math.abs(Math.floor(amountSats));
   if (!(abs > 0)) return false;
+  // Note for post-tour dedupe, but do not run Home refresh / toast storms
+  // while Spotlight D owns the JS thread (Samsung passkey→tour freeze).
+  if (isHomeTourUiOpen()) {
+    if (!wasChatInboundHomeCredited(abs)) noteChatInboundHomeCredited(abs);
+    console.warn(
+      "[basic] chat inbound home refresh deferred (home tour open)",
+      abs,
+    );
+    return false;
+  }
   const already = wasChatInboundHomeCredited(abs);
   if (!already) noteChatInboundHomeCredited(abs);
   if (!homeCreditHook) {

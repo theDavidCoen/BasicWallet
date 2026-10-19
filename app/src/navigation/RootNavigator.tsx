@@ -118,6 +118,7 @@ export function RootNavigator() {
   // One AppLockGate for the whole session — remounting around warmup caused a
   // second biometric prompt when switching to Home.
   // Until unlock: inert underlay only (no warmup/Home/ASP). Lock is the session UI.
+  // First-wallet tour: HomeScreen gate mounts overlay alone (no Home chrome hooks).
   return (
     <AppLockGate>
       <UserPresenceHost />

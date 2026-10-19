@@ -4,6 +4,7 @@
  */
 
 import { catchUpGiftWraps } from "../contacts/contactShareWatch";
+import { isHomeTourUiOpen } from "../home/homeTour";
 import { sleep } from "../wallet/arkMultiSend";
 import {
   insertChatMessage,
@@ -374,6 +375,7 @@ export function registerClassicFundsNoticeDismiss(fn: DismissFn | null): void {
 export function dismissClassicFundsNoticeIfChat(amountSats: number): void {
   const abs = Math.floor(amountSats);
   if (!(abs > 0)) return;
+  if (isHomeTourUiOpen()) return;
   pruneHints();
   const hint = recentReceiptHints.some(
     (h) => Math.abs(h.amountSats - abs) <= 1 && Date.now() - h.at < 180_000,

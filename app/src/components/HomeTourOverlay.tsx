@@ -1,11 +1,10 @@
 /**
  * Spotlight D Home onboarding tour overlay.
  *
- * Architecture (rc.26):
- * - UX frozen: in-card Back/Next, Skip under, chrome hints, no card swipe.
- * - Settings: fingerprint in white ring under logo; opacity pulse only.
- * - Soft* for active + prefetch(next) so first Next does not pay Reanimated mount.
- * - Home poll paused while tour open; host pointerEvents=auto.
+ * Architecture:
+ * - In-card Back/Next + horizontal swipe (left=next, right=back); Skip under.
+ * - Soft* Reanimated/SVG hints disabled for the whole tour (Samsung freeze).
+ * - Real Home chrome stays mounted under the overlay; WalletProvider freezes ASP.
  */
 
 import {
@@ -24,16 +23,17 @@ import {
   Text,
   View,
 } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   Easing,
   cancelAnimation,
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
   withSequence,
   withTiming,
 } from "react-native-reanimated";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
 import { HOME_TOUR_STEPS } from "../home/homeTour";
 import { logTourTap } from "../home/homeTourPerf";
@@ -41,6 +41,8 @@ import { useI18n } from "../i18n";
 import { colors } from "../theme/colors";
 
 const CARD_WIDTH = 300;
+/** Horizontal swipe on the card (in addition to Back/Next). */
+const CARD_SWIPE_PX = 56;
 const STEP_COUNT = HOME_TOUR_STEPS.length;
 const CLUSTER_TOP_FRAC = 0.52;
 const TOUR_ARM_MS = 480;
@@ -445,10 +447,15 @@ const TourBody = memo(function TourBody({
   onDone: () => void;
 }) {
   const { t } = useI18n();
-  const insets = useSafeAreaInsets();
   const [stepIndex, setStepIndex] = useState(0);
   /** Dim/outside only — nav buttons work immediately (rc.19 arm gated all hits). */
   const [dimArmed, setDimArmed] = useState(false);
+  /**
+   * Soft* Reanimated+SVG hints stay OFF for the entire tour (rc.5/rc.6 Samsung:
+   * synchronouslyUpdateUIProps / SvgView.draw storm → multi-second freeze even
+   * when deferred past step 1). Card copy + dots carry guidance; Soft* can return
+   * later as non-Reanimated placeholders if product wants them.
+   */
   const stepRef = useRef(0);
   const tapProbe = useRef<TapProbe | null>(null);
   const onSkipRef = useRef(onSkip);
@@ -458,12 +465,14 @@ const TourBody = memo(function TourBody({
 
   useEffect(() => {
     setDimArmed(false);
-    const id = setTimeout(() => setDimArmed(true), TOUR_ARM_MS);
-    return () => clearTimeout(id);
+    const arm = setTimeout(() => setDimArmed(true), TOUR_ARM_MS);
+    return () => {
+      clearTimeout(arm);
+    };
   }, []);
 
   useEffect(() => {
-    console.log("[HomeTour] body mounted");
+    console.log("[HomeTour] body mounted (Soft* disabled for tour)");
   }, []);
 
   const step =
@@ -497,12 +506,6 @@ const TourBody = memo(function TourBody({
     const windowH = Dimensions.get("window").height;
     return Math.round(windowH * CLUSTER_TOP_FRAC);
   }, []);
-
-  /** Prefetch Soft* for the next step so first Next into it is warm. */
-  const prefetchHint =
-    stepIndex < STEP_COUNT - 1
-      ? HOME_TOUR_STEPS[stepIndex + 1]!.hint
-      : null;
 
   const applyStep = useCallback((next: number, dir: "back" | "next", t0: number) => {
     const fromStep = stepRef.current;
@@ -540,6 +543,23 @@ const TourBody = memo(function TourBody({
     onSkipRef.current();
   }, []);
 
+  // Horizontal card swipe in addition to Back/Next (does not dismiss on swipe).
+  const cardSwipe = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX([-20, 20])
+        .failOffsetY([-18, 18])
+        .onEnd((e) => {
+          "worklet";
+          if (e.translationX <= -CARD_SWIPE_PX) {
+            runOnJS(goNext)();
+          } else if (e.translationX >= CARD_SWIPE_PX) {
+            runOnJS(goBack)();
+          }
+        }),
+    [goBack, goNext],
+  );
+
   const backLabel = t("home.tourBack");
   const skipLabel = t("home.tourSkip");
   const nextLabel = isLast ? t("home.tourDone") : t("home.tourNext");
@@ -548,52 +568,48 @@ const TourBody = memo(function TourBody({
     <View style={styles.portalRoot} pointerEvents="box-none">
       <DimTapSkip armed={dimArmed} onSkip={goSkip} label={skipLabel} />
 
-      <TourHintsLayer
-        activeHint={step.hint}
-        prefetchHint={prefetchHint}
-        insetsTop={insets.top}
-      />
-
       <View style={styles.stage} pointerEvents="box-none">
         <View
           style={[styles.cluster, { top: clusterTop }]}
           collapsable={false}
           pointerEvents="box-none"
         >
-          <View style={styles.card} pointerEvents="auto" collapsable={false}>
-            <Text style={styles.stepNum} pointerEvents="none">
-              {step.n}
-            </Text>
-            <Text style={styles.title} pointerEvents="none">
-              {t(step.titleKey)}
-            </Text>
-            <Text style={styles.body} pointerEvents="none">
-              {t(step.bodyKey)}
-            </Text>
+          <GestureDetector gesture={cardSwipe}>
+            <View style={styles.card} pointerEvents="auto" collapsable={false}>
+              <Text style={styles.stepNum} pointerEvents="none">
+                {step.n}
+              </Text>
+              <Text style={styles.title} pointerEvents="none">
+                {t(step.titleKey)}
+              </Text>
+              <Text style={styles.body} pointerEvents="none">
+                {t(step.bodyKey)}
+              </Text>
 
-            <View style={styles.cardFooter} collapsable={false}>
-              <TourHit
-                armed
-                probeDir="back"
-                onPress={goBack}
-                label={backLabel}
-                style={styles.cardNavBtn}
-                textStyle={[styles.navBack, isFirst && styles.navBackMuted]}
-              >
-                {backLabel}
-              </TourHit>
-              <TourHit
-                armed
-                probeDir="next"
-                onPress={goNext}
-                label={nextLabel}
-                style={styles.cardNavBtnEnd}
-                textStyle={styles.navNext}
-              >
-                {nextLabel}
-              </TourHit>
+              <View style={styles.cardFooter} collapsable={false}>
+                <TourHit
+                  armed
+                  probeDir="back"
+                  onPress={goBack}
+                  label={backLabel}
+                  style={styles.cardNavBtn}
+                  textStyle={[styles.navBack, isFirst && styles.navBackMuted]}
+                >
+                  {backLabel}
+                </TourHit>
+                <TourHit
+                  armed
+                  probeDir="next"
+                  onPress={goNext}
+                  label={nextLabel}
+                  style={styles.cardNavBtnEnd}
+                  textStyle={styles.navNext}
+                >
+                  {nextLabel}
+                </TourHit>
+              </View>
             </View>
-          </View>
+          </GestureDetector>
 
           <View style={styles.dotsRow} pointerEvents="none">
             {HOME_TOUR_STEPS.map((s) => (
